@@ -20,6 +20,9 @@
 
 # shell function library for Pulsar CI builds
 
+set -e
+set -o pipefail
+
 # lists all available functions in this tool
 function ci_list_functions() {
   declare -F | awk '{print $NF}' | sort | egrep '^ci_' | sed 's/^ci_//'
