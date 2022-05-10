@@ -18,15 +18,13 @@
  */
 package org.apache.pulsar.broker.service;
 
+import static org.apache.bookkeeper.client.RackawareEnsemblePlacementPolicyImpl.REPP_DNS_RESOLVER_CLASS;
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertNull;
 import static org.testng.Assert.fail;
-
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
-
-import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.List;
 import java.util.Map;
@@ -34,11 +32,9 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
-
 import lombok.Cleanup;
-import org.apache.bookkeeper.bookie.Bookie;
+import org.apache.bookkeeper.bookie.BookieImpl;
 import org.apache.bookkeeper.client.BookKeeper;
-import static org.apache.bookkeeper.client.RackawareEnsemblePlacementPolicyImpl.REPP_DNS_RESOLVER_CLASS;
 import org.apache.bookkeeper.client.api.LedgerMetadata;
 import org.apache.bookkeeper.conf.ClientConfiguration;
 import org.apache.bookkeeper.meta.LedgerManager;
@@ -220,10 +216,8 @@ public class BrokerBookieIsolationTest {
         PersistentTopic topic3 = (PersistentTopic) createTopicAndPublish(pulsarClient, ns3, "topic1", totalPublish);
         PersistentTopic topic4 = (PersistentTopic) createTopicAndPublish(pulsarClient, ns4, "topic1", totalPublish);
 
-        Bookie bookie1 = bookies[0].getBookie();
-        Field ledgerManagerField = Bookie.class.getDeclaredField("ledgerManager");
-        ledgerManagerField.setAccessible(true);
-        LedgerManager ledgerManager = (LedgerManager) ledgerManagerField.get(bookie1);
+        BookieImpl bookie1 = (BookieImpl)bookies[0].getBookie();
+        LedgerManager ledgerManager = getLedgerManager(bookie1);
 
         // namespace: ns1
         ManagedLedgerImpl ml = (ManagedLedgerImpl) topic1.getManagedLedger();
@@ -378,10 +372,8 @@ public class BrokerBookieIsolationTest {
         PersistentTopic topic2 = (PersistentTopic) createTopicAndPublish(pulsarClient, ns2, "topic1", totalPublish);
         PersistentTopic topic3 = (PersistentTopic) createTopicAndPublish(pulsarClient, ns3, "topic1", totalPublish);
 
-        Bookie bookie1 = bookies[0].getBookie();
-        Field ledgerManagerField = Bookie.class.getDeclaredField("ledgerManager");
-        ledgerManagerField.setAccessible(true);
-        LedgerManager ledgerManager = (LedgerManager) ledgerManagerField.get(bookie1);
+        BookieImpl bookie1 = (BookieImpl)bookies[0].getBookie();
+        LedgerManager ledgerManager = getLedgerManager(bookie1);
 
         // namespace: ns1
         ManagedLedgerImpl ml = (ManagedLedgerImpl) topic1.getManagedLedger();
