@@ -36,13 +36,18 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Date;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
+import javax.ws.rs.container.AsyncResponse;
+import javax.ws.rs.container.TimeoutHandler;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import org.apache.bookkeeper.client.BookKeeper;
@@ -595,6 +600,98 @@ public abstract class MockedPulsarServiceBaseTest extends TestRetrySupport {
     public static class ServiceProducer {
         private org.apache.pulsar.broker.service.Producer serviceProducer;
         private PersistentTopic persistentTopic;
+    }
+
+    protected Object asyncRequests(Consumer<TestAsyncResponse> function) throws Exception {
+        TestAsyncResponse ctx = new TestAsyncResponse();
+        function.accept(ctx);
+        ctx.latch.await();
+        if (ctx.e != null) {
+            throw (Exception) ctx.e;
+        }
+        return ctx.response;
+    }
+
+    public static class TestAsyncResponse implements AsyncResponse {
+
+        Object response;
+        Throwable e;
+        CountDownLatch latch = new CountDownLatch(1);
+
+        @Override
+        public boolean resume(Object response) {
+            this.response = response;
+            latch.countDown();
+            return true;
+        }
+
+        @Override
+        public boolean resume(Throwable response) {
+            this.e = response;
+            latch.countDown();
+            return true;
+        }
+
+        @Override
+        public boolean cancel() {
+            return false;
+        }
+
+        @Override
+        public boolean cancel(int retryAfter) {
+            return false;
+        }
+
+        @Override
+        public boolean cancel(Date retryAfter) {
+            return false;
+        }
+
+        @Override
+        public boolean isSuspended() {
+            return false;
+        }
+
+        @Override
+        public boolean isCancelled() {
+            return false;
+        }
+
+        @Override
+        public boolean isDone() {
+            return false;
+        }
+
+        @Override
+        public boolean setTimeout(long time, TimeUnit unit) {
+            return false;
+        }
+
+        @Override
+        public void setTimeoutHandler(TimeoutHandler handler) {
+
+        }
+
+        @Override
+        public Collection<Class<?>> register(Class<?> callback) {
+            return null;
+        }
+
+        @Override
+        public Map<Class<?>, Collection<Class<?>>> register(Class<?> callback, Class<?>... callbacks) {
+            return null;
+        }
+
+        @Override
+        public Collection<Class<?>> register(Object callback) {
+            return null;
+        }
+
+        @Override
+        public Map<Class<?>, Collection<Class<?>>> register(Object callback, Object... callbacks) {
+            return null;
+        }
+
     }
 
     private static final Logger log = LoggerFactory.getLogger(MockedPulsarServiceBaseTest.class);
