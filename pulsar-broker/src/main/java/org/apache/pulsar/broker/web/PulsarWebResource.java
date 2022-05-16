@@ -1156,6 +1156,17 @@ public abstract class PulsarWebResource {
         }
     }
 
+    public CompletableFuture<Void> validatePoliciesReadOnlyAccessAsync() {
+        return namespaceResources().getPoliciesReadOnlyAsync().thenAccept(readOnly -> {
+            if (readOnly) {
+                if (log.isDebugEnabled()) {
+                    log.debug("Policies are read-only. Broker cannot do read-write operations");
+                }
+                throw new RestException(Status.FORBIDDEN, "Broker is forbidden to do read-write operations");
+            }
+        });
+    }
+
     protected CompletableFuture<Void> hasActiveNamespace(String tenant) {
         return tenantResources().hasActiveNamespace(tenant);
     }
