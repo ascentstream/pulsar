@@ -128,8 +128,12 @@ public class TopicLookupBase extends PulsarWebResource {
                                 log.debug("Lookup succeeded for topic {} -- broker: {}", topicName,
                                         result.getLookupData());
                             }
+                            pulsar().getBrokerService().getLookupRequestSemaphore().release();
                             return result.getLookupData();
                         }
+                    }).exceptionally(ex->{
+                        pulsar().getBrokerService().getLookupRequestSemaphore().release();
+                        throw FutureUtil.wrapToCompletionException(ex);
                     });
                 });
     }
@@ -318,12 +322,6 @@ public class TopicLookupBase extends PulsarWebResource {
         });
 
         return lookupfuture;
-    }
-
-    protected void completeLookupResponseExceptionally(AsyncResponse asyncResponse, Throwable t) {
-        pulsar().getBrokerService().getLookupRequestSemaphore().release();
-        Throwable cause = FutureUtil.unwrapCompletionException(t);
-        asyncResponse.resume(cause);
     }
 
     private static void handleLookupError(CompletableFuture<ByteBuf> lookupFuture, String topicName, String clientAppId,
