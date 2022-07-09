@@ -38,7 +38,7 @@ echo -n "Test Group : $TEST_GROUP"
 
 # Test Groups  -- start --
 function broker_group_1() {
-  $MVN_TEST_COMMAND -pl pulsar-broker -Dgroups='broker'
+  $MVN_TEST_COMMAND -pl pulsar-broker -Dgroups='broker' -DtestReuseFork=false
 }
 
 function broker_group_2() {
