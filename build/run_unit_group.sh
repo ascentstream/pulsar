@@ -31,8 +31,7 @@ echo_and_restore_trace() {
 alias echo='{ [[ $- =~ .*x.* ]] && trace_enabled=1 || trace_enabled=0; set +x; } 2> /dev/null; echo_and_restore_trace'
 
 MVN_COMMAND='mvn -B -ntp'
-MVN_COMMAND_WITH_RETRY="build/retry.sh ${MVN_COMMAND}"
-MVN_TEST_COMMAND="${MVN_COMMAND_WITH_RETRY} test"
+MVN_TEST_COMMAND="${MVN_COMMAND} test"
 
 echo -n "Test Group : $TEST_GROUP"
 
@@ -93,7 +92,7 @@ function print_testng_failures() {
 function broker_flaky() {
   echo "::endgroup::"
   echo "::group::Running quarantined tests"
-  $MVN_COMMAND test -pl pulsar-broker -Dgroups='quarantine' -DexcludedGroups='' -DfailIfNoTests=false \
+  $MVN_TEST_COMMAND -pl pulsar-broker -Dgroups='quarantine' -DexcludedGroups='' -DfailIfNoTests=false \
     -DtestForkCount=2 ||
     print_testng_failures pulsar-broker/target/surefire-reports/testng-failed.xml "Quarantined test failure in" "Quarantined test failures"
   echo "::endgroup::"
@@ -112,7 +111,7 @@ function proxy() {
 }
 
 function other() {
-  $MVN_COMMAND_WITH_RETRY clean install -PbrokerSkipTest \
+  $MVN_COMMAND clean install -PbrokerSkipTest \
                                      -Dexclude='org/apache/pulsar/proxy/**/*.java,
                                                 **/ManagedLedgerTest.java,
                                                 **/TestPulsarKeyValueSchemaHandler.java,
