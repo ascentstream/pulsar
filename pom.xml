@@ -214,7 +214,7 @@ flexible messaging model and an intuitive client API.</description>
     <jakarta.activation.version>1.2.2</jakarta.activation.version>
     <jakarta.xml.bind.version>2.3.3</jakarta.xml.bind.version>
     <jakarta.validation.version>2.0.2</jakarta.validation.version>
-    <jna.version>4.2.0</jna.version>
+    <jna.version>5.12.1</jna.version>
     <kubernetesclient.version>18.0.0</kubernetesclient.version>
     <jose4j.version>0.9.4</jose4j.version>
     <okhttp3.version>4.9.3</okhttp3.version>
