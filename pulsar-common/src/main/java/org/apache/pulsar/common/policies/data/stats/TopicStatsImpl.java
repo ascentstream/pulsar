@@ -135,6 +135,9 @@ public class TopicStatsImpl implements TopicStats {
     /** The compaction stats. */
     public CompactionStatsImpl compaction;
 
+    /** The broker that owns this topic. */
+    public String ownerBroker;
+
     public List<? extends PublisherStats> getPublishers() {
         return Stream.concat(publishers.stream().sorted(
                                 Comparator.comparing(PublisherStatsImpl::getProducerName, nullsLast(naturalOrder()))),
@@ -202,6 +205,7 @@ public class TopicStatsImpl implements TopicStats {
         this.lastOffloadSuccessTimeStamp = 0;
         this.publishRateLimitedTimes = 0L;
         this.compaction.reset();
+        this.ownerBroker = null;
     }
 
     // if the stats are added for the 1st time, we will need to make a copy of these stats and add it to the current
