@@ -20,6 +20,8 @@
 package org.apache.pulsar.broker.admin.impl;
 
 import static org.apache.commons.lang3.StringUtils.isBlank;
+import static org.apache.pulsar.common.events.EventsTopicNames.isTopicPoliciesSystemTopic;
+import static org.apache.pulsar.common.naming.TopicName.PENDING_ACK_STORE_SUFFIX;
 import static org.apache.pulsar.common.policies.data.PoliciesUtil.defaultBundle;
 import static org.apache.pulsar.common.policies.data.PoliciesUtil.getBundles;
 import com.google.common.collect.Lists;
@@ -44,6 +46,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import javax.annotation.Nonnull;
 import javax.ws.rs.WebApplicationException;
 import javax.ws.rs.container.AsyncResponse;
 import javax.ws.rs.core.Response;
@@ -66,14 +69,12 @@ import org.apache.pulsar.client.admin.PulsarAdmin;
 import org.apache.pulsar.client.admin.PulsarAdminException;
 import org.apache.pulsar.client.api.SubscriptionType;
 import org.apache.pulsar.common.api.proto.CommandGetTopicsOfNamespace;
-import org.apache.pulsar.common.events.EventsTopicNames;
 import org.apache.pulsar.common.naming.NamedEntity;
 import org.apache.pulsar.common.naming.NamespaceBundle;
 import org.apache.pulsar.common.naming.NamespaceBundleFactory;
 import org.apache.pulsar.common.naming.NamespaceBundleSplitAlgorithm;
 import org.apache.pulsar.common.naming.NamespaceBundles;
 import org.apache.pulsar.common.naming.NamespaceName;
-import org.apache.pulsar.common.naming.TopicDomain;
 import org.apache.pulsar.common.naming.TopicName;
 import org.apache.pulsar.common.policies.data.AuthAction;
 import org.apache.pulsar.common.policies.data.AutoSubscriptionCreationOverride;
@@ -110,6 +111,7 @@ import org.apache.pulsar.metadata.api.MetadataStoreException;
 import org.apache.pulsar.metadata.api.MetadataStoreException.AlreadyExistsException;
 import org.apache.pulsar.metadata.api.MetadataStoreException.BadVersionException;
 import org.apache.pulsar.metadata.api.MetadataStoreException.NotFoundException;
+import org.apache.zookeeper.KeeperException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -163,14 +165,6 @@ public abstract class NamespacesBase extends AdminResource {
         }
     }
 
-    protected void internalDeleteNamespace(AsyncResponse asyncResponse, boolean authoritative, boolean force) {
-        if (force) {
-            internalDeleteNamespaceForcefully(asyncResponse, authoritative);
-        } else {
-            internalDeleteNamespace(asyncResponse, authoritative);
-        }
-    }
-
     protected CompletableFuture<List<String>> internalGetListOfTopics(Policies policies,
                                                                       CommandGetTopicsOfNamespace.Mode mode) {
         switch (mode) {
@@ -213,205 +207,160 @@ public abstract class NamespacesBase extends AdminResource {
                 });
     }
 
-    @SuppressWarnings("deprecation")
-    protected void internalDeleteNamespace(AsyncResponse asyncResponse, boolean authoritative) {
-        validateTenantOperation(namespaceName.getTenant(), TenantOperation.DELETE_NAMESPACE);
-        validatePoliciesReadOnlyAccess();
+    /**
+     * Delete the namespace and retry to resolve some topics that were not created successfully(in metadata)
+     * during the deletion.
+     */
+    protected @Nonnull CompletableFuture<Void> internalDeleteNamespaceAsync(boolean force) {
+        final CompletableFuture<Void> future = new CompletableFuture<>();
+        internalRetryableDeleteNamespaceAsync0(force, 5, future);
+        return future;
+    }
 
-        // ensure that non-global namespace is directed to the correct cluster
-        if (!namespaceName.isGlobal()) {
-            validateClusterOwnership(namespaceName.getCluster());
-        }
-
-        Policies policies = null;
-
-        // ensure the local cluster is the only cluster for the global namespace configuration
-        try {
-            policies = namespaceResources().getPolicies(namespaceName).orElseThrow(
-                    () -> new RestException(Status.NOT_FOUND, "Namespace " + namespaceName + " does not exist."));
-            if (namespaceName.isGlobal()) {
-                if (policies.replication_clusters.size() > 1) {
-                    // There are still more than one clusters configured for the global namespace
-                    throw new RestException(Status.PRECONDITION_FAILED, "Cannot delete the global namespace "
-                            + namespaceName + ". There are still more than one replication clusters configured.");
-                }
-                if (policies.replication_clusters.size() == 1
-                        && !policies.replication_clusters.contains(config().getClusterName())) {
-                    // the only replication cluster is other cluster, redirect
-                    String replCluster = Lists.newArrayList(policies.replication_clusters).get(0);
-                    ClusterData replClusterData = clusterResources().getCluster(replCluster)
-                            .orElseThrow(() -> new RestException(Status.NOT_FOUND,
-                                    "Cluster " + replCluster + " does not exist"));
-                    URL replClusterUrl;
-                    if (!config().isTlsEnabled() || !isRequestHttps()) {
-                        replClusterUrl = new URL(replClusterData.getServiceUrl());
-                    } else if (StringUtils.isNotBlank(replClusterData.getServiceUrlTls())) {
-                        replClusterUrl = new URL(replClusterData.getServiceUrlTls());
+    private void internalRetryableDeleteNamespaceAsync0(boolean force, int retryTimes,
+                                                        @Nonnull CompletableFuture<Void> callback) {
+        precheckWhenDeleteNamespace(namespaceName, force)
+                .thenCompose(policies -> {
+                    final CompletableFuture<List<String>> topicsFuture;
+                    if (policies == null || CollectionUtils.isEmpty(policies.replication_clusters)) {
+                        topicsFuture = pulsar().getNamespaceService().getListOfPersistentTopics(namespaceName);
                     } else {
-                        throw new RestException(Status.PRECONDITION_FAILED,
-                                "The replication cluster does not provide TLS encrypted service");
+                        topicsFuture = pulsar().getNamespaceService().getFullListOfTopics(namespaceName);
                     }
-                    URI redirect = UriBuilder.fromUri(uri.getRequestUri()).host(replClusterUrl.getHost())
-                            .port(replClusterUrl.getPort()).replaceQueryParam("authoritative", false).build();
-                    if (log.isDebugEnabled()) {
-                        log.debug("[{}] Redirecting the rest call to {}: cluster={}", clientAppId(), redirect,
-                                replCluster);
-                    }
-                    throw new WebApplicationException(Response.temporaryRedirect(redirect).build());
-                }
-            }
-        } catch (WebApplicationException wae) {
-            asyncResponse.resume(wae);
-            return;
-        } catch (Exception e) {
-            asyncResponse.resume(new RestException(e));
-            return;
-        }
-
-        boolean isEmpty;
-        List<String> topics;
-        try {
-            topics = pulsar().getNamespaceService().getListOfPersistentTopics(namespaceName)
-                    .get(config().getMetadataStoreOperationTimeoutSeconds(), TimeUnit.SECONDS);
-            topics.addAll(getPartitionedTopicList(TopicDomain.persistent));
-            topics.addAll(getPartitionedTopicList(TopicDomain.non_persistent));
-            isEmpty = topics.isEmpty();
-
-        } catch (Exception e) {
-            asyncResponse.resume(new RestException(e));
-            return;
-        }
-
-        if (!isEmpty) {
-            if (log.isDebugEnabled()) {
-                log.debug("Found topics on namespace {}", namespaceName);
-            }
-            boolean hasNonSystemTopic = false;
-            for (String topic : topics) {
-                if (!pulsar().getBrokerService().isSystemTopic(TopicName.get(topic))) {
-                    hasNonSystemTopic = true;
-                    break;
-                }
-            }
-            if (hasNonSystemTopic) {
-                asyncResponse.resume(new RestException(Status.CONFLICT, "Cannot delete non empty namespace"));
-                return;
-            }
-        }
-
-        // set the policies to deleted so that somebody else cannot acquire this namespace
-        try {
-            namespaceResources().setPolicies(namespaceName, old -> {
-                old.deleted = true;
-                return old;
-            });
-        } catch (Exception e) {
-            log.error("[{}] Failed to delete namespace on global ZK {}", clientAppId(), namespaceName, e);
-            asyncResponse.resume(new RestException(e));
-            return;
-        }
-        // remove from owned namespace map and ephemeral node from ZK
-        final CompletableFuture<Void> deleteSystemTopicFuture;
-        // remove system topics first.
-        Set<String> noPartitionedTopicPolicySystemTopic = new HashSet<>();
-        Set<String> partitionedTopicPolicySystemTopic = new HashSet<>();
-        Set<String> partitionSystemTopic = new HashSet<>();
-        Set<String> noPartitionSystemTopic = new HashSet<>();
-        if (!topics.isEmpty()) {
-            for (String topic : topics) {
-                try {
-                    TopicName topicName = TopicName.get(topic);
-                    if (EventsTopicNames.isTopicPoliciesSystemTopic(topic)) {
-                        if (topicName.isPartitioned()) {
-                            partitionedTopicPolicySystemTopic.add(topicName.getPartitionedTopicName());
-                        } else {
-                            noPartitionedTopicPolicySystemTopic.add(topic);
-                        }
-                    } else {
-                        if (topicName.isPartitioned()) {
-                            partitionSystemTopic.add(topicName.getPartitionedTopicName());
-                        } else {
-                            noPartitionSystemTopic.add(topic);
-                        }
-                    }
-                } catch (Exception ex) {
-                    log.error("[{}] Failed to delete system topic {}", clientAppId(), topic, ex);
-                    asyncResponse.resume(new RestException(Status.INTERNAL_SERVER_ERROR, ex));
-                    return;
-                }
-            }
-            noPartitionSystemTopic.removeAll(partitionSystemTopic);
-            noPartitionedTopicPolicySystemTopic.removeAll(partitionedTopicPolicySystemTopic);
-            deleteSystemTopicFuture = internalDeleteTopicsAsync(noPartitionSystemTopic)
-                    .thenCompose(ignore -> internalDeletePartitionedTopicsAsync(partitionSystemTopic))
-                    .thenCompose(ignore -> internalDeleteTopicsAsync(noPartitionedTopicPolicySystemTopic))
-                    .thenCompose(ignore -> internalDeletePartitionedTopicsAsync(partitionedTopicPolicySystemTopic));
-        } else {
-            deleteSystemTopicFuture = CompletableFuture.completedFuture(null);
-        }
-
-        deleteSystemTopicFuture
-                .thenCompose(__ -> {
-                    List<CompletableFuture<Void>> deleteBundleFutures = Lists.newArrayList();
-                    NamespaceBundles bundles = pulsar().getNamespaceService().getNamespaceBundleFactory()
-                                    .getBundles(namespaceName);
-                    for (NamespaceBundle bundle : bundles.getBundles()) {
-                        // check if the bundle is owned by any broker, if not then we do not need to delete the bundle
-                        deleteBundleFutures.add(pulsar().getNamespaceService().getOwnerAsync(bundle)
-                                .thenCompose(ownership -> {
-                                    if (ownership.isPresent()) {
-                                        try {
-                                            return pulsar().getAdminClient().namespaces()
-                                                    .deleteNamespaceBundleAsync(namespaceName.toString(),
-                                                            bundle.getBundleRange());
-                                        } catch (PulsarServerException e) {
-                                            throw new RestException(e);
-                                        }
+                    return topicsFuture.thenCompose(allTopics ->
+                                    pulsar().getNamespaceService().getFullListOfPartitionedTopic(namespaceName)
+                                            .thenCompose(allPartitionedTopics -> {
+                                                List<List<String>> topicsSum = new ArrayList<>(2);
+                                                topicsSum.add(allTopics);
+                                                topicsSum.add(allPartitionedTopics);
+                                                return CompletableFuture.completedFuture(topicsSum);
+                                            }))
+                            .thenCompose(topics -> {
+                                List<String> allTopics = topics.get(0);
+                                Set<String> allUserCreatedTopics = new HashSet<>();
+                                List<String> allPartitionedTopics = topics.get(1);
+                                Set<String> allUserCreatedPartitionTopics = new HashSet<>();
+                                boolean hasNonSystemTopic = false;
+                                Set<String> allSystemTopics = new HashSet<>();
+                                Set<String> allPartitionedSystemTopics = new HashSet<>();
+                                Set<String> topicPolicy = new HashSet<>();
+                                Set<String> partitionedTopicPolicy = new HashSet<>();
+                                for (String topic : allTopics) {
+                                    if (!pulsar().getBrokerService().isSystemTopic(TopicName.get(topic))) {
+                                        hasNonSystemTopic = true;
+                                        allUserCreatedTopics.add(topic);
                                     } else {
-                                        return CompletableFuture.completedFuture(null);
+                                        if (isTopicPoliciesSystemTopic(topic)) {
+                                            topicPolicy.add(topic);
+                                        } else if (!isDeletedAlongWithUserCreatedTopic(topic)) {
+                                            allSystemTopics.add(topic);
+                                        }
                                     }
-                                }));
-                    }
-                    return FutureUtil.waitForAll(deleteBundleFutures);
+                                }
+                                for (String topic : allPartitionedTopics) {
+                                    if (!pulsar().getBrokerService().isSystemTopic(TopicName.get(topic))) {
+                                        hasNonSystemTopic = true;
+                                        allUserCreatedPartitionTopics.add(topic);
+                                    } else {
+                                        if (isTopicPoliciesSystemTopic(topic)) {
+                                            partitionedTopicPolicy.add(topic);
+                                        } else {
+                                            allPartitionedSystemTopics.add(topic);
+                                        }
+                                    }
+                                }
+                                if (!force) {
+                                    if (hasNonSystemTopic) {
+                                        throw new RestException(Status.CONFLICT, "Cannot delete non empty namespace");
+                                    }
+                                }
+                                final CompletableFuture<Void> markDeleteFuture;
+                                if (policies != null && policies.deleted) {
+                                    markDeleteFuture = CompletableFuture.completedFuture(null);
+                                } else {
+                                    markDeleteFuture = namespaceResources().setPoliciesAsync(namespaceName, old -> {
+                                        old.deleted = true;
+                                        return old;
+                                    });
+                                }
+                                return markDeleteFuture.thenCompose(__ ->
+                                                internalDeleteTopicsAsync(allUserCreatedTopics))
+                                        .thenCompose(ignore ->
+                                                internalDeletePartitionedTopicsAsync(allUserCreatedPartitionTopics))
+                                        .thenCompose(ignore ->
+                                                internalDeleteTopicsAsync(allSystemTopics))
+                                        .thenCompose(ignore ->
+                                                internalDeletePartitionedTopicsAsync(allPartitionedSystemTopics))
+                                        .thenCompose(ignore ->
+                                                internalDeleteTopicsAsync(topicPolicy))
+                                        .thenCompose(ignore ->
+                                                internalDeletePartitionedTopicsAsync(partitionedTopicPolicy));
+                            });
                 })
-                .thenCompose(__ -> internalClearZkSources())
-                .thenAccept(__ -> {
-                    log.info("[{}] Remove namespace successfully {}", clientAppId(), namespaceName);
-                    asyncResponse.resume(Response.noContent().build());
-                })
-                .exceptionally(ex -> {
-                    Throwable cause = FutureUtil.unwrapCompletionException(ex);
-                    log.error("[{}] Failed to remove namespace {}", clientAppId(), namespaceName, cause);
-                    if (cause instanceof PulsarAdminException.ConflictException) {
-                        log.info("[{}] There are new topics created during the namespace deletion, "
-                                + "retry to delete the namespace again.", namespaceName);
-                        pulsar().getExecutor().execute(() -> internalDeleteNamespace(asyncResponse, authoritative));
-                    } else {
-                        resumeAsyncResponseExceptionally(asyncResponse, ex);
+                .thenCompose(ignore -> pulsar().getNamespaceService()
+                        .getNamespaceBundleFactory().getBundlesAsync(namespaceName))
+                .thenCompose(bundles -> FutureUtil.waitForAll(bundles.getBundles().stream()
+                        .map(bundle -> pulsar().getNamespaceService().checkOwnershipPresentAsync(bundle)
+                                .thenCompose(present -> {
+                                    // check if the bundle is owned by any broker,
+                                    // if not then we do not need to delete the bundle
+                                    if (present) {
+                                        PulsarAdmin admin;
+                                        try {
+                                            admin = pulsar().getAdminClient();
+                                        } catch (PulsarServerException ex) {
+                                            log.error("[{}] Get admin client error when preparing to delete topics.",
+                                                    clientAppId(), ex);
+                                            return FutureUtil.failedFuture(ex);
+                                        }
+                                        log.info("[{}] Deleting namespace bundle {}/{}", clientAppId(),
+                                                namespaceName, bundle.getBundleRange());
+                                        return admin.namespaces().deleteNamespaceBundleAsync(namespaceName.toString(),
+                                                bundle.getBundleRange(), force);
+                                    } else {
+                                        log.warn("[{}] Skipping deleting namespace bundle {}/{} "
+                                                        + "as it's not owned by any broker",
+                                                clientAppId(), namespaceName, bundle.getBundleRange());
+                                    }
+                                    return CompletableFuture.completedFuture(null);
+                                })
+                        ).collect(Collectors.toList())))
+                .thenCompose(ignore -> internalClearZkSources())
+                .whenComplete((result, error) -> {
+                    if (error != null) {
+                        final Throwable rc = FutureUtil.unwrapCompletionException(error);
+                        if (rc instanceof MetadataStoreException) {
+                            if (rc.getCause() != null && rc.getCause() instanceof KeeperException.NotEmptyException) {
+                                KeeperException.NotEmptyException ne =
+                                        (KeeperException.NotEmptyException) rc.getCause();
+                                log.info("[{}] There are in-flight topics created during the namespace deletion, "
+                                                + "retry to delete the namespace again. (path {} is not empty on "
+                                                + "metadata)",
+                                        namespaceName, ne.getPath());
+                                final int next = retryTimes - 1;
+                                if (next > 0) {
+                                    // async recursive
+                                    internalRetryableDeleteNamespaceAsync0(force, next, callback);
+                                } else {
+                                    callback.completeExceptionally(
+                                            new RestException(Status.CONFLICT, "The broker still have in-flight topics"
+                                                    + " created during namespace deletion (path " + ne.getPath() + ") "
+                                                    + "is not empty on metadata store, please try again."));
+                                    // drop out recursive
+                                }
+                                return;
+                            }
+                        }
+                        callback.completeExceptionally(error);
+                        return;
                     }
-                    return null;
+                    callback.complete(result);
                 });
     }
 
-    // clear zk-node resources for deleting namespace
-    protected CompletableFuture<Void> internalClearZkSources() {
-        // clear resource of `/namespace/{namespaceName}` for zk-node
-        return namespaceResources().deleteNamespaceAsync(namespaceName)
-                .thenCompose(ignore -> namespaceResources().getPartitionedTopicResources()
-                        .clearPartitionedTopicMetadataAsync(namespaceName))
-                // clear resource for manager-ledger z-node
-                .thenCompose(ignore -> pulsar().getPulsarResources().getTopicResources()
-                        .clearDomainPersistence(namespaceName))
-                .thenCompose(ignore -> pulsar().getPulsarResources().getTopicResources()
-                        .clearNamespacePersistence(namespaceName))
-                // we have successfully removed all the ownership for the namespace, the policies
-                // z-node can be deleted now
-                .thenCompose(ignore -> namespaceResources().deletePoliciesAsync(namespaceName))
-                // clear z-node of local policies
-                .thenCompose(ignore -> getLocalPolicies().deleteLocalPoliciesAsync(namespaceName))
-                // clear /loadbalance/bundle-data
-                .thenCompose(ignore -> namespaceResources().deleteBundleDataAsync(namespaceName));
-
+    private boolean isDeletedAlongWithUserCreatedTopic(String topic) {
+        // The transaction pending ack topic will be deleted while topic unsubscribe corresponding subscription.
+        return topic.endsWith(PENDING_ACK_STORE_SUFFIX);
     }
 
     private CompletableFuture<Void> internalDeletePartitionedTopicsAsync(Set<String> topicNames) {
@@ -420,10 +369,8 @@ public abstract class NamespacesBase extends AdminResource {
         }
         List<CompletableFuture<Void>> futures = new ArrayList<>();
         for (String topicName : topicNames) {
-            TopicName tn = TopicName.get(topicName);
-            futures.add(pulsar().getPulsarResources().getNamespaceResources().getPartitionedTopicResources()
-                    .runWithMarkDeleteAsync(tn,
-                            () -> namespaceResources().getPartitionedTopicResources().deletePartitionedTopicAsync(tn)));
+            futures.add(namespaceResources().getPartitionedTopicResources()
+                    .deletePartitionedTopicAsync(TopicName.get(topicName)));
         }
         return FutureUtil.waitForAll(futures);
     }
@@ -446,223 +393,95 @@ public abstract class NamespacesBase extends AdminResource {
         return FutureUtil.waitForAll(futures);
     }
 
-    @SuppressWarnings("deprecation")
-    protected void internalDeleteNamespaceForcefully(AsyncResponse asyncResponse, boolean authoritative) {
-        validateTenantOperation(namespaceName.getTenant(), TenantOperation.DELETE_NAMESPACE);
-        validatePoliciesReadOnlyAccess();
-
-        if (!pulsar().getConfiguration().isForceDeleteNamespaceAllowed()) {
-            asyncResponse.resume(
-                    new RestException(Status.METHOD_NOT_ALLOWED, "Broker doesn't allow forced deletion of namespaces"));
-            return;
-        }
-
-        // ensure that non-global namespace is directed to the correct cluster
-        if (!namespaceName.isGlobal()) {
-            validateClusterOwnership(namespaceName.getCluster());
-        }
-
-        Policies policies = null;
-
-        // ensure the local cluster is the only cluster for the global namespace configuration
-        try {
-            policies = namespaceResources().getPolicies(namespaceName).orElseThrow(
-                    () -> new RestException(Status.NOT_FOUND, "Namespace " + namespaceName + " does not exist."));
-            if (namespaceName.isGlobal()) {
-                if (policies.replication_clusters.size() > 1) {
-                    // There are still more than one clusters configured for the global namespace
-                    throw new RestException(Status.PRECONDITION_FAILED, "Cannot delete the global namespace "
-                            + namespaceName + ". There are still more than one replication clusters configured.");
-                }
-                if (policies.replication_clusters.size() == 1
-                        && !policies.replication_clusters.contains(config().getClusterName())) {
-                    // the only replication cluster is other cluster, redirect
-                    String replCluster = Lists.newArrayList(policies.replication_clusters).get(0);
-                    ClusterData replClusterData =
-                            clusterResources().getCluster(replCluster)
-                            .orElseThrow(() -> new RestException(Status.NOT_FOUND,
-                                    "Cluster " + replCluster + " does not exist"));
-                    URL replClusterUrl;
-                    if (!config().isTlsEnabled() || !isRequestHttps()) {
-                        replClusterUrl = new URL(replClusterData.getServiceUrl());
-                    } else if (StringUtils.isNotBlank(replClusterData.getServiceUrlTls())) {
-                        replClusterUrl = new URL(replClusterData.getServiceUrlTls());
-                    } else {
-                        throw new RestException(Status.PRECONDITION_FAILED,
-                                "The replication cluster does not provide TLS encrypted service");
-                    }
-                    URI redirect = UriBuilder.fromUri(uri.getRequestUri()).host(replClusterUrl.getHost())
-                            .port(replClusterUrl.getPort()).replaceQueryParam("authoritative", false).build();
-                    if (log.isDebugEnabled()) {
-                        log.debug("[{}] Redirecting the rest call to {}: cluster={}", clientAppId(), redirect,
-                                replCluster);
-                    }
-                    throw new WebApplicationException(Response.temporaryRedirect(redirect).build());
-                }
-            }
-        } catch (WebApplicationException wae) {
-            asyncResponse.resume(wae);
-            return;
-        } catch (Exception e) {
-            asyncResponse.resume(new RestException(e));
-            return;
-        }
-
-        List<String> topics;
-        try {
-            topics = pulsar().getNamespaceService().getFullListOfTopics(namespaceName)
-                    .get(config().getMetadataStoreOperationTimeoutSeconds(), TimeUnit.SECONDS);
-        } catch (Exception e) {
-            asyncResponse.resume(new RestException(e));
-            return;
-        }
-
-        // set the policies to deleted so that somebody else cannot acquire this namespace
-        try {
-            namespaceResources().setPolicies(namespaceName, old -> {
-                old.deleted = true;
-                return old;
-            });
-        } catch (Exception e) {
-            log.error("[{}] Failed to delete namespace on global ZK {}", clientAppId(), namespaceName, e);
-            asyncResponse.resume(new RestException(e));
-            return;
-        }
-
-        // remove from owned namespace map and ephemeral node from ZK
-        final List<CompletableFuture<Void>> topicFutures = Lists.newArrayList();
-        final List<CompletableFuture<Void>> bundleFutures = Lists.newArrayList();
-        try {
-            // firstly remove all topics including system topics
-            if (!topics.isEmpty()) {
-                Set<String> partitionedTopics = new HashSet<>();
-                Set<String> nonPartitionedTopics = new HashSet<>();
-                Set<String> allSystemTopics = new HashSet<>();
-                Set<String> allPartitionedSystemTopics = new HashSet<>();
-                Set<String> noPartitionedTopicPolicySystemTopic = new HashSet<>();
-                Set<String> partitionedTopicPolicySystemTopic = new HashSet<>();
-
-                for (String topic : topics) {
-                    try {
-                        TopicName topicName = TopicName.get(topic);
-                        if (topicName.isPartitioned()) {
-                            if (pulsar().getBrokerService().isSystemTopic(topicName)) {
-                                if (EventsTopicNames.isTopicPoliciesSystemTopic(topic)) {
-                                    partitionedTopicPolicySystemTopic.add(topicName.getPartitionedTopicName());
-                                } else {
-                                    allPartitionedSystemTopics.add(topicName.getPartitionedTopicName());
-                                }
-                                continue;
+    private CompletableFuture<Policies> precheckWhenDeleteNamespace(NamespaceName nsName, boolean force) {
+        CompletableFuture<Policies> preconditionCheck =
+                validateTenantOperationAsync(nsName.getTenant(), TenantOperation.DELETE_NAMESPACE)
+                        .thenCompose(__ -> validatePoliciesReadOnlyAccessAsync())
+                        .thenCompose(__ -> {
+                            if (force && !pulsar().getConfiguration().isForceDeleteNamespaceAllowed()) {
+                                throw new RestException(Status.METHOD_NOT_ALLOWED,
+                                        "Broker doesn't allow forced deletion of namespaces");
                             }
-                            String partitionedTopic = topicName.getPartitionedTopicName();
-                            if (!partitionedTopics.contains(partitionedTopic)) {
-                                if (!partitionedTopics.contains(partitionedTopic)
-                                        && !nonPartitionedTopics.contains(partitionedTopic)) {
-                                    partitionedTopics.add(partitionedTopic);
-                                } else {
-                                    continue;
-                                }
-                            }
-                        } else {
-                            if (pulsar().getBrokerService().isSystemTopic(topicName)) {
-                                if (EventsTopicNames.isTopicPoliciesSystemTopic(topic)) {
-                                    noPartitionedTopicPolicySystemTopic.add(topic);
-                                } else {
-                                    allSystemTopics.add(topic);
-                                }
-                                continue;
-                            }
-                            if (!partitionedTopics.contains(topic)
-                                    && !nonPartitionedTopics.contains(topic)) {
-                            nonPartitionedTopics.add(topic);
+                            // ensure that non-global namespace is directed to the correct cluster
+                            if (!nsName.isGlobal()) {
+                                return validateClusterOwnershipAsync(nsName.getCluster());
                             } else {
-                                continue;
+                                return CompletableFuture.completedFuture(null);
                             }
-                        }
-                        topicFutures.add(pulsar().getAdminClient().topics().deleteAsync(
-                                topic, true, true));
-                    } catch (Exception e) {
-                        String errorMessage = String.format("Failed to force delete topic %s, "
-                                        + "but the previous deletion command of partitioned-topics:%s "
-                                        + "and non-partitioned-topics:%s have been sent out asynchronously. "
-                                        + "Reason: %s",
-                                topic, partitionedTopics, nonPartitionedTopics, e.getCause());
-                        log.error("[{}] {}", clientAppId(), errorMessage, e);
-                        asyncResponse.resume(new RestException(Status.INTERNAL_SERVER_ERROR, errorMessage));
-                        return;
-                    }
-                }
+                        })
+                        .thenCompose(__ -> namespaceResources().getPoliciesAsync(nsName))
+                        .thenCompose(policiesOpt -> {
+                            if (!policiesOpt.isPresent()) {
+                                throw new RestException(Status.NOT_FOUND, "Namespace " + nsName + " does not exist.");
+                            }
+                            if (!nsName.isGlobal()) {
+                                return CompletableFuture.completedFuture(null);
+                            }
+                            Policies policies = policiesOpt.get();
+                            Set<String> replicationClusters = policies.replication_clusters;
+                            if (replicationClusters.size() > 1) {
+                                // There are still more than one clusters configured for the global namespace
+                                throw new RestException(Status.PRECONDITION_FAILED,
+                                        "Cannot delete the global namespace " + nsName + ". There are still more than "
+                                                + "one replication clusters configured.");
+                            }
+                            if (replicationClusters.size() == 1
+                                    && !policies.replication_clusters.contains(config().getClusterName())) {
+                                // the only replication cluster is other cluster, redirect
+                                String replCluster = new ArrayList<>(policies.replication_clusters).get(0);
+                                return clusterResources().getClusterAsync(replCluster)
+                                        .thenCompose(replClusterDataOpt -> {
+                                            ClusterData replClusterData = replClusterDataOpt
+                                                    .orElseThrow(() -> new RestException(Status.NOT_FOUND,
+                                                            "Cluster " + replCluster + " does not exist"));
+                                            URL replClusterUrl;
+                                            try {
+                                                if (!config().isTlsEnabled() || !isRequestHttps()) {
+                                                    replClusterUrl = new URL(replClusterData.getServiceUrl());
+                                                } else if (StringUtils.isNotBlank(replClusterData.getServiceUrlTls())) {
+                                                    replClusterUrl = new URL(replClusterData.getServiceUrlTls());
+                                                } else {
+                                                    throw new RestException(Status.PRECONDITION_FAILED,
+                                                            "The replication cluster does not provide TLS encrypted service");
+                                                }
+                                            } catch (MalformedURLException checkedEx) {
+                                                throw new RestException(checkedEx);
+                                            }
+                                            URI redirect = UriBuilder.fromUri(uri.getRequestUri())
+                                                    .host(replClusterUrl.getHost())
+                                                    .port(replClusterUrl.getPort())
+                                                    .replaceQueryParam("authoritative", false).build();
+                                            if (log.isDebugEnabled()) {
+                                                log.debug("[{}] Redirecting the rest call to {}: cluster={}",
+                                                        clientAppId(), redirect, replCluster);
+                                            }
+                                            throw new WebApplicationException(
+                                                    Response.temporaryRedirect(redirect).build());
+                                        });
+                            }
+                            return CompletableFuture.completedFuture(policies);
+                        });
+        return preconditionCheck;
+    }
+    // clear zk-node resources for deleting namespace
+    protected CompletableFuture<Void> internalClearZkSources() {
+        // clear resource of `/namespace/{namespaceName}` for zk-node
+        return namespaceResources().deleteNamespaceAsync(namespaceName)
+                .thenCompose(ignore -> namespaceResources().getPartitionedTopicResources()
+                        .clearPartitionedTopicMetadataAsync(namespaceName))
+                // clear resource for manager-ledger z-node
+                .thenCompose(ignore -> pulsar().getPulsarResources().getTopicResources()
+                        .clearDomainPersistence(namespaceName))
+                .thenCompose(ignore -> pulsar().getPulsarResources().getTopicResources()
+                        .clearNamespacePersistence(namespaceName))
+                // we have successfully removed all the ownership for the namespace, the policies
+                // z-node can be deleted now
+                .thenCompose(ignore -> namespaceResources().deletePoliciesAsync(namespaceName))
+                // clear z-node of local policies
+                .thenCompose(ignore -> getLocalPolicies().deleteLocalPoliciesAsync(namespaceName))
+                // clear /loadbalance/bundle-data
+                .thenCompose(ignore -> namespaceResources().deleteBundleDataAsync(namespaceName));
 
-
-                if (log.isDebugEnabled()) {
-                    log.debug("Successfully send deletion command of partitioned-topics:{} "
-                                    + "and non-partitioned-topics:{} in namespace:{}.",
-                            partitionedTopics, nonPartitionedTopics, namespaceName);
-                }
-
-                allPartitionedSystemTopics.removeAll(allSystemTopics);
-                partitionedTopicPolicySystemTopic.removeAll(noPartitionedTopicPolicySystemTopic);
-                final CompletableFuture<Throwable> topicFutureEx =
-                        FutureUtil.waitForAll(topicFutures)
-                                .thenCompose((ignore) -> internalDeleteTopicsAsync(allSystemTopics))
-                                .thenCompose((ignore) ->
-                                        internalDeletePartitionedTopicsAsync(allPartitionedSystemTopics))
-                                .thenCompose(ignore ->
-                                        internalDeletePartitionedTopicsAsync(partitionedTopicPolicySystemTopic))
-                                .thenCompose(ignore -> internalDeleteTopicsAsync(noPartitionedTopicPolicySystemTopic))
-                                .handle((result, exception) -> {
-                                    if (exception != null) {
-                                        if (exception.getCause() instanceof PulsarAdminException) {
-                                            asyncResponse.resume(
-                                                    new RestException((PulsarAdminException) exception.getCause()));
-                                        } else {
-                                            log.error("[{}] Failed to remove forcefully owned namespace {}",
-                                                    clientAppId(), namespaceName, exception);
-                                            asyncResponse.resume(new RestException(exception.getCause()));
-                                        }
-                                        return exception;
-                                    }
-                                    return null;
-                                });
-                if (topicFutureEx.join() != null) {
-                    return;
-                }
-            }
-
-            // forcefully delete namespace bundles
-            NamespaceBundles bundles = pulsar().getNamespaceService().getNamespaceBundleFactory()
-                    .getBundles(namespaceName);
-            for (NamespaceBundle bundle : bundles.getBundles()) {
-                // check if the bundle is owned by any broker, if not then we do not need to delete the bundle
-                if (pulsar().getNamespaceService().getOwner(bundle).isPresent()) {
-                    bundleFutures.add(pulsar().getAdminClient().namespaces()
-                            .deleteNamespaceBundleAsync(namespaceName.toString(), bundle.getBundleRange(), true));
-                }
-            }
-        } catch (Exception e) {
-            log.error("[{}] Failed to remove forcefully owned namespace {}", clientAppId(), namespaceName, e);
-            asyncResponse.resume(new RestException(e));
-            return;
-        }
-
-        FutureUtil.waitForAll(bundleFutures).thenCompose(__ -> internalClearZkSources()).handle((result, exception) -> {
-            if (exception != null) {
-                Throwable cause = FutureUtil.unwrapCompletionException(exception);
-                if (cause instanceof PulsarAdminException.ConflictException) {
-                    log.info("[{}] There are new topics created during the namespace deletion, "
-                            + "retry to force delete the namespace again.", namespaceName);
-                    pulsar().getExecutor().execute(() ->
-                            internalDeleteNamespaceForcefully(asyncResponse, authoritative));
-                } else {
-                    log.error("[{}] Failed to remove forcefully owned namespace {}",
-                            clientAppId(), namespaceName, cause);
-                    asyncResponse.resume(new RestException(cause));
-                }
-                return null;
-            }
-            asyncResponse.resume(Response.noContent().build());
-            return null;
-        });
     }
 
     @SuppressWarnings("deprecation")

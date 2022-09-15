@@ -60,6 +60,7 @@ import org.apache.pulsar.broker.loadbalance.LeaderElectionService;
 import org.apache.pulsar.broker.loadbalance.LoadManager;
 import org.apache.pulsar.broker.loadbalance.ResourceUnit;
 import org.apache.pulsar.broker.lookup.LookupResult;
+import org.apache.pulsar.broker.resources.NamespaceResources;
 import org.apache.pulsar.broker.service.BrokerServiceException.ServiceUnitNotReadyException;
 import org.apache.pulsar.broker.service.Topic;
 import org.apache.pulsar.broker.service.nonpersistent.NonPersistentTopic;
@@ -664,6 +665,10 @@ public class NamespaceService implements AutoCloseable {
         return lookupFuture;
     }
 
+    public CompletableFuture<Boolean> checkOwnershipPresentAsync(NamespaceBundle bundle) {
+        return getOwnerAsync(bundle).thenApply(Optional::isPresent);
+    }
+
     private boolean isBrokerActive(String candidateBroker) {
         String candidateBrokerHostAndPort = parseHostAndPort(candidateBroker);
         Set<String> availableBrokers = getAvailableBrokers();
@@ -1111,9 +1116,16 @@ public class NamespaceService implements AutoCloseable {
     public CompletableFuture<List<String>> getFullListOfTopics(NamespaceName namespaceName) {
         return getListOfPersistentTopics(namespaceName)
                 .thenCombine(getListOfNonPersistentTopics(namespaceName),
-                        (persistentTopics, nonPersistentTopics) -> {
-                            return ListUtils.union(persistentTopics, nonPersistentTopics);
-                        });
+                        ListUtils::union);
+    }
+
+    public CompletableFuture<List<String>> getFullListOfPartitionedTopic(NamespaceName namespaceName) {
+        NamespaceResources.PartitionedTopicResources partitionedTopicResources =
+                pulsar.getPulsarResources().getNamespaceResources().getPartitionedTopicResources();
+        return partitionedTopicResources.listPartitionedTopicsAsync(namespaceName, TopicDomain.persistent)
+                .thenCombine(partitionedTopicResources
+                                .listPartitionedTopicsAsync(namespaceName, TopicDomain.non_persistent),
+                        ListUtils::union);
     }
 
     public CompletableFuture<List<String>> getOwnedTopicListForNamespaceBundle(NamespaceBundle bundle) {
