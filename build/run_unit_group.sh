@@ -116,7 +116,7 @@ function other() {
                                                 **/ManagedLedgerTest.java,
                                                 **/TestPulsarKeyValueSchemaHandler.java,
                                                 **/PrimitiveSchemaTest.java,
-                                                BlobStoreManagedLedgerOffloaderTest.java' -DtestReuseFork=false
+                                                BlobStoreManagedLedgerOffloaderTest.java'
 
   $MVN_TEST_COMMAND -pl managed-ledger -Dinclude='**/ManagedLedgerTest.java,
                                                   **/OffloadersCacheTest.java'
