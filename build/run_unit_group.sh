@@ -116,7 +116,8 @@ function other() {
                                                 **/ManagedLedgerTest.java,
                                                 **/TestPulsarKeyValueSchemaHandler.java,
                                                 **/PrimitiveSchemaTest.java,
-                                                BlobStoreManagedLedgerOffloaderTest.java'
+                                                **/BlobStoreManagedLedgerOffloaderTest.java,
+                                                **/BlobStoreManagedLedgerOffloaderStreamingTest.java'
 
   $MVN_TEST_COMMAND -pl managed-ledger -Dinclude='**/ManagedLedgerTest.java,
                                                   **/OffloadersCacheTest.java'
@@ -126,6 +127,7 @@ function other() {
   $MVN_TEST_COMMAND -pl pulsar-client -Dinclude='**/PrimitiveSchemaTest.java'
 
   $MVN_TEST_COMMAND -pl tiered-storage/jcloud -Dinclude='**/BlobStoreManagedLedgerOffloaderTest.java'
+  $MVN_TEST_COMMAND -pl tiered-storage/jcloud -Dinclude='**/BlobStoreManagedLedgerOffloaderStreamingTest.java'
 
   echo "::endgroup::"
   local modules_with_quarantined_tests=$(git grep -l '@Test.*"quarantine"' | grep '/src/test/java/' | \
