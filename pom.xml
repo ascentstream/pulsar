@@ -288,6 +288,7 @@ flexible messaging model and an intuitive client API.</description>
     <lightproto-maven-plugin.version>0.4</lightproto-maven-plugin.version>
     <dependency-check-maven.version>9.1.0</dependency-check-maven.version>
     <roaringbitmap.version>0.9.44</roaringbitmap.version>
+    <oshi.version>6.4.0</oshi.version>
 
     <!-- Used to configure rename.netty.native. Libs -->
     <rename.netty.native.libs>rename-netty-native-libs.sh</rename.netty.native.libs>
@@ -1328,6 +1329,11 @@ flexible messaging model and an intuitive client API.</description>
         <groupId>org.roaringbitmap</groupId>
         <artifactId>RoaringBitmap</artifactId>
         <version>${roaringbitmap.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>com.github.oshi</groupId>
+        <artifactId>oshi-core-java11</artifactId>
+        <version>${oshi.version}</version>
       </dependency>
 
       <dependency>
