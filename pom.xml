@@ -103,7 +103,9 @@ flexible messaging model and an intuitive client API.</description>
     <testForkCount>4</testForkCount>
     <testRealAWS>false</testRealAWS>
     <testRetryCount>1</testRetryCount>
-    <testJacocoAgentArgument></testJacocoAgentArgument>
+    <testFailFast>true</testFailFast>
+    <testFailFastFile></testFailFastFile>
+    <testJacocoAgentArgument/>
     <docker.organization>apachepulsar</docker.organization>
     <docker.image>pulsar</docker.image>
     <docker.tag>latest</docker.tag>
@@ -1491,6 +1493,8 @@ flexible messaging model and an intuitive client API.</description>
           <systemPropertyVariables>
             <testRealAWS>${testRealAWS}</testRealAWS>
             <testRetryCount>${testRetryCount}</testRetryCount>
+            <testFailFast>${testFailFast}</testFailFast>
+            <testFailFastFile>${testFailFastFile}</testFailFastFile>
           </systemPropertyVariables>
           <properties>
             <property>
