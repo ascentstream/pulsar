@@ -24,6 +24,7 @@ import com.google.common.cache.CacheBuilder;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.util.concurrent.ExecutionError;
 import com.google.common.util.concurrent.UncheckedExecutionException;
+import io.confluent.connect.avro.AvroData;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
@@ -33,7 +34,6 @@ import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.SchemaBuilder;
 import org.apache.pulsar.client.api.schema.KeyValueSchema;
 import org.apache.pulsar.common.schema.SchemaType;
-import org.apache.pulsar.kafka.shade.io.confluent.connect.avro.AvroData;
 
 @Slf4j
 public class PulsarSchemaToKafkaSchema {
@@ -59,9 +59,8 @@ public class PulsarSchemaToKafkaSchema {
     }
 
     // Parse json to shaded schema
-    private static org.apache.pulsar.kafka.shade.avro.Schema parseAvroSchema(String schemaJson) {
-        final org.apache.pulsar.kafka.shade.avro.Schema.Parser parser =
-                new org.apache.pulsar.kafka.shade.avro.Schema.Parser();
+    private static org.apache.avro.Schema parseAvroSchema(String schemaJson) {
+        final org.apache.avro.Schema.Parser parser = new org.apache.avro.Schema.Parser();
         parser.setValidateDefaults(false);
         return parser.parse(schemaJson);
     }
@@ -72,23 +71,22 @@ public class PulsarSchemaToKafkaSchema {
                 return pulsarSchemaTypeToKafkaSchema.get(pulsarSchema.getSchemaInfo().getType());
             }
 
-            try {
-                return schemaCache.get(pulsarSchema.getSchemaInfo().getSchema(), () -> {
-                    if (pulsarSchema.getSchemaInfo().getType() == SchemaType.KEY_VALUE) {
-                        KeyValueSchema kvSchema = (KeyValueSchema) pulsarSchema;
-                        return SchemaBuilder.map(getKafkaConnectSchema(kvSchema.getKeySchema()),
-                                                 getKafkaConnectSchema(kvSchema.getValueSchema()))
-                                    .build();
-                    }
-                    org.apache.pulsar.kafka.shade.avro.Schema avroSchema =
-                            parseAvroSchema(new String(pulsarSchema.getSchemaInfo().getSchema(),
-                                    StandardCharsets.UTF_8));
-                    return avroData.toConnectSchema(avroSchema);
-                });
-            } catch (ExecutionException | UncheckedExecutionException | ExecutionError ee) {
-                throw logAndThrowOnUnsupportedSchema(pulsarSchema, "Failed to convert to Kafka Schema.", ee);
-            }
+        try {
+            return schemaCache.get(pulsarSchema.getSchemaInfo().getSchema(), () -> {
+                if (pulsarSchema.getSchemaInfo().getType() == SchemaType.KEY_VALUE) {
+                    KeyValueSchema kvSchema = (KeyValueSchema) pulsarSchema;
+                    return SchemaBuilder.map(getKafkaConnectSchema(kvSchema.getKeySchema()),
+                                             getKafkaConnectSchema(kvSchema.getValueSchema()))
+                                .build();
+                }
+                org.apache.avro.Schema avroSchema = parseAvroSchema(
+                        new String(pulsarSchema.getSchemaInfo().getSchema(), StandardCharsets.UTF_8));
+                return avroData.toConnectSchema(avroSchema);
+            });
+        } catch (ExecutionException | UncheckedExecutionException | ExecutionError ee) {
+            throw logAndThrowOnUnsupportedSchema(pulsarSchema, "Failed to convert to Kafka Schema.", ee);
         }
+    }
 
         throw logAndThrowOnUnsupportedSchema(pulsarSchema, "Schema is required.", null);
     }

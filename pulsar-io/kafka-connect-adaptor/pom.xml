@@ -80,20 +80,11 @@
       <version>${project.version}</version>
     </dependency>
 
+    <!-- confluent connect avro converter -->
     <dependency>
-      <groupId>${project.groupId}</groupId>
-      <artifactId>kafka-connect-avro-converter-shaded</artifactId>
-      <version>${project.version}</version>
-      <exclusions>
-        <exclusion>
-          <groupId>io.confluent</groupId>
-          <artifactId>*</artifactId>
-        </exclusion>
-        <exclusion>
-          <groupId>org.apache.avro</groupId>
-          <artifactId>*</artifactId>
-        </exclusion>
-      </exclusions>
+      <groupId>io.confluent</groupId>
+      <artifactId>kafka-connect-avro-converter</artifactId>
+      <version>${confluent.version}</version>
     </dependency>
 
     <dependency>
