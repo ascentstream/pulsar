@@ -498,6 +498,7 @@ public class ModularLoadManagerImpl implements ModularLoadManager {
             for (LoadSheddingStrategy loadSheddingStrategy : loadSheddingPipeline) {
                 loadSheddingStrategy.onActiveBrokersChange(activeBrokers);
             }
+            placementStrategy.onActiveBrokersChange(activeBrokers);
         }
     }
 
