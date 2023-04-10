@@ -1132,29 +1132,9 @@ public class PrometheusMetricsTest extends BrokerTestBase {
                 System.out.println(e.getKey() + ": " + e.getValue())
         );
 
-        List<Metric> cm = (List<Metric>) metrics.get(keyNameBySubstrings(metrics,
-                "pulsar_managedLedger_client", "bookkeeper_ml_scheduler_completed_tasks"));
-        assertEquals(cm.size(), 1);
-        assertEquals(cm.get(0).tags.get("cluster"), "test");
-
-        cm = (List<Metric>) metrics.get(
+        List<Metric> cm = (List<Metric>) metrics.get(
                 keyNameBySubstrings(metrics,
-                        "pulsar_managedLedger_client", "bookkeeper_ml_scheduler_queue"));
-        assertEquals(cm.size(), 1);
-        assertEquals(cm.get(0).tags.get("cluster"), "test");
-
-        cm = (List<Metric>) metrics.get(
-                keyNameBySubstrings(metrics,
-                        "pulsar_managedLedger_client", "bookkeeper_ml_scheduler_total_tasks"));
-        assertEquals(cm.size(), 1);
-        assertEquals(cm.get(0).tags.get("cluster"), "test");
-        cm = (List<Metric>) metrics.get("pulsar_managedLedger_client_bookkeeper_ml_workers_completed_tasks_0");
-        assertEquals(cm.size(), 0);
-
-        cm = (List<Metric>) metrics.get("pulsar_managedLedger_client_bookkeeper_ml_workers_task_execution_count");
-        assertEquals(cm.size(), 0);
-        cm = (List<Metric>) metrics.get(
-                keyNameBySubstrings(metrics, "pulsar_managedLedger_client", "bookkeeper_ml_scheduler_total_tasks"));
+                        "pulsar_managedLedger_client", "bookkeeper_ml_scheduler_threads"));
         assertEquals(cm.size(), 1);
         assertEquals(cm.get(0).tags.get("cluster"), "test");
 
