@@ -19,6 +19,7 @@
 package org.apache.pulsar.tests.integration.topologies;
 
 import java.util.Collections;
+import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 
@@ -145,6 +146,11 @@ public class PulsarClusterSpec {
     Map<String, String> brokerEnvs;
 
     /**
+     * Specify envs for bookkeeper.
+     */
+    Map<String, String> bookkeeperEnvs;
+
+    /**
      * Specify mount files.
      */
     Map<String, String> proxyMountFiles;
@@ -156,4 +162,9 @@ public class PulsarClusterSpec {
 
     @Default
     int maxMessageSize = Commands.DEFAULT_MAX_MESSAGE_SIZE;
+
+    /**
+     * Additional ports to expose on bookie containers.
+     */
+    List<Integer> bookieAdditionalPorts;
 }

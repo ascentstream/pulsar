@@ -19,6 +19,8 @@
 package org.apache.pulsar.tests.integration.topologies;
 
 import java.util.HashMap;
+import java.util.LinkedList;
+import java.util.List;
 import java.util.Map;
 import java.util.function.Supplier;
 import lombok.extern.slf4j.Slf4j;
@@ -32,6 +34,8 @@ import static java.util.stream.Collectors.joining;
 @Slf4j
 public abstract class PulsarClusterTestBase extends PulsarTestBase {
     protected final Map<String, String> brokerEnvs = new HashMap<>();
+    protected final Map<String, String> bookkeeperEnvs = new HashMap<>();
+    protected final List<Integer> bookieAdditionalPorts = new LinkedList<>();
 
     @Override
     protected final void setup() throws Exception {
