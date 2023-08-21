@@ -2404,7 +2404,9 @@ public class PersistentTopic extends AbstractTopic implements Topic, AddEntryCal
     public void checkInactiveSubscriptions(long expirationTimeMillis) {
         if (expirationTimeMillis > 0) {
             subscriptions.forEach((subName, sub) -> {
-                if (sub.dispatcher != null && sub.dispatcher.isConsumerConnected() || sub.isReplicated()) {
+                if (sub.dispatcher != null && sub.dispatcher.isConsumerConnected()
+                        || sub.isReplicated()
+                        || isCompactionSubscription(subName)) {
                     return;
                 }
                 if (System.currentTimeMillis() - sub.cursor.getLastActive() > expirationTimeMillis) {

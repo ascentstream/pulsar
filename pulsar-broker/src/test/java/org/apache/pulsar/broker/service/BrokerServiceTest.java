@@ -109,6 +109,7 @@ import org.apache.pulsar.common.protocol.Commands;
 import org.apache.pulsar.common.util.netty.EventLoopUtil;
 import org.apache.zookeeper.KeeperException;
 import org.apache.zookeeper.MockZooKeeper;
+import org.apache.pulsar.compaction.Compactor;
 import org.awaitility.Awaitility;
 import org.glassfish.jersey.client.JerseyClient;
 import org.glassfish.jersey.client.JerseyClientBuilder;
@@ -1240,6 +1241,69 @@ public class BrokerServiceTest extends BrokerTestBase {
                 finalPersistentTopic1.getSubscriptions().containsKey("sub1"));
         sub = persistentTopic.getSubscription("sub1");
         assertNotNull(sub);
+    }
+
+    @Test
+    public void testCheckInactiveSubscriptionsShouldNotDeleteCompactionCursor() throws Exception {
+        String namespace = "prop/test";
+
+        // set up broker set compaction threshold.
+        cleanup();
+        conf.setBrokerServiceCompactionThresholdInBytes(8);
+        setup();
+
+        try {
+            admin.namespaces().createNamespace(namespace);
+        } catch (PulsarAdminException.ConflictException e) {
+            // Ok.. (if test fails intermittently and namespace is already created)
+        }
+
+        // set enable subscription expiration.
+        admin.namespaces().setSubscriptionExpirationTime(namespace, 1);
+
+        String compactionInactiveTestTopic = "persistent://prop/test/testCompactionCursorShouldNotDelete";
+
+        admin.topics().createNonPartitionedTopic(compactionInactiveTestTopic);
+
+        CompletableFuture<Optional<Topic>> topicCf =
+                pulsar.getBrokerService().getTopic(compactionInactiveTestTopic, true);
+
+        Optional<Topic> topicOptional = topicCf.get();
+        assertTrue(topicOptional.isPresent());
+
+        PersistentTopic topic = (PersistentTopic) topicOptional.get();
+
+        PersistentSubscription sub = (PersistentSubscription) topic.getSubscription(Compactor.COMPACTION_SUBSCRIPTION);
+        assertNotNull(sub);
+
+        topic.checkCompaction();
+
+        Field currentCompaction = PersistentTopic.class.getDeclaredField("currentCompaction");
+        currentCompaction.setAccessible(true);
+        CompletableFuture<Long> compactionFuture = (CompletableFuture<Long>)currentCompaction.get(topic);
+
+        compactionFuture.get();
+
+        ManagedCursorImpl cursor = (ManagedCursorImpl) sub.getCursor();
+
+        // make cursor last active time to very small to check if it will be deleted
+        Field cursorLastActiveField = ManagedCursorImpl.class.getDeclaredField("lastActive");
+        cursorLastActiveField.setAccessible(true);
+        cursorLastActiveField.set(cursor, 0);
+
+        // replace origin object. so we can check if subscription is deleted.
+        PersistentSubscription spySubscription = Mockito.spy(sub);
+        topic.getSubscriptions().put(Compactor.COMPACTION_SUBSCRIPTION, spySubscription);
+
+        // trigger inactive check.
+        topic.checkInactiveSubscriptions();
+
+        // Compaction subscription should not call delete method.
+        Mockito.verify(spySubscription, Mockito.never()).delete();
+
+        // check if the subscription exist.
+        assertNotNull(topic.getSubscription(Compactor.COMPACTION_SUBSCRIPTION));
+
     }
 
     /**
