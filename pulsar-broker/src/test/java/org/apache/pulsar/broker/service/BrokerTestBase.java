@@ -58,7 +58,7 @@ public abstract class BrokerTestBase extends MockedPulsarServiceBaseTest {
         }
     }
 
-    void runGC() {
+    protected void runGC() {
         try {
             pulsar.getBrokerService().forEachTopic(topic -> {
                 if (topic instanceof AbstractTopic) {
