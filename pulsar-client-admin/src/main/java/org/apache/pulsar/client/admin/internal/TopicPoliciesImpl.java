@@ -1420,6 +1420,54 @@ public class TopicPoliciesImpl extends BaseResource implements TopicPolicies {
         return asyncDeleteRequest(path);
     }
 
+    @Override
+    public String getResourceGroup(String topic, boolean applied) throws PulsarAdminException {
+        return sync(() -> getResourceGroupAsync(topic, applied));
+    }
+
+    @Override
+    public CompletableFuture<String> getResourceGroupAsync(String topic, boolean applied) {
+        TopicName tn = validateTopic(topic);
+        WebTarget path = topicPath(tn, "resourceGroup");
+        path = path.queryParam("applied", applied);
+        final CompletableFuture<String> future = new CompletableFuture<>();
+        asyncGetRequest(path,
+                new InvocationCallback<String>() {
+                    @Override
+                    public void completed(String rgName) {
+                        future.complete(rgName);
+                    }
+
+                    @Override
+                    public void failed(Throwable throwable) {
+                        future.completeExceptionally(getApiException(throwable.getCause()));
+                    }
+                });
+        return future;
+    }
+
+    @Override
+    public void setResourceGroup(String topic, String resourceGroupName) throws PulsarAdminException {
+        sync(() -> setResourceGroupAsync(topic, resourceGroupName));
+    }
+
+    @Override
+    public CompletableFuture<Void> setResourceGroupAsync(String topic, String resourceGroupName) {
+        TopicName tn = validateTopic(topic);
+        WebTarget path = topicPath(tn, "resourceGroup");
+        return asyncPostRequest(path, Entity.entity(resourceGroupName, MediaType.APPLICATION_JSON_TYPE));
+    }
+
+    @Override
+    public void removeResourceGroup(String topic) throws PulsarAdminException {
+        sync(() -> removeResourceGroupAsync(topic));
+    }
+
+    @Override
+    public CompletableFuture<Void> removeResourceGroupAsync(String topic) {
+        return setResourceGroupAsync(topic, null);
+    }
+
     /*
      * returns topic name with encoded Local Name
      */

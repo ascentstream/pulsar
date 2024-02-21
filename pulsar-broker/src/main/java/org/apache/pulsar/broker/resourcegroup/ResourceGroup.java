@@ -69,7 +69,7 @@ public class ResourceGroup {
     public enum ResourceGroupRefTypes {
         Tenants,
         Namespaces,
-        // Topics;  // Punt this for when we support direct ref/under from topics.
+        Topics
     }
 
     // Default ctor: it is not expected that anything outside of this package will need to directly
@@ -113,6 +113,7 @@ public class ResourceGroup {
 
         this.resourceGroupNamespaceRefs = other.resourceGroupNamespaceRefs;
         this.resourceGroupTenantRefs = other.resourceGroupTenantRefs;
+        this.resourceGroupTopicRefs = other.resourceGroupTopicRefs;
 
         for (int idx = 0; idx < ResourceGroupMonitoringClass.values().length; idx++) {
             PerMonitoringClassFields thisFields = this.monitoringClassFields[idx];
@@ -151,6 +152,10 @@ public class ResourceGroup {
         return this.resourceGroupNamespaceRefs.size();
     }
 
+    protected long getResourceGroupNumOfTopicRefs() {
+        return this.resourceGroupTopicRefs.size();
+    }
+
     protected long getResourceGroupNumOfTenantRefs() {
         return this.resourceGroupTenantRefs.size();
     }
@@ -168,6 +173,8 @@ public class ResourceGroup {
             case Namespaces:
                 set = this.resourceGroupNamespaceRefs;
                 break;
+            case Topics:
+                set = this.resourceGroupTopicRefs;
         }
 
         if (ref) {
@@ -178,7 +185,8 @@ public class ResourceGroup {
             set.add(name);
 
             // If this is the first ref, register with the transport manager.
-            if (this.resourceGroupTenantRefs.size() + this.resourceGroupNamespaceRefs.size() == 1) {
+            if (this.resourceGroupTenantRefs.size() + this.resourceGroupNamespaceRefs.size()
+                    + this.resourceGroupTopicRefs.size() == 1) {
                 if (log.isDebugEnabled()) {
                     log.debug("registerUsage for RG={}: registering with transport-mgr", this.resourceGroupName);
                 }
@@ -193,7 +201,8 @@ public class ResourceGroup {
             set.remove(name);
 
             // If this was the last ref, unregister from the transport manager.
-            if (this.resourceGroupTenantRefs.size() + this.resourceGroupNamespaceRefs.size() == 0) {
+            if (this.resourceGroupTenantRefs.size() + this.resourceGroupNamespaceRefs.size()
+                    + this.resourceGroupTopicRefs.size() == 0) {
                 if (log.isDebugEnabled()) {
                     log.debug("unRegisterUsage for RG={}: un-registering from transport-mgr", this.resourceGroupName);
                 }
@@ -606,6 +615,7 @@ public class ResourceGroup {
     // across all of its usage classes (publish/dispatch/...).
     private Set<String> resourceGroupTenantRefs = ConcurrentHashMap.newKeySet();
     private Set<String> resourceGroupNamespaceRefs = ConcurrentHashMap.newKeySet();
+    private Set<String> resourceGroupTopicRefs = ConcurrentHashMap.newKeySet();
 
     // Blobs required for transport manager's resource-usage register/unregister ops.
     ResourceUsageConsumer ruConsumer;

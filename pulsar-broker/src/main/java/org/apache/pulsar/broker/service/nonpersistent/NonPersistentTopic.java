@@ -170,7 +170,7 @@ public class NonPersistentTopic extends AbstractTopic implements Topic, TopicPol
                         schemaValidationEnforced = policies.schema_validation_enforced;
                     }
                     updatePublishRateLimiter();
-                    updateResourceGroupLimiter(policies);
+                    updateResourceGroupLimiter();
                 });
     }
 
@@ -444,6 +444,9 @@ public class NonPersistentTopic extends AbstractTopic implements Topic, TopicPol
                             brokerService.executor().execute(() -> {
                                 brokerService.removeTopicFromCache(NonPersistentTopic.this);
                                 unregisterTopicPolicyListener();
+
+                                closeResourceGroupLimiter();
+
                                 log.info("[{}] Topic deleted", topic);
                                 deleteFuture.complete(null);
                             });
@@ -511,6 +514,7 @@ public class NonPersistentTopic extends AbstractTopic implements Topic, TopicPol
             brokerService.executor().execute(() -> {
                 brokerService.removeTopicFromCache(NonPersistentTopic.this);
                 unregisterTopicPolicyListener();
+                closeResourceGroupLimiter();
                 closeFuture.complete(null);
             });
         }).exceptionally(exception -> {

@@ -167,9 +167,11 @@ public class ResourceGroupService implements AutoCloseable{
 
         long tenantRefCount = rg.getResourceGroupNumOfTenantRefs();
         long nsRefCount = rg.getResourceGroupNumOfNSRefs();
-        if ((tenantRefCount + nsRefCount) > 0) {
+        long topicRefCount = rg.getResourceGroupNumOfTopicRefs();
+        if ((tenantRefCount + nsRefCount + topicRefCount) > 0) {
             String errMesg = "Resource group " + name + " still has " + tenantRefCount + " tenant refs";
             errMesg += " and " + nsRefCount + " namespace refs on it";
+            errMesg += " and " + topicRefCount + " topic refs on it";
             throw new PulsarAdminException(errMesg);
         }
 
@@ -294,6 +296,45 @@ public class ResourceGroupService implements AutoCloseable{
     }
 
     /**
+     * Registers a topic as a user of a resource group.
+     *
+     * @param resourceGroupName
+     * @param topicName         complete topic name
+     */
+    public void registerTopic(String resourceGroupName, TopicName topicName) {
+        ResourceGroup rg = resourceGroupsMap.get(resourceGroupName);
+        if (rg == null) {
+            throw new IllegalStateException("Resource group does not exist: " + resourceGroupName);
+        }
+
+        ResourceGroupOpStatus status = rg.registerUsage(topicName.toString(), ResourceGroupRefTypes.Topics,
+                true, this.resourceUsageTransportManagerMgr);
+        if (status == ResourceGroupOpStatus.Exists) {
+            String msg = String.format("Topic %s already references the target resource group %s",
+                    topicName, resourceGroupName);
+            throw new IllegalStateException(msg);
+        }
+
+        // Associate this topic-name with the RG.
+        this.topicToRGsMap.put(topicName, rg);
+        rgTopicRegisters.labels(resourceGroupName).inc();
+    }
+
+    /**
+     * UnRegisters a topic from a resource group.
+     *
+     * @param topicName         complete topic name
+     */
+    public void unRegisterTopic(TopicName topicName) {
+        ResourceGroup remove = this.topicToRGsMap.remove(topicName);
+        if (remove != null) {
+            remove.registerUsage(topicName.toString(), ResourceGroupRefTypes.Topics,
+                    false, this.resourceUsageTransportManagerMgr);
+            rgTopicUnRegisters.labels(remove.resourceGroupName).inc();
+        }
+    }
+
+    /**
      * Return the resource group associated with a namespace.
      *
      * @param namespaceName
@@ -301,6 +342,11 @@ public class ResourceGroupService implements AutoCloseable{
      */
     public ResourceGroup getNamespaceResourceGroup(NamespaceName namespaceName) {
         return this.namespaceToRGsMap.get(namespaceName);
+    }
+
+    @VisibleForTesting
+    public ResourceGroup getTopicResourceGroup(TopicName topicName) {
+        return this.topicToRGsMap.get(topicName);
     }
 
     @Override
@@ -318,8 +364,16 @@ public class ResourceGroupService implements AutoCloseable{
         topicConsumeStats.clear();
     }
 
+    private void incrementUsage(ResourceGroup resourceGroup,
+                                ResourceGroupMonitoringClass monClass, BytesAndMessagesCount incStats)
+            throws PulsarAdminException {
+        resourceGroup.incrementLocalUsageStats(monClass, incStats);
+        rgLocalUsageBytes.labels(resourceGroup.resourceGroupName, monClass.name()).inc(incStats.bytes);
+        rgLocalUsageMessages.labels(resourceGroup.resourceGroupName, monClass.name()).inc(incStats.messages);
+    }
+
     /**
-     * Increments usage stats for the resource groups associated with the given namespace and tenant.
+     * Increments usage stats for the resource groups associated with the given namespace, tenant, and topic.
      * Expected to be called when a message is produced or consumed on a topic, or when we calculate
      * usage periodically in the background by going through broker-service stats. [Not yet decided
      * which model we will follow.] Broker-service stats will be cumulative, while calls from the
@@ -327,22 +381,25 @@ public class ResourceGroupService implements AutoCloseable{
      *
      * If the tenant and NS are associated with different RGs, the statistics on both RGs are updated.
      * If the tenant and NS are associated with the same RG, the stats on the RG are updated only once
+     * If the tenant, NS and topic are associated with the same RG, the stats on the RG are updated only once
      * (to avoid a direct double-counting).
      * ToDo: will this distinction result in "expected semantics", or shock from users?
      * For now, the only caller is internal to this class.
      *
+     * @param topicName Complete topic name
      * @param tenantName
-     * @param nsName
+     * @param nsName Complete namespace name
      * @param monClass
      * @param incStats
      * @returns true if the stats were updated; false if nothing was updated.
      */
-    protected boolean incrementUsage(String tenantName, String nsName,
-                                  ResourceGroupMonitoringClass monClass,
-                                  BytesAndMessagesCount incStats) throws PulsarAdminException {
-        final ResourceGroup nsRG = this.namespaceToRGsMap.get(NamespaceName.get(tenantName, nsName));
+    protected boolean incrementUsage(String topicName, String tenantName, String nsName,
+                                     ResourceGroupMonitoringClass monClass,
+                                     BytesAndMessagesCount incStats) throws PulsarAdminException {
+        final ResourceGroup nsRG = this.namespaceToRGsMap.get(NamespaceName.get(nsName));
         final ResourceGroup tenantRG = this.tenantToRGsMap.get(tenantName);
-        if (tenantRG == null && nsRG == null) {
+        final ResourceGroup topicRG = this.topicToRGsMap.get(TopicName.get(topicName));
+        if (tenantRG == null && nsRG == null && topicRG == null) {
             return false;
         }
 
@@ -353,24 +410,40 @@ public class ResourceGroupService implements AutoCloseable{
             throw new PulsarAdminException(errMesg);
         }
 
-        if (nsRG == tenantRG) {
+        if (tenantRG == nsRG && nsRG == topicRG) {
             // Update only once in this case.
-            // Note that we will update both tenant and namespace RGs in other cases.
-            nsRG.incrementLocalUsageStats(monClass, incStats);
-            rgLocalUsageMessages.labels(nsRG.resourceGroupName, monClass.name()).inc(incStats.messages);
-            rgLocalUsageBytes.labels(nsRG.resourceGroupName, monClass.name()).inc(incStats.bytes);
+            // Note that we will update both tenant, namespace and topic RGs in other cases.
+            incrementUsage(tenantRG, monClass, incStats);
+            return true;
+        }
+
+        if (tenantRG != null && tenantRG == nsRG) {
+            // Tenant and Namespace GRs are same.
+            incrementUsage(tenantRG, monClass, incStats);
+            if (topicRG == null) {
+                return true;
+            }
+        }
+
+        if (nsRG != null && nsRG == topicRG) {
+            // Namespace and Topic GRs are same.
+            incrementUsage(nsRG, monClass, incStats);
             return true;
         }
 
         if (tenantRG != null) {
-            tenantRG.incrementLocalUsageStats(monClass, incStats);
-            rgLocalUsageMessages.labels(tenantRG.resourceGroupName, monClass.name()).inc(incStats.messages);
-            rgLocalUsageBytes.labels(tenantRG.resourceGroupName, monClass.name()).inc(incStats.bytes);
+            // Tenant GR is different from other resource GR.
+            incrementUsage(tenantRG, monClass, incStats);
         }
+
         if (nsRG != null) {
-            nsRG.incrementLocalUsageStats(monClass, incStats);
-            rgLocalUsageMessages.labels(nsRG.resourceGroupName, monClass.name()).inc(incStats.messages);
-            rgLocalUsageBytes.labels(nsRG.resourceGroupName, monClass.name()).inc(incStats.bytes);
+            // Namespace GR is different from other resource GR.
+            incrementUsage(nsRG, monClass, incStats);
+        }
+
+        if (topicRG != null) {
+            // Topic GR is different from other resource GR.
+            incrementUsage(topicRG, monClass, incStats);
         }
 
         return true;
@@ -459,7 +532,7 @@ public class ResourceGroupService implements AutoCloseable{
         }
 
         try {
-            boolean statsUpdated = this.incrementUsage(tenantString, nsString, monClass, bmDiff);
+            boolean statsUpdated = this.incrementUsage(topicName, tenantString, nsString, monClass, bmDiff);
             if (log.isDebugEnabled()) {
                 log.debug("updateStatsWithDiff for topic={}: monclass={} statsUpdated={} for tenant={}, namespace={}; "
                                 + "by {} bytes, {} mesgs",
@@ -550,14 +623,15 @@ public class ResourceGroupService implements AutoCloseable{
             final TopicStats topicStats = entry.getValue();
             final TopicName topic = TopicName.get(topicName);
             final String tenantString = topic.getTenant();
-            final String nsString = topic.getNamespacePortion();
+            final String nsString = topic.getNamespace();
             final NamespaceName fqNamespace = topic.getNamespaceObject();
 
             // Can't use containsKey here, as that checks for exact equality
             // (we need a check for string-comparison).
             val tenantRG = this.tenantToRGsMap.get(tenantString);
             val namespaceRG = this.namespaceToRGsMap.get(fqNamespace);
-            if (tenantRG == null && namespaceRG == null) {
+            val topicRG = this.topicToRGsMap.get(topic);
+            if (tenantRG == null && namespaceRG == null && topicRG == null) {
                 // This topic's NS/tenant are not registered to any RG.
                 continue;
             }
@@ -745,6 +819,7 @@ public class ResourceGroupService implements AutoCloseable{
 
     // Given a qualified NS-name (i.e., in "tenant/namespace" format), record its associated resource-group
     private ConcurrentHashMap<NamespaceName, ResourceGroup> namespaceToRGsMap = new ConcurrentHashMap<>();
+    private ConcurrentHashMap<TopicName, ResourceGroup> topicToRGsMap = new ConcurrentHashMap<>();
 
     // Maps to maintain the usage per topic, in produce/consume directions.
     private ConcurrentHashMap<String, BytesAndMessagesCount> topicProduceStats = new ConcurrentHashMap<>();
@@ -829,6 +904,17 @@ public class ResourceGroupService implements AutoCloseable{
     private static final Counter rgNamespaceUnRegisters = Counter.build()
             .name("pulsar_resource_group_namespace_unregisters")
             .help("Number of un-registrations of namespaces")
+            .labelNames(resourceGroupLabel)
+            .register();
+
+    private static final Counter rgTopicRegisters = Counter.build()
+            .name("pulsar_resource_group_topic_registers")
+            .help("Number of registrations of topics")
+            .labelNames(resourceGroupLabel)
+            .register();
+    private static final Counter rgTopicUnRegisters = Counter.build()
+            .name("pulsar_resource_group_topic_unregisters")
+            .help("Number of un-registrations of topics")
             .labelNames(resourceGroupLabel)
             .register();
 

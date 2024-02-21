@@ -71,6 +71,7 @@ public class TopicPolicies {
     private Integer maxSubscriptionsPerTopic;
     private DispatchRateImpl replicatorDispatchRate;
     private SchemaCompatibilityStrategy schemaCompatibilityStrategy;
+    private String resourceGroupName;
 
     public boolean isGlobalPolicies() {
         return isGlobal != null && isGlobal;
