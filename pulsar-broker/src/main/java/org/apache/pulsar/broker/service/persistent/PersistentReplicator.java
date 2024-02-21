@@ -44,6 +44,9 @@ import org.apache.bookkeeper.mledger.ManagedLedgerException.TooManyRequestsExcep
 import org.apache.bookkeeper.mledger.Position;
 import org.apache.bookkeeper.mledger.impl.PositionImpl;
 import org.apache.pulsar.broker.PulsarServerException;
+import org.apache.pulsar.broker.resourcegroup.ResourceGroup;
+import org.apache.pulsar.broker.resourcegroup.ResourceGroupDispatchLimiter;
+import org.apache.pulsar.broker.resourcegroup.ResourceGroupService;
 import org.apache.pulsar.broker.service.AbstractReplicator;
 import org.apache.pulsar.broker.service.BrokerService;
 import org.apache.pulsar.broker.service.BrokerServiceException.TopicBusyException;
@@ -57,6 +60,7 @@ import org.apache.pulsar.client.impl.ProducerImpl;
 import org.apache.pulsar.client.impl.PulsarClientImpl;
 import org.apache.pulsar.client.impl.SendCallback;
 import org.apache.pulsar.common.api.proto.MarkerType;
+import org.apache.pulsar.common.policies.data.HierarchyTopicPolicies;
 import org.apache.pulsar.common.policies.data.stats.ReplicatorStatsImpl;
 import org.apache.pulsar.common.schema.SchemaInfo;
 import org.apache.pulsar.common.stats.Rate;
@@ -71,6 +75,7 @@ public class PersistentReplicator extends AbstractReplicator
     protected final ManagedCursor cursor;
 
     private Optional<DispatchRateLimiter> dispatchRateLimiter = Optional.empty();
+    protected Optional<ResourceGroupDispatchLimiter> resourceGroupDispatchRateLimiter = Optional.empty();
     private final Object dispatchRateLimiterLock = new Object();
 
     private int readBatchSize;
@@ -195,27 +200,51 @@ public class PersistentReplicator extends AbstractReplicator
             return 0;
         }
 
+        long availablePermitsOnMsg = -1;
+
         // handle rate limit
         if (dispatchRateLimiter.isPresent() && dispatchRateLimiter.get().isDispatchRateLimitingEnabled()) {
             DispatchRateLimiter rateLimiter = dispatchRateLimiter.get();
-            // no permits from rate limit
-            if (!rateLimiter.hasMessageDispatchPermit()) {
+            // if dispatch-rate is in msg then read only msg according to available permit
+            availablePermitsOnMsg = rateLimiter.getAvailableDispatchRateLimitOnMsg();
+            long availablePermitsOnByte = rateLimiter.getAvailableDispatchRateLimitOnByte();
+            if (availablePermitsOnByte == 0 || availablePermitsOnMsg == 0) {
                 if (log.isDebugEnabled()) {
-                    log.debug("[{}][{} -> {}] message-read exceeded topic replicator message-rate {}/{},"
+                    log.debug("[{}] message-read exceeded topic replicator message-rate {}/{},"
                                     + " schedule after a {}",
-                            topicName, localCluster, remoteCluster,
+                            replicatorId,
                             rateLimiter.getDispatchRateOnMsg(),
                             rateLimiter.getDispatchRateOnByte(),
                             MESSAGE_RATE_BACKOFF_MS);
                 }
                 return -1;
             }
+        }
 
-            // if dispatch-rate is in msg then read only msg according to available permit
-            long availablePermitsOnMsg = rateLimiter.getAvailableDispatchRateLimitOnMsg();
-            if (availablePermitsOnMsg > 0) {
-                availablePermits = Math.min(availablePermits, (int) availablePermitsOnMsg);
+        if (resourceGroupDispatchRateLimiter.isPresent()) {
+            ResourceGroupDispatchLimiter rateLimiter = resourceGroupDispatchRateLimiter.get();
+            long rgAvailablePermitsOnMsg = rateLimiter.getAvailableDispatchRateLimitOnMsg();
+            long rgAvailablePermitsOnByte = rateLimiter.getAvailableDispatchRateLimitOnByte();
+            if (rgAvailablePermitsOnMsg == 0 || rgAvailablePermitsOnByte == 0) {
+                if (log.isDebugEnabled()) {
+                    log.debug("[{}] message-read exceeded resourcegroup message-rate {}/{},"
+                                    + " schedule after a {}",
+                            replicatorId,
+                            rateLimiter.getDispatchRateOnMsg(),
+                            rateLimiter.getDispatchRateOnByte(),
+                            MESSAGE_RATE_BACKOFF_MS);
+                }
+                return -1;
             }
+            if (availablePermitsOnMsg == -1) {
+                availablePermitsOnMsg = rgAvailablePermitsOnMsg;
+            } else {
+                availablePermitsOnMsg = Math.min(rgAvailablePermitsOnMsg, availablePermitsOnMsg);
+            }
+        }
+
+        if (availablePermitsOnMsg > 0) {
+            availablePermits = Math.min(availablePermits, (int) availablePermitsOnMsg);
         }
 
         return availablePermits;
@@ -752,19 +781,32 @@ public class PersistentReplicator extends AbstractReplicator
     }
 
     @Override
+    public Optional<ResourceGroupDispatchLimiter> getResourceGroupDispatchRateLimiter() {
+        return resourceGroupDispatchRateLimiter;
+    }
+
+    @Override
     public void initializeDispatchRateLimiterIfNeeded() {
         synchronized (dispatchRateLimiterLock) {
             if (!dispatchRateLimiter.isPresent()
                 && DispatchRateLimiter.isDispatchRateEnabled(topic.getReplicatorDispatchRate())) {
                 this.dispatchRateLimiter = Optional.of(new DispatchRateLimiter(topic, Type.REPLICATOR));
             }
-        }
-    }
 
-    @Override
-    public void updateRateLimiter() {
-        initializeDispatchRateLimiterIfNeeded();
-        dispatchRateLimiter.ifPresent(DispatchRateLimiter::updateDispatchRate);
+            ResourceGroupService resourceGroupService = brokerService.getPulsar().getResourceGroupServiceManager();
+            HierarchyTopicPolicies hierarchyTopicPolicies = topic.getHierarchyTopicPolicies();
+            String resourceGroupName = hierarchyTopicPolicies.getResourceGroupName().get();
+            if (resourceGroupName != null) {
+                ResourceGroup resourceGroup = resourceGroupService.resourceGroupGet(resourceGroupName);
+                if (resourceGroup != null) {
+                    resourceGroupDispatchRateLimiter = Optional.of(resourceGroup.getResourceGroupReplicationDispatchLimiter());
+                }
+            } else {
+                if (resourceGroupDispatchRateLimiter.isPresent()) {
+                    resourceGroupDispatchRateLimiter = Optional.empty();
+                }
+            }
+        }
     }
 
     private void checkReplicatedSubscriptionMarker(Position position, MessageImpl<?> msg, ByteBuf payload) {

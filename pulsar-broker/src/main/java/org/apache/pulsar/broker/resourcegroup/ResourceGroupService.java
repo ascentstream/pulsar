@@ -494,8 +494,9 @@ public class ResourceGroupService implements AutoCloseable{
 
     // Find the difference between the last time stats were updated for this topic, and the current
     // time. If the difference is positive, update the stats.
-    private void updateStatsWithDiff(String topicName, String tenantString, String nsString,
-                                     long accByteCount, long accMesgCount, ResourceGroupMonitoringClass monClass) {
+    @VisibleForTesting
+    protected void updateStatsWithDiff(String topicName, String replicationRemoteCluster, String tenantString, String nsString,
+                                       long accByteCount, long accMesgCount, ResourceGroupMonitoringClass monClass) {
         ConcurrentHashMap<String, BytesAndMessagesCount> hm;
         switch (monClass) {
             default:
@@ -509,6 +510,10 @@ public class ResourceGroupService implements AutoCloseable{
             case Dispatch:
                 hm = this.topicConsumeStats;
                 break;
+
+            case ReplicationDispatch:
+                hm = this.replicationDispatchStats;
+                break;
         }
 
         BytesAndMessagesCount bmDiff = new BytesAndMessagesCount();
@@ -518,7 +523,13 @@ public class ResourceGroupService implements AutoCloseable{
         bmNewCount.bytes = accByteCount;
         bmNewCount.messages = accMesgCount;
 
-        bmOldCount = hm.get(topicName);
+        String key;
+        if (monClass == ResourceGroupMonitoringClass.ReplicationDispatch) {
+            key = topicName + replicationRemoteCluster;
+        } else {
+            key = topicName;
+        }
+        bmOldCount = hm.get(key);
         if (bmOldCount == null) {
             bmDiff.bytes = bmNewCount.bytes;
             bmDiff.messages = bmNewCount.messages;
@@ -539,7 +550,7 @@ public class ResourceGroupService implements AutoCloseable{
                         topicName, monClass, statsUpdated, tenantString, nsString,
                         bmDiff.bytes, bmDiff.messages);
             }
-            hm.put(topicName, bmNewCount);
+            hm.put(key, bmNewCount);
         } catch (Throwable t) {
             log.error("updateStatsWithDiff: got ex={} while aggregating for {} side",
                     t.getMessage(), monClass);
@@ -636,10 +647,17 @@ public class ResourceGroupService implements AutoCloseable{
                 continue;
             }
 
-            this.updateStatsWithDiff(topicName, tenantString, nsString,
+            topicStats.getReplication().forEach((remoteCluster, stats) -> {
+                this.updateStatsWithDiff(topicName, remoteCluster, tenantString, nsString,
+                        (long) stats.getMsgThroughputOut(),
+                        (long) stats.getMsgRateOut(),
+                        ResourceGroupMonitoringClass.ReplicationDispatch
+                );
+            });
+            this.updateStatsWithDiff(topicName, null, tenantString, nsString,
                     topicStats.getBytesInCounter(), topicStats.getMsgInCounter(),
                     ResourceGroupMonitoringClass.Publish);
-            this.updateStatsWithDiff(topicName, tenantString, nsString,
+            this.updateStatsWithDiff(topicName, null, tenantString, nsString,
                     topicStats.getBytesOutCounter(), topicStats.getMsgOutCounter(),
                     ResourceGroupMonitoringClass.Dispatch);
         }
@@ -824,6 +842,7 @@ public class ResourceGroupService implements AutoCloseable{
     // Maps to maintain the usage per topic, in produce/consume directions.
     private ConcurrentHashMap<String, BytesAndMessagesCount> topicProduceStats = new ConcurrentHashMap<>();
     private ConcurrentHashMap<String, BytesAndMessagesCount> topicConsumeStats = new ConcurrentHashMap<>();
+    private ConcurrentHashMap<String, BytesAndMessagesCount> replicationDispatchStats = new ConcurrentHashMap<>();
 
 
     // The task that periodically re-calculates the quota budget for local usage.

@@ -156,6 +156,8 @@ public class ResourceGroupServiceTest extends MockedPulsarServiceBaseTest {
         rgConfig.setPublishRateInMsgs(100);
         rgConfig.setDispatchRateInBytes(40000L);
         rgConfig.setDispatchRateInMsgs(500);
+        rgConfig.setReplicationDispatchRateInBytes(2000L);
+        rgConfig.setReplicationDispatchRateInMsgs(400L);
 
         int initialNumQuotaCalculations = numAnonymousQuotaCalculations;
         rgs.resourceGroupCreate(rgName, rgConfig);
@@ -170,6 +172,8 @@ public class ResourceGroupServiceTest extends MockedPulsarServiceBaseTest {
         rgConfig.setPublishRateInMsgs(rgConfig.getPublishRateInMsgs()*10);
         rgConfig.setDispatchRateInBytes(rgConfig.getDispatchRateInBytes()/10);
         rgConfig.setDispatchRateInMsgs(rgConfig.getDispatchRateInMsgs()/10);
+        rgConfig.setReplicationDispatchRateInBytes(rgConfig.getReplicationDispatchRateInBytes()/10);
+        rgConfig.setReplicationDispatchRateInMsgs(rgConfig.getReplicationDispatchRateInMsgs()/10);
         rgs.resourceGroupUpdate(rgName, rgConfig);
 
         Assert.assertEquals(rgs.getNumResourceGroups(), 1);
@@ -187,6 +191,9 @@ public class ResourceGroupServiceTest extends MockedPulsarServiceBaseTest {
         monClassFields = retRG.monitoringClassFields[ResourceGroupMonitoringClass.Dispatch.ordinal()];
         Assert.assertEquals(monClassFields.configValuesPerPeriod.bytes, rgConfig.getDispatchRateInBytes().longValue());
         Assert.assertEquals(monClassFields.configValuesPerPeriod.messages, rgConfig.getDispatchRateInMsgs().intValue());
+        monClassFields = retRG.monitoringClassFields[ResourceGroupMonitoringClass.ReplicationDispatch.ordinal()];
+        Assert.assertEquals(monClassFields.configValuesPerPeriod.bytes, rgConfig.getReplicationDispatchRateInBytes().longValue());
+        Assert.assertEquals(monClassFields.configValuesPerPeriod.messages, rgConfig.getReplicationDispatchRateInMsgs().intValue());
 
         Assert.assertThrows(PulsarAdminException.class, () -> rgs.resourceGroupDelete(randomRgName));
 
@@ -217,6 +224,10 @@ public class ResourceGroupServiceTest extends MockedPulsarServiceBaseTest {
             // Gross hack!
             if (monClass == ResourceGroupMonitoringClass.Publish) {
                 nwUsage = usage.setPublish();
+            } else if (monClass == ResourceGroupMonitoringClass.Dispatch) {
+                nwUsage = usage.setDispatch();
+            } else if (monClass == ResourceGroupMonitoringClass.ReplicationDispatch) {
+                nwUsage = usage.setReplicationDispatch();
             } else {
                 nwUsage = usage.setDispatch();
             }

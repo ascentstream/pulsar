@@ -45,6 +45,7 @@ public abstract class AbstractReplicator {
     protected final String remoteCluster;
     protected final PulsarClientImpl replicationClient;
     protected final PulsarClientImpl client;
+    protected String replicatorId;
 
     protected volatile ProducerImpl producer;
     public static final String REPL_PRODUCER_NAME_DELIMITER = "-->";
@@ -79,6 +80,8 @@ public abstract class AbstractReplicator {
         this.client = (PulsarClientImpl) brokerService.pulsar().getClient();
         this.producer = null;
         this.producerQueueSize = brokerService.pulsar().getConfiguration().getReplicationProducerQueueSize();
+
+        this.replicatorId = String.format("%s | %s", topicName, localCluster + "-->" + remoteCluster);
 
         this.producerBuilder = replicationClient.newProducer(Schema.AUTO_PRODUCE_BYTES()) //
                 .topic(topicName)
