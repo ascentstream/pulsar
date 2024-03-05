@@ -1,4 +1,4 @@
-/*
+/**
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -42,6 +42,26 @@ public class ResourceGroupRateLimiterManager {
 
     static void updateReplicationDispatchRateLimiter(ResourceGroupDispatchLimiter resourceGroupDispatchLimiter,
                                                      BytesAndMessagesCount quota) {
+        resourceGroupDispatchLimiter.update(quota.messages, quota.bytes);
+    }
+
+    static ResourceGroupDispatchLimiter newDispatchRateLimiter(
+            org.apache.pulsar.common.policies.data.ResourceGroup resourceGroup,
+            ScheduledExecutorService executorService) {
+        long msgs = Optional.ofNullable(resourceGroup.getDispatchRateInMsgs()).orElse(-1);
+        long bytes = Optional.ofNullable(resourceGroup.getDispatchRateInBytes()).orElse(-1L);
+        return new ResourceGroupDispatchLimiter(executorService, msgs, bytes);
+    }
+
+    static void updateDispatchRateLimiter(ResourceGroupDispatchLimiter resourceGroupDispatchLimiter,
+                                          org.apache.pulsar.common.policies.data.ResourceGroup resourceGroup) {
+        long msgs = Optional.ofNullable(resourceGroup.getDispatchRateInMsgs()).orElse(-1);
+        long bytes = Optional.ofNullable(resourceGroup.getDispatchRateInBytes()).orElse(-1L);
+        resourceGroupDispatchLimiter.update(msgs, bytes);
+    }
+
+    static void updateDispatchRateLimiter(ResourceGroupDispatchLimiter resourceGroupDispatchLimiter,
+                                          BytesAndMessagesCount quota) {
         resourceGroupDispatchLimiter.update(quota.messages, quota.bytes);
     }
 }

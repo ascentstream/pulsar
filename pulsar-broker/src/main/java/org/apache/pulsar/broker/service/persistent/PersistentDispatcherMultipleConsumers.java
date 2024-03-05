@@ -42,6 +42,7 @@ import org.apache.bookkeeper.mledger.Position;
 import org.apache.bookkeeper.mledger.impl.PositionImpl;
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.pulsar.broker.delayed.DelayedDeliveryTracker;
+import org.apache.pulsar.broker.resourcegroup.ResourceGroupDispatchLimiter;
 import org.apache.pulsar.broker.service.AbstractDispatcherMultipleConsumers;
 import org.apache.pulsar.broker.service.BrokerServiceException;
 import org.apache.pulsar.broker.service.BrokerServiceException.ConsumerBusyException;
@@ -398,6 +399,27 @@ public class PersistentDispatcherMultipleConsumers extends AbstractDispatcherMul
                     bytesToRead = calculateToRead.getRight();
                 }
             }
+
+            if (topic.getResourceGroupDispatchRateLimiter().isPresent()) {
+                ResourceGroupDispatchLimiter limiter = topic.getResourceGroupDispatchRateLimiter().get();
+                long availableDispatchRateLimitOnMsg = limiter.getAvailableDispatchRateLimitOnMsg();
+                long availableDispatchRateLimitOnByte = limiter.getAvailableDispatchRateLimitOnByte();
+                if (availableDispatchRateLimitOnMsg == 0 || availableDispatchRateLimitOnByte == 0) {
+                    if (log.isDebugEnabled()) {
+                        log.debug("[{}] message-read exceeded resourcegroup message-rate {}/{}, schedule after a {}",
+                                name, limiter.getDispatchRateOnMsg(), limiter.getDispatchRateOnByte(),
+                                MESSAGE_RATE_BACKOFF_MS);
+                    }
+                    reScheduleRead();
+                    return Pair.of(-1, -1L);
+                } else {
+                    Pair<Integer, Long> calculateToRead =
+                            computeReadLimits(messagesToRead, (int) availableDispatchRateLimitOnMsg, bytesToRead,
+                                    availableDispatchRateLimitOnByte);
+                    messagesToRead = calculateToRead.getLeft();
+                    bytesToRead = calculateToRead.getRight();
+                }
+            }
         }
 
         if (havePendingReplayRead) {
@@ -657,6 +679,12 @@ public class PersistentDispatcherMultipleConsumers extends AbstractDispatcherMul
 
             if (dispatchRateLimiter.isPresent()) {
                 dispatchRateLimiter.get().tryDispatchPermit(permits, totalBytesSent);
+            }
+
+            Optional<ResourceGroupDispatchLimiter> resourceGroupDispatchRateLimiter =
+                    topic.getResourceGroupDispatchRateLimiter();
+            if (resourceGroupDispatchRateLimiter.isPresent()) {
+                resourceGroupDispatchRateLimiter.get().consumeDispatchQuota(permits, totalBytesSent);
             }
         }
 

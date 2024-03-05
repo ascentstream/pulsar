@@ -49,6 +49,7 @@ import org.apache.commons.collections4.MapUtils;
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.pulsar.broker.ServiceConfiguration;
 import org.apache.pulsar.broker.resourcegroup.ResourceGroup;
+import org.apache.pulsar.broker.resourcegroup.ResourceGroupDispatchLimiter;
 import org.apache.pulsar.broker.resourcegroup.ResourceGroupPublishLimiter;
 import org.apache.pulsar.broker.resourcegroup.ResourceGroupService;
 import org.apache.pulsar.broker.service.BrokerServiceException.ConsumerBusyException;
@@ -119,6 +120,9 @@ public abstract class AbstractTopic implements Topic, TopicPolicyListener<TopicP
     private final Object topicPublishRateLimiterLock = new Object();
 
     protected volatile ResourceGroupPublishLimiter resourceGroupPublishLimiter;
+
+    @Getter
+    protected volatile Optional<ResourceGroupDispatchLimiter> resourceGroupDispatchRateLimiter = Optional.empty();
 
     protected boolean preciseTopicPublishRateLimitingEnable;
 
@@ -1153,6 +1157,7 @@ public abstract class AbstractTopic implements Topic, TopicPolicyListener<TopicP
                 this.resourceGroupRateLimitingEnabled = true;
                 this.resourceGroupPublishLimiter = resourceGroup.getResourceGroupPublishLimiter();
                 this.resourceGroupPublishLimiter.registerRateLimitFunction(this.getName(), this::enableCnxAutoRead);
+                this.resourceGroupDispatchRateLimiter = Optional.of(resourceGroup.getResourceGroupDispatchLimiter());
                 log.info("Using resource group {} rate limiter for topic {}", rgName, topic);
             }
         } else {
@@ -1166,6 +1171,7 @@ public abstract class AbstractTopic implements Topic, TopicPolicyListener<TopicP
     protected void closeResourceGroupLimiter() {
         if (resourceGroupRateLimitingEnabled) {
             this.resourceGroupPublishLimiter = null;
+            this.resourceGroupDispatchRateLimiter = Optional.empty();
             this.resourceGroupRateLimitingEnabled = false;
             brokerService.getPulsar().getResourceGroupServiceManager().unRegisterTopic(TopicName.get(topic));
         }

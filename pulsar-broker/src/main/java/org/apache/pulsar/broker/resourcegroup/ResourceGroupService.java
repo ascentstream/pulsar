@@ -495,8 +495,9 @@ public class ResourceGroupService implements AutoCloseable{
     // Find the difference between the last time stats were updated for this topic, and the current
     // time. If the difference is positive, update the stats.
     @VisibleForTesting
-    protected void updateStatsWithDiff(String topicName, String replicationRemoteCluster, String tenantString, String nsString,
-                                       long accByteCount, long accMesgCount, ResourceGroupMonitoringClass monClass) {
+    protected void updateStatsWithDiff(String topicName, String replicationRemoteCluster, String tenantString,
+                                       String nsString, long accByteCount, long accMesgCount,
+                                       ResourceGroupMonitoringClass monClass) {
         ConcurrentHashMap<String, BytesAndMessagesCount> hm;
         switch (monClass) {
             default:

@@ -88,6 +88,8 @@ public class ResourceGroup {
           this.getResourceGroupPublishLimiter());
         this.resourceGroupReplicationDispatchLimiter = ResourceGroupRateLimiterManager
                 .newReplicationDispatchRateLimiter(rgConfig, rgs.getPulsar().getExecutor());
+        this.resourceGroupDispatchLimiter = ResourceGroupRateLimiterManager
+                .newDispatchRateLimiter(rgConfig, rgs.getPulsar().getExecutor());
     }
 
     // ctor for overriding the transport-manager fill/set buffer.
@@ -103,6 +105,8 @@ public class ResourceGroup {
         this.resourceGroupPublishLimiter = new ResourceGroupPublishLimiter(rgConfig, rgs.getPulsar().getExecutor());
         this.resourceGroupReplicationDispatchLimiter = ResourceGroupRateLimiterManager
                 .newReplicationDispatchRateLimiter(rgConfig, rgs.getPulsar().getExecutor());
+        this.resourceGroupDispatchLimiter = ResourceGroupRateLimiterManager
+                .newDispatchRateLimiter(rgConfig, rgs.getPulsar().getExecutor());
         this.ruPublisher = rgPublisher;
         this.ruConsumer = rgConsumer;
     }
@@ -114,6 +118,7 @@ public class ResourceGroup {
         this.rgs = other.rgs;
         this.resourceGroupPublishLimiter = other.resourceGroupPublishLimiter;
         this.resourceGroupReplicationDispatchLimiter = other.resourceGroupReplicationDispatchLimiter;
+        this.resourceGroupDispatchLimiter = other.resourceGroupDispatchLimiter;
         this.setResourceGroupMonitoringClassFields();
 
         // ToDo: copy the monitoring class fields, and ruPublisher/ruConsumer from other, if required.
@@ -153,7 +158,9 @@ public class ResourceGroup {
         pubBmc.messages = rgConfig.getPublishRateInMsgs();
         pubBmc.bytes = rgConfig.getPublishRateInBytes();
         this.resourceGroupPublishLimiter.update(pubBmc);
-        ResourceGroupRateLimiterManager.updateReplicationDispatchRateLimiter(resourceGroupReplicationDispatchLimiter, rgConfig);
+        ResourceGroupRateLimiterManager
+                .updateReplicationDispatchRateLimiter(resourceGroupReplicationDispatchLimiter, rgConfig);
+        ResourceGroupRateLimiterManager.updateDispatchRateLimiter(resourceGroupDispatchLimiter, rgConfig);
     }
 
     protected long getResourceGroupNumOfNSRefs() {
@@ -384,10 +391,14 @@ public class ResourceGroup {
             monEntity.quotaForNextPeriod = newQuota;
             switch (monClass) {
                 case ReplicationDispatch:
-                    ResourceGroupRateLimiterManager.updateReplicationDispatchRateLimiter(resourceGroupReplicationDispatchLimiter, newQuota);
+                    ResourceGroupRateLimiterManager
+                            .updateReplicationDispatchRateLimiter(resourceGroupReplicationDispatchLimiter, newQuota);
                     break;
                 case Publish:
                     this.resourceGroupPublishLimiter.update(newQuota);
+                    break;
+                case Dispatch:
+                    ResourceGroupRateLimiterManager.updateDispatchRateLimiter(resourceGroupDispatchLimiter, newQuota);
                     break;
                 default:
                     if (log.isDebugEnabled()) {
@@ -601,9 +612,11 @@ public class ResourceGroup {
                 ? -1 : rgConfig.getDispatchRateInMsgs();
 
         idx = ResourceGroupMonitoringClass.ReplicationDispatch.ordinal();
-        this.monitoringClassFields[idx].configValuesPerPeriod.bytes = rgConfig.getReplicationDispatchRateInBytes() == null
+        this.monitoringClassFields[idx]
+                .configValuesPerPeriod.bytes = rgConfig.getReplicationDispatchRateInBytes() == null
                 ? -1 : rgConfig.getReplicationDispatchRateInBytes();
-        this.monitoringClassFields[idx].configValuesPerPeriod.messages = rgConfig.getReplicationDispatchRateInMsgs() == null
+        this.monitoringClassFields[idx]
+                .configValuesPerPeriod.messages = rgConfig.getReplicationDispatchRateInMsgs() == null
                 ? -1 : rgConfig.getReplicationDispatchRateInMsgs();
     }
 
@@ -684,7 +697,7 @@ public class ResourceGroup {
     protected ResourceGroupDispatchLimiter resourceGroupReplicationDispatchLimiter;
 
     @Getter
-    protected ResourceGroupDispatchLimiter resourceGroupTopicDispatchLimiter;
+    protected ResourceGroupDispatchLimiter resourceGroupDispatchLimiter;
 
     protected static class PerMonitoringClassFields {
         // This lock covers all the "local" counts (i.e., except for the per-broker usage stats).

@@ -1,4 +1,4 @@
-/*
+/**
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -28,7 +28,8 @@ public class ResourceGroupDispatchLimiter implements AutoCloseable {
     private volatile RateLimiter dispatchRateLimiterOnMessage;
     private volatile RateLimiter dispatchRateLimiterOnByte;
 
-    public ResourceGroupDispatchLimiter(ScheduledExecutorService executorService, long dispatchRateInMsgs, long dispatchRateInBytes) {
+    public ResourceGroupDispatchLimiter(ScheduledExecutorService executorService,
+                                        long dispatchRateInMsgs, long dispatchRateInBytes) {
         this.executorService = executorService;
         update(dispatchRateInMsgs, dispatchRateInBytes);
     }

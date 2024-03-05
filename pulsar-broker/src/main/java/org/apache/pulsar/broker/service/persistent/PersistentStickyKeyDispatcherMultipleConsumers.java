@@ -29,6 +29,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.NavigableSet;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -38,6 +39,7 @@ import org.apache.bookkeeper.mledger.Position;
 import org.apache.bookkeeper.mledger.impl.ManagedLedgerImpl;
 import org.apache.bookkeeper.mledger.impl.PositionImpl;
 import org.apache.pulsar.broker.ServiceConfiguration;
+import org.apache.pulsar.broker.resourcegroup.ResourceGroupDispatchLimiter;
 import org.apache.pulsar.broker.service.BrokerServiceException;
 import org.apache.pulsar.broker.service.ConsistentHashingStickyKeyConsumerSelector;
 import org.apache.pulsar.broker.service.Consumer;
@@ -312,6 +314,12 @@ public class PersistentStickyKeyDispatcherMultipleConsumers extends PersistentDi
 
             if (dispatchRateLimiter.isPresent()) {
                 dispatchRateLimiter.get().tryDispatchPermit(permits, totalBytesSent);
+            }
+
+            Optional<ResourceGroupDispatchLimiter> resourceGroupDispatchRateLimiter =
+                    topic.getResourceGroupDispatchRateLimiter();
+            if (resourceGroupDispatchRateLimiter.isPresent()) {
+                resourceGroupDispatchRateLimiter.get().consumeDispatchQuota(permits, totalBytesSent);
             }
         }
 
