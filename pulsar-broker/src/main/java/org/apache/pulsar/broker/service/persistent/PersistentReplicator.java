@@ -397,6 +397,8 @@ public class PersistentReplicator extends AbstractReplicator
                 }
 
                 dispatchRateLimiter.ifPresent(rateLimiter -> rateLimiter.tryDispatchPermit(1, entry.getLength()));
+                resourceGroupDispatchRateLimiter.ifPresent(
+                        rateLimiter -> rateLimiter.consumeDispatchQuota(1, entry.getLength()));
 
                 msgOut.recordEvent(headersAndPayload.readableBytes());
 
@@ -799,7 +801,8 @@ public class PersistentReplicator extends AbstractReplicator
             if (resourceGroupName != null) {
                 ResourceGroup resourceGroup = resourceGroupService.resourceGroupGet(resourceGroupName);
                 if (resourceGroup != null) {
-                    resourceGroupDispatchRateLimiter = Optional.of(resourceGroup.getResourceGroupReplicationDispatchLimiter());
+                    resourceGroupDispatchRateLimiter = Optional.of(resourceGroup
+                            .getResourceGroupReplicationDispatchLimiter());
                 }
             } else {
                 if (resourceGroupDispatchRateLimiter.isPresent()) {
