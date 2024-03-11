@@ -122,7 +122,7 @@ public class ResourceGroupServiceTest extends MockedPulsarServiceBaseTest {
         for (int ix = 0; ix < numPerfTestIterations; ix++) {
             for (int monClassIdx = 0; monClassIdx < ResourceGroupMonitoringClass.values().length; monClassIdx++) {
                 monClass = ResourceGroupMonitoringClass.values()[monClassIdx];
-                rgs.incrementUsage(topicName.toString(), tenantName, namespaceName, monClass, stats);
+                rgs.incrementUsage(tenantName, namespaceName, topicName.toString(), monClass, stats);
             }
         }
         mSecsEnd = System.currentTimeMillis();

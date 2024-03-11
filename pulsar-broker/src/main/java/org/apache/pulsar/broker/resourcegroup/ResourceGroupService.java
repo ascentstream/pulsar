@@ -386,14 +386,14 @@ public class ResourceGroupService implements AutoCloseable{
      * ToDo: will this distinction result in "expected semantics", or shock from users?
      * For now, the only caller is internal to this class.
      *
-     * @param topicName Complete topic name
      * @param tenantName
      * @param nsName Complete namespace name
+     * @param topicName Complete topic name
      * @param monClass
      * @param incStats
      * @returns true if the stats were updated; false if nothing was updated.
      */
-    protected boolean incrementUsage(String topicName, String tenantName, String nsName,
+    protected boolean incrementUsage(String tenantName, String nsName, String topicName,
                                      ResourceGroupMonitoringClass monClass,
                                      BytesAndMessagesCount incStats) throws PulsarAdminException {
         final ResourceGroup nsRG = this.namespaceToRGsMap.get(NamespaceName.get(nsName));
@@ -496,7 +496,7 @@ public class ResourceGroupService implements AutoCloseable{
     // time. If the difference is positive, update the stats.
     @VisibleForTesting
     protected void updateStatsWithDiff(String topicName, String replicationRemoteCluster, String tenantString,
-                                       String nsString, long accByteCount, long accMesgCount,
+                                       String nsString, long accByteCount, long accMsgCount,
                                        ResourceGroupMonitoringClass monClass) {
         ConcurrentHashMap<String, BytesAndMessagesCount> hm;
         switch (monClass) {
@@ -522,7 +522,7 @@ public class ResourceGroupService implements AutoCloseable{
         BytesAndMessagesCount bmNewCount = new BytesAndMessagesCount();
 
         bmNewCount.bytes = accByteCount;
-        bmNewCount.messages = accMesgCount;
+        bmNewCount.messages = accMsgCount;
 
         String key;
         if (monClass == ResourceGroupMonitoringClass.ReplicationDispatch) {
@@ -544,7 +544,7 @@ public class ResourceGroupService implements AutoCloseable{
         }
 
         try {
-            boolean statsUpdated = this.incrementUsage(topicName, tenantString, nsString, monClass, bmDiff);
+            boolean statsUpdated = this.incrementUsage(tenantString, nsString, topicName, monClass, bmDiff);
             if (log.isDebugEnabled()) {
                 log.debug("updateStatsWithDiff for topic={}: monclass={} statsUpdated={} for tenant={}, namespace={}; "
                                 + "by {} bytes, {} mesgs",

@@ -70,8 +70,7 @@ public class ResourceGroup {
     public enum ResourceGroupRefTypes {
         Tenants,
         Namespaces,
-        Topics,
-        Replicators,
+        Topics
     }
 
     // Default ctor: it is not expected that anything outside of this package will need to directly
@@ -88,8 +87,11 @@ public class ResourceGroup {
           this.getResourceGroupPublishLimiter());
         this.resourceGroupReplicationDispatchLimiter = ResourceGroupRateLimiterManager
                 .newReplicationDispatchRateLimiter(rgConfig, rgs.getPulsar().getExecutor());
+        log.info("attaching replication dispatch rate limiter {} to {}", this.resourceGroupReplicationDispatchLimiter,
+                name);
         this.resourceGroupDispatchLimiter = ResourceGroupRateLimiterManager
                 .newDispatchRateLimiter(rgConfig, rgs.getPulsar().getExecutor());
+        log.info("attaching topic dispatch rate limiter {} to {}", this.resourceGroupDispatchLimiter, name);
     }
 
     // ctor for overriding the transport-manager fill/set buffer.
@@ -190,6 +192,7 @@ public class ResourceGroup {
                 break;
             case Topics:
                 set = this.resourceGroupTopicRefs;
+                break;
         }
 
         if (ref) {
