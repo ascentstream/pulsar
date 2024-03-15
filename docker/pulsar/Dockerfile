@@ -23,7 +23,7 @@ FROM busybox as pulsar
 ARG PULSAR_TARBALL
 
 ADD ${PULSAR_TARBALL} /
-RUN mv /apache-pulsar-* /pulsar
+RUN mv /as-pulsar-* /pulsar
 
 COPY scripts/apply-config-from-env.py /pulsar/bin
 COPY scripts/apply-config-from-env-with-prefix.py /pulsar/bin
