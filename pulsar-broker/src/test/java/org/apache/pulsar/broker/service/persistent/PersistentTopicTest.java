@@ -27,11 +27,11 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
-import static org.testng.Assert.assertTrue;
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertFalse;
 import static org.testng.Assert.assertNotNull;
 import static org.testng.Assert.assertNull;
+import static org.testng.Assert.assertTrue;
 import com.google.common.collect.Sets;
 import java.lang.reflect.Field;
 import java.time.Duration;
@@ -42,16 +42,18 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.TimeUnit;
-import lombok.Data;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Supplier;
+import lombok.Cleanup;
+import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.bookkeeper.client.LedgerHandle;
 import org.apache.bookkeeper.mledger.ManagedCursor;
 import org.apache.bookkeeper.mledger.ManagedLedger;
+import org.apache.bookkeeper.mledger.impl.ManagedCursorImpl;
 import org.apache.pulsar.broker.service.BrokerService;
 import org.apache.pulsar.broker.service.BrokerTestBase;
 import org.apache.pulsar.client.api.Consumer;
@@ -472,5 +474,29 @@ public class PersistentTopicTest extends BrokerTestBase {
             }
             return !topic.getManagedLedger().getCursors().iterator().hasNext();
         });
+    }
+
+    @Test
+    public void testCursorGetConfigAfterTopicPoliciesChanged() throws Exception {
+        final String topicName = "persistent://prop/ns-abc/" + UUID.randomUUID();
+        final String subName = "test_sub";
+
+        @Cleanup
+        Consumer<byte[]> subscribe = pulsarClient.newConsumer().topic(topicName).subscriptionName(subName).subscribe();
+        PersistentTopic persistentTopic =
+                (PersistentTopic) pulsar.getBrokerService().getTopic(topicName, false).join().get();
+        PersistentSubscription subscription = persistentTopic.getSubscription(subName);
+
+        Integer maxConsumers = 100;
+        admin.topicPolicies().setMaxConsumers(topicName, 100);
+        Awaitility.await().untilAsserted(() -> {
+            assertEquals(admin.topicPolicies().getMaxConsumers(topicName, false), maxConsumers);
+        });
+
+        ManagedCursorImpl cursor = (ManagedCursorImpl) subscription.getCursor();
+        assertEquals(cursor.getConfig(), persistentTopic.getManagedLedger().getConfig());
+
+        subscribe.close();
+        admin.topics().delete(topicName);
     }
 }
