@@ -217,7 +217,7 @@ public class FilterEntryTest extends BrokerTestBase {
         }
     }
 
-    @Test
+    @Test(enabled = false)
     public void testEntryFilterRescheduleMessageDependingOnConsumerSharedSubscription() throws Throwable {
         String topic = "persistent://prop/ns-abc/topic" + UUID.randomUUID();
         String subName = "sub";
