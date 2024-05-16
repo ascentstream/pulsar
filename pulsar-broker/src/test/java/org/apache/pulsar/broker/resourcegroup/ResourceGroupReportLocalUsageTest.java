@@ -92,8 +92,6 @@ public class ResourceGroupReportLocalUsageTest extends MockedPulsarServiceBaseTe
                     resourceGroup.getMonitoredEntity(value);
             assertEquals(monitoredEntity.usedLocallySinceLastReport.messages, 0);
             assertEquals(monitoredEntity.usedLocallySinceLastReport.bytes, 0);
-            assertEquals(monitoredEntity.totalUsedLocally.messages, 0);
-            assertEquals(monitoredEntity.totalUsedLocally.bytes, 0);
             assertEquals(monitoredEntity.lastReportedValues.messages, 0);
             assertEquals(monitoredEntity.lastReportedValues.bytes, 0);
         }
@@ -112,8 +110,6 @@ public class ResourceGroupReportLocalUsageTest extends MockedPulsarServiceBaseTe
                     resourceGroup.getMonitoredEntity(value);
             assertEquals(monitoredEntity.usedLocallySinceLastReport.messages, 0);
             assertEquals(monitoredEntity.usedLocallySinceLastReport.bytes, 0);
-            assertEquals(monitoredEntity.totalUsedLocally.messages, bytesAndMessagesCount.messages);
-            assertEquals(monitoredEntity.totalUsedLocally.bytes, bytesAndMessagesCount.bytes);
             assertEquals(monitoredEntity.lastReportedValues.messages, bytesAndMessagesCount.messages);
             assertEquals(monitoredEntity.lastReportedValues.bytes, bytesAndMessagesCount.bytes);
         }

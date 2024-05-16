@@ -18,15 +18,19 @@
  */
 package org.apache.pulsar.broker.resourcegroup;
 
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
 import com.google.common.annotations.VisibleForTesting;
 import io.prometheus.client.Counter;
-import java.util.HashMap;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 import lombok.Getter;
+import lombok.ToString;
 import lombok.val;
+import org.apache.pulsar.broker.ServiceConfiguration;
 import org.apache.pulsar.broker.resourcegroup.ResourceGroupService.ResourceGroupOpStatus;
 import org.apache.pulsar.broker.service.resource.usage.NetworkUsage;
 import org.apache.pulsar.broker.service.resource.usage.ResourceUsage;
@@ -49,6 +53,7 @@ public class ResourceGroup {
     /**
      * Convenience class for bytes and messages counts, which are used together in a lot of the following code.
      */
+    @ToString
     public static class BytesAndMessagesCount {
         public long bytes;
         public long messages;
@@ -356,7 +361,7 @@ public class ResourceGroup {
 
         monEntity.usageFromOtherBrokersLock.lock();
         try {
-            pbus = monEntity.usageFromOtherBrokers.get(myBrokerId);
+            pbus = monEntity.usageFromOtherBrokers.getIfPresent(myBrokerId);
         } finally {
             monEntity.usageFromOtherBrokersLock.unlock();
         }
@@ -380,7 +385,7 @@ public class ResourceGroup {
         monEntity.usageFromOtherBrokersLock.lock();
         BytesAndMessagesCount retStats = new BytesAndMessagesCount();
         try {
-            monEntity.usageFromOtherBrokers.forEach((broker, brokerUsage) -> {
+            monEntity.usageFromOtherBrokers.asMap().forEach((broker, brokerUsage) -> {
                 retStats.bytes += brokerUsage.usedValues.bytes;
                 retStats.messages += brokerUsage.usedValues.messages;
             });
@@ -512,8 +517,6 @@ public class ResourceGroup {
                 monEntity.lastReportedValues.bytes = bytesUsed;
                 monEntity.lastReportedValues.messages = messagesUsed;
                 monEntity.numSuppressedUsageReports = 0;
-                monEntity.totalUsedLocally.bytes += bytesUsed;
-                monEntity.totalUsedLocally.messages += messagesUsed;
                 monEntity.lastResourceUsageFillTimeMSecsSinceEpoch = System.currentTimeMillis();
             } else {
                 numSuppressions = monEntity.numSuppressedUsageReports++;
@@ -552,7 +555,7 @@ public class ResourceGroup {
         long newByteCount, newMessageCount;
 
         monEntity = this.monitoringClassFields[idx];
-        usageStats = monEntity.usageFromOtherBrokers.get(broker);
+        usageStats = monEntity.usageFromOtherBrokers.getIfPresent(broker);
         if (usageStats == null) {
             usageStats = new PerBrokerUsageStats();
             usageStats.usedValues = new BytesAndMessagesCount();
@@ -564,7 +567,8 @@ public class ResourceGroup {
             newMessageCount = p.getMessagesPerPeriod();
             usageStats.usedValues.messages = newMessageCount;
             usageStats.lastResourceUsageReadTimeMSecsSinceEpoch = System.currentTimeMillis();
-            oldUsageStats = monEntity.usageFromOtherBrokers.put(broker, usageStats);
+            oldUsageStats = monEntity.usageFromOtherBrokers.getIfPresent(broker);
+            monEntity.usageFromOtherBrokers.put(broker, usageStats);
         } finally {
             monEntity.usageFromOtherBrokersLock.unlock();
         }
@@ -587,21 +591,18 @@ public class ResourceGroup {
     }
 
     private void setResourceGroupMonitoringClassFields() {
-        PerMonitoringClassFields monClassFields;
+        ServiceConfiguration conf = rgs.getPulsar().getConfiguration();
+        long resourceUsageTransportPublishIntervalInSecs = conf.getResourceUsageTransportPublishIntervalInSecs();
+        int maxUsageReportSuppressRounds = Math.max(conf.getResourceUsageMaxUsageReportSuppressRounds(), 1);
+        long cacheInMS = TimeUnit.SECONDS.toMillis(
+                resourceUsageTransportPublishIntervalInSecs * maxUsageReportSuppressRounds * 2);
+        // Usage report data is cached to the memory, when the broker is restart or offline, we need an elimination
+        // strategy to release the quota occupied by other broker.
+        //
+        // Considering that each broker starts at a different time, the cache time should be equal to the mandatory
+        // reporting period * 2.
         for (int idx = 0; idx < ResourceGroupMonitoringClass.values().length; idx++) {
-            this.monitoringClassFields[idx] = new PerMonitoringClassFields();
-
-            monClassFields = this.monitoringClassFields[idx];
-            monClassFields.configValuesPerPeriod = new BytesAndMessagesCount();
-            monClassFields.usedLocallySinceLastReport = new BytesAndMessagesCount();
-            monClassFields.lastReportedValues = new BytesAndMessagesCount();
-            monClassFields.quotaForNextPeriod = new BytesAndMessagesCount();
-            monClassFields.totalUsedLocally = new BytesAndMessagesCount();
-            monClassFields.usageFromOtherBrokers = new HashMap<>();
-
-            monClassFields.usageFromOtherBrokersLock = new ReentrantLock();
-            // ToDo: Change the following to a ReadWrite lock if needed.
-            monClassFields.localUsageStatsLock = new ReentrantLock();
+            this.monitoringClassFields[idx] = PerMonitoringClassFields.create(cacheInMS);
         }
     }
 
@@ -737,11 +738,33 @@ public class ResourceGroup {
         int numSuppressedUsageReports;
 
         // Accumulated stats of local usage.
+        @VisibleForTesting
         BytesAndMessagesCount totalUsedLocally;
 
         // This lock covers all the non-local usage counts, received from other brokers.
         Lock usageFromOtherBrokersLock;
-        public HashMap<String, PerBrokerUsageStats> usageFromOtherBrokers;
+        public Cache<String, PerBrokerUsageStats> usageFromOtherBrokers;
+
+        private PerMonitoringClassFields(){
+
+        }
+
+        static PerMonitoringClassFields create(long durationMs) {
+            PerMonitoringClassFields perMonitoringClassFields = new PerMonitoringClassFields();
+            perMonitoringClassFields.configValuesPerPeriod = new BytesAndMessagesCount();
+            perMonitoringClassFields.usedLocallySinceLastReport = new BytesAndMessagesCount();
+            perMonitoringClassFields.lastReportedValues = new BytesAndMessagesCount();
+            perMonitoringClassFields.quotaForNextPeriod = new BytesAndMessagesCount();
+            perMonitoringClassFields.totalUsedLocally = new BytesAndMessagesCount();
+            perMonitoringClassFields.usageFromOtherBrokersLock = new ReentrantLock();
+            // ToDo: Change the following to a ReadWrite lock if needed.
+            perMonitoringClassFields.localUsageStatsLock = new ReentrantLock();
+
+            perMonitoringClassFields.usageFromOtherBrokers = Caffeine.newBuilder()
+                    .expireAfterWrite(durationMs, TimeUnit.MILLISECONDS)
+                    .build();
+            return perMonitoringClassFields;
+        }
     }
 
     // Usage stats for this RG obtained from other brokers.

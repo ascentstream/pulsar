@@ -19,6 +19,8 @@
 package org.apache.pulsar.broker.resourcegroup;
 
 import static org.apache.pulsar.common.util.Runnables.catchingAndLoggingThrowables;
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
 import com.google.common.annotations.VisibleForTesting;
 import io.prometheus.client.Counter;
 import io.prometheus.client.Summary;
@@ -60,7 +62,7 @@ public class ResourceGroupService implements AutoCloseable{
     public ResourceGroupService(PulsarService pulsar) {
         this.pulsar = pulsar;
         this.timeUnitScale = TimeUnit.SECONDS;
-        this.quotaCalculator = new ResourceQuotaCalculatorImpl();
+        this.quotaCalculator = new ResourceQuotaCalculatorImpl(pulsar);
         this.resourceUsageTransportManagerMgr = pulsar.getResourceUsageTransportManager();
         this.rgConfigListener = new ResourceGroupConfigListener(this, pulsar);
         this.initialize();
@@ -360,8 +362,9 @@ public class ResourceGroupService implements AutoCloseable{
         resourceGroupsMap.clear();
         tenantToRGsMap.clear();
         namespaceToRGsMap.clear();
-        topicProduceStats.clear();
-        topicConsumeStats.clear();
+        topicProduceStats.invalidateAll();
+        topicConsumeStats.invalidateAll();
+        replicationDispatchStats.invalidateAll();
     }
 
     private void incrementUsage(ResourceGroup resourceGroup,
@@ -498,7 +501,7 @@ public class ResourceGroupService implements AutoCloseable{
     protected void updateStatsWithDiff(String topicName, String replicationRemoteCluster, String tenantString,
                                        String nsString, long accByteCount, long accMsgCount,
                                        ResourceGroupMonitoringClass monClass) {
-        ConcurrentHashMap<String, BytesAndMessagesCount> hm;
+        Cache<String, BytesAndMessagesCount> hm;
         switch (monClass) {
             default:
                 log.error("updateStatsWithDiff: Unknown monitoring class={}; ignoring", monClass);
@@ -530,7 +533,7 @@ public class ResourceGroupService implements AutoCloseable{
         } else {
             key = topicName;
         }
-        bmOldCount = hm.get(key);
+        bmOldCount = hm.getIfPresent(key);
         if (bmOldCount == null) {
             bmDiff.bytes = bmNewCount.bytes;
             bmDiff.messages = bmNewCount.messages;
@@ -650,8 +653,8 @@ public class ResourceGroupService implements AutoCloseable{
 
             topicStats.getReplication().forEach((remoteCluster, stats) -> {
                 this.updateStatsWithDiff(topicName, remoteCluster, tenantString, nsString,
-                        (long) stats.getMsgThroughputOut(),
-                        (long) stats.getMsgRateOut(),
+                        stats.getBytesOutCounter(),
+                        stats.getMsgOutCounter(),
                         ResourceGroupMonitoringClass.ReplicationDispatch
                 );
             });
@@ -779,8 +782,6 @@ public class ResourceGroupService implements AutoCloseable{
                         newPeriodInSeconds,
                         timeUnitScale);
             this.resourceUsagePublishPeriodInSeconds = newPeriodInSeconds;
-            maxIntervalForSuppressingReportsMSecs =
-                    TimeUnit.SECONDS.toMillis(this.resourceUsagePublishPeriodInSeconds) * MaxUsageReportSuppressRounds;
         }
     }
 
@@ -798,9 +799,11 @@ public class ResourceGroupService implements AutoCloseable{
                     periodInSecs,
                     periodInSecs,
                     this.timeUnitScale);
-        maxIntervalForSuppressingReportsMSecs =
-                TimeUnit.SECONDS.toMillis(this.resourceUsagePublishPeriodInSeconds) * MaxUsageReportSuppressRounds;
-
+        long resourceUsagePublishPeriodInMS = TimeUnit.SECONDS.toMillis(this.resourceUsagePublishPeriodInSeconds);
+        long statsCacheInMS = resourceUsagePublishPeriodInMS * 2;
+        topicProduceStats = newStatsCache(statsCacheInMS);
+        topicConsumeStats = newStatsCache(statsCacheInMS);
+        replicationDispatchStats = newStatsCache(statsCacheInMS);
     }
 
     private void checkRGCreateParams(String rgName, org.apache.pulsar.common.policies.data.ResourceGroup rgConfig)
@@ -817,6 +820,13 @@ public class ResourceGroupService implements AutoCloseable{
         if (rg != null) {
             throw new PulsarAdminException("Resource group already exists:" + rgName);
         }
+    }
+
+    @VisibleForTesting
+    protected Cache<String, BytesAndMessagesCount> newStatsCache(long durationMS) {
+        return Caffeine.newBuilder()
+                .expireAfterAccess(durationMS, TimeUnit.MILLISECONDS)
+                .build();
     }
 
     private static final Logger log = LoggerFactory.getLogger(ResourceGroupService.class);
@@ -841,10 +851,9 @@ public class ResourceGroupService implements AutoCloseable{
     private ConcurrentHashMap<TopicName, ResourceGroup> topicToRGsMap = new ConcurrentHashMap<>();
 
     // Maps to maintain the usage per topic, in produce/consume directions.
-    private ConcurrentHashMap<String, BytesAndMessagesCount> topicProduceStats = new ConcurrentHashMap<>();
-    private ConcurrentHashMap<String, BytesAndMessagesCount> topicConsumeStats = new ConcurrentHashMap<>();
-    private ConcurrentHashMap<String, BytesAndMessagesCount> replicationDispatchStats = new ConcurrentHashMap<>();
-
+    private Cache<String, BytesAndMessagesCount> topicProduceStats;
+    private Cache<String, BytesAndMessagesCount> topicConsumeStats;
+    private Cache<String, BytesAndMessagesCount> replicationDispatchStats;
 
     // The task that periodically re-calculates the quota budget for local usage.
     private ScheduledFuture<?> aggregateLocalUsagePeriodicTask;
@@ -856,22 +865,6 @@ public class ResourceGroupService implements AutoCloseable{
 
     // Allow a pluggable scale on time units; for testing periodic functionality.
     private TimeUnit timeUnitScale;
-
-    // The maximum number of successive rounds that we can suppress reporting local usage, because there was no
-    // substantial change from the prior round. This is to ensure the reporting does not become too chatty.
-    // Set this value to one more than the cadence of sending reports; e.g., if you want to send every 3rd report,
-    // set the value to 4.
-    // Setting this to 0 will make us report in every round.
-    // Don't set to negative values; behavior will be "undefined".
-    protected static final int MaxUsageReportSuppressRounds = 5;
-
-    // Convenient shorthand, for MaxUsageReportSuppressRounds converted to a time interval in milliseconds.
-    protected static long maxIntervalForSuppressingReportsMSecs;
-
-    // The percentage difference that is considered "within limits" to suppress usage reporting.
-    // Setting this to 0 will also make us report in every round.
-    // Don't set it to negative values; behavior will be "undefined".
-    protected static final float UsageReportSuppressionTolerancePercentage = 5;
 
     // Labels for the various counters used here.
     private static final String[] resourceGroupLabel = {"ResourceGroup"};
@@ -953,13 +946,18 @@ public class ResourceGroupService implements AutoCloseable{
             .register();
 
     @VisibleForTesting
-    ConcurrentHashMap getTopicConsumeStats() {
+    Cache<String, BytesAndMessagesCount> getTopicConsumeStats() {
         return this.topicConsumeStats;
     }
 
     @VisibleForTesting
-    ConcurrentHashMap getTopicProduceStats() {
+    Cache<String, BytesAndMessagesCount> getTopicProduceStats() {
         return this.topicProduceStats;
+    }
+
+    @VisibleForTesting
+    Cache<String, BytesAndMessagesCount> getReplicationDispatchStats() {
+        return this.replicationDispatchStats;
     }
 
     @VisibleForTesting

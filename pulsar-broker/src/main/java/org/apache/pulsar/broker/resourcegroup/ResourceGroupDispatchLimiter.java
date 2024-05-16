@@ -112,6 +112,27 @@ public class ResourceGroupDispatchLimiter implements AutoCloseable {
     }
 
     /**
+     * It acquires msg and bytes permits from rate-limiter and returns if acquired permits succeed.
+     *
+     * @param numberOfMessages
+     * @param byteSize
+     */
+    public boolean tryAcquire(long numberOfMessages, long byteSize) {
+        if (numberOfMessages > 0 && dispatchRateLimiterOnMessage != null) {
+            if (!dispatchRateLimiterOnMessage.tryAcquire(numberOfMessages)) {
+                return false;
+            }
+        }
+        if (byteSize > 0 && dispatchRateLimiterOnByte != null) {
+            if (!dispatchRateLimiterOnByte.tryAcquire(byteSize)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
      * Checks if dispatch-rate limiting is enabled.
      *
      * @return

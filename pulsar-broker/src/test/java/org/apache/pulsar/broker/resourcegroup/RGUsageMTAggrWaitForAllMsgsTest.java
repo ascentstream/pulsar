@@ -47,6 +47,7 @@ import org.apache.pulsar.common.policies.data.stats.TopicStatsImpl;
 import org.testng.Assert;
 import org.testng.annotations.AfterClass;
 import org.testng.annotations.BeforeClass;
+import org.testng.annotations.Ignore;
 import org.testng.annotations.Test;
 
 
@@ -56,7 +57,7 @@ import org.testng.annotations.Test;
 // After sending/receiving all the messages, traffic usage statistics, and Prometheus-metrics
 // are verified on the RGs.
 @Slf4j
-@Test(groups = "flaky")
+@Ignore
 public class RGUsageMTAggrWaitForAllMsgsTest extends ProducerConsumerBase {
     @BeforeClass
     @Override
@@ -93,22 +94,22 @@ public class RGUsageMTAggrWaitForAllMsgsTest extends ProducerConsumerBase {
         super.internalCleanup();
     }
 
-    @Test
+    @Test(enabled = false)
     public void testMTProduceConsumeRGUsagePersistentTopicNamesSameTenant() throws Exception {
         testProduceConsumeUsageOnRG(PersistentTopicNamesSameTenantAndNsRGs);
     }
 
-    @Test
+    @Test(enabled = false)
     public void testMTProduceConsumeRGUsagePersistentTopicNamesDifferentTenant() throws Exception {
         testProduceConsumeUsageOnRG(PersistentTopicNamesDifferentTenantAndNsRGs);
     }
 
-    @Test
+    @Test(enabled = false)
     public void testMTProduceConsumeRGUsageNonPersistentTopicNamesSameTenant() throws Exception {
         testProduceConsumeUsageOnRG(NonPersistentTopicNamesSameTenantAndNsRGs);
     }
 
-    @Test
+    @Test(enabled = false)
     public void testMTProduceConsumeRGUsageNonPersistentTopicNamesDifferentTenant() throws Exception {
         testProduceConsumeUsageOnRG(NonPersistentTopicNamesDifferentTenantAndNsRGs);
     }

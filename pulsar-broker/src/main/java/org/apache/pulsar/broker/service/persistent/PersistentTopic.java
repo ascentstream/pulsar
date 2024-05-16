@@ -303,19 +303,9 @@ public class PersistentTopic extends AbstractTopic implements Topic, AddEntryCal
 
     @Override
     public CompletableFuture<Void> initialize() {
-        List<CompletableFuture<Void>> futures = new ArrayList<>();
-        futures.add(initTopicPolicy());
-        for (ManagedCursor cursor : ledger.getCursors()) {
-            if (cursor.getName().startsWith(replicatorPrefix)) {
-                String localCluster = brokerService.pulsar().getConfiguration().getClusterName();
-                String remoteCluster = PersistentReplicator.getRemoteCluster(cursor.getName());
-                futures.add(addReplicationCluster(remoteCluster, cursor, localCluster));
-            }
-        }
-        return FutureUtil.waitForAll(futures).thenCompose(__ ->
-            brokerService.pulsar().getPulsarResources().getNamespaceResources()
+        return brokerService.pulsar().getPulsarResources().getNamespaceResources()
                 .getPoliciesAsync(TopicName.get(topic).getNamespaceObject())
-                .thenAccept(optPolicies -> {
+                .thenAcceptAsync(optPolicies -> {
                     if (!optPolicies.isPresent()) {
                         isEncryptionRequired = false;
                         updatePublishRateLimiter();
@@ -342,12 +332,25 @@ public class PersistentTopic extends AbstractTopic implements Topic, AddEntryCal
                     isAllowAutoUpdateSchema = policies.is_allow_auto_update_schema;
 
                     schemaValidationEnforced = policies.schema_validation_enforced;
-                }).exceptionally(ex -> {
+                }, brokerService.getTopicOrderedExecutor())
+                .thenCompose(ignore -> initTopicPolicyAndApply())
+                .exceptionally(ex -> {
                     log.warn("[{}] Error getting policies {} and isEncryptionRequired will be set to false",
                             topic, ex.getMessage());
                     isEncryptionRequired = false;
                     return null;
-                }));
+                })
+                .thenCompose(ignore -> {
+                    List<CompletableFuture<Void>> futures = new ArrayList<>();
+                    for (ManagedCursor cursor : ledger.getCursors()) {
+                        if (cursor.getName().startsWith(replicatorPrefix)) {
+                            String localCluster = brokerService.pulsar().getConfiguration().getClusterName();
+                            String remoteCluster = PersistentReplicator.getRemoteCluster(cursor.getName());
+                            futures.add(addReplicationCluster(remoteCluster, cursor, localCluster));
+                        }
+                    }
+                    return FutureUtil.waitForAll(futures);
+                });
     }
 
     // for testing purposes
@@ -3161,17 +3164,20 @@ public class PersistentTopic extends AbstractTopic implements Topic, AddEntryCal
         }
     }
 
-    protected CompletableFuture<Void> initTopicPolicy() {
+    protected CompletableFuture<Void> initTopicPolicyAndApply() {
         if (brokerService.pulsar().getConfig().isSystemTopicEnabled()
                 && brokerService.pulsar().getConfig().isTopicLevelPoliciesEnabled()) {
             brokerService.getPulsar().getTopicPoliciesService()
                     .registerListener(TopicName.getPartitionedTopicName(topic), this);
-            return CompletableFuture.completedFuture(null).thenRunAsync(() -> onUpdate(
-                            brokerService.getPulsar().getTopicPoliciesService()
-                                    .getTopicPoliciesIfExists(TopicName.getPartitionedTopicName(topic))),
-                    brokerService.getTopicOrderedExecutor());
+            TopicPolicies topicPolicies = brokerService.getPulsar().getTopicPoliciesService()
+                    .getTopicPoliciesIfExists(TopicName.getPartitionedTopicName(topic));
+            if (topicPolicies != null) {
+                onUpdate(topicPolicies);
+                return CompletableFuture.completedFuture(null);
+            }
         }
-        return CompletableFuture.completedFuture(null);
+
+        return FutureUtil.waitForAll(applyUpdatedTopicPolicies());
     }
 
     @VisibleForTesting

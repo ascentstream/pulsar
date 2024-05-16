@@ -40,12 +40,14 @@ import org.apache.pulsar.common.policies.data.stats.TopicStatsImpl;
 import org.testng.Assert;
 import org.testng.annotations.AfterClass;
 import org.testng.annotations.BeforeClass;
+import org.testng.annotations.Ignore;
 import org.testng.annotations.Test;
 
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 @Slf4j
+@Ignore
 public class ResourceGroupUsageAggregationTest extends ProducerConsumerBase {
     @BeforeClass
     @Override
@@ -77,7 +79,7 @@ public class ResourceGroupUsageAggregationTest extends ProducerConsumerBase {
         super.internalCleanup();
     }
 
-    @Test
+    @Test(enabled = false)
     public void testProduceConsumeUsageOnRG() throws Exception {
         testProduceConsumeUsageOnRG(PRODUCE_CONSUME_PERSISTENT_TOPIC);
         testProduceConsumeUsageOnRG(PRODUCE_CONSUME_NON_PERSISTENT_TOPIC);

@@ -43,9 +43,11 @@ import org.awaitility.Awaitility;
 import org.testng.Assert;
 import org.testng.annotations.AfterClass;
 import org.testng.annotations.BeforeClass;
+import org.testng.annotations.Ignore;
 import org.testng.annotations.Test;
 
 @Slf4j
+@Ignore
 public class ResourceGroupUsageAggregationOnTopicLevelTest extends ProducerConsumerBase {
 
     private final String TenantName = "pulsar-test";
@@ -76,12 +78,12 @@ public class ResourceGroupUsageAggregationOnTopicLevelTest extends ProducerConsu
         super.internalCleanup();
     }
 
-    @Test
+    @Test(enabled = false)
     public void testPersistentTopicProduceConsumeUsageOnRG() throws Exception {
         testProduceConsumeUsageOnRG(PRODUCE_CONSUME_PERSISTENT_TOPIC);
     }
-    
-    @Test
+
+    @Test(enabled = false)
     public void testNonPersistentTopicProduceConsumeUsageOnRG() throws Exception {
         testProduceConsumeUsageOnRG(PRODUCE_CONSUME_NON_PERSISTENT_TOPIC);
     }

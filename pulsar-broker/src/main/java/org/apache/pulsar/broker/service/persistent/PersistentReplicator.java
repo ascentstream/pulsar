@@ -30,6 +30,9 @@ import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
+import java.util.concurrent.atomic.LongAdder;
+import lombok.AllArgsConstructor;
+import lombok.Data;
 import org.apache.bookkeeper.mledger.AsyncCallbacks;
 import org.apache.bookkeeper.mledger.AsyncCallbacks.ClearBacklogCallback;
 import org.apache.bookkeeper.mledger.AsyncCallbacks.DeleteCallback;
@@ -46,7 +49,6 @@ import org.apache.bookkeeper.mledger.impl.PositionImpl;
 import org.apache.pulsar.broker.PulsarServerException;
 import org.apache.pulsar.broker.resourcegroup.ResourceGroup;
 import org.apache.pulsar.broker.resourcegroup.ResourceGroupDispatchLimiter;
-import org.apache.pulsar.broker.resourcegroup.ResourceGroupService;
 import org.apache.pulsar.broker.service.AbstractReplicator;
 import org.apache.pulsar.broker.service.BrokerService;
 import org.apache.pulsar.broker.service.BrokerServiceException.TopicBusyException;
@@ -60,7 +62,6 @@ import org.apache.pulsar.client.impl.ProducerImpl;
 import org.apache.pulsar.client.impl.PulsarClientImpl;
 import org.apache.pulsar.client.impl.SendCallback;
 import org.apache.pulsar.common.api.proto.MarkerType;
-import org.apache.pulsar.common.policies.data.HierarchyTopicPolicies;
 import org.apache.pulsar.common.policies.data.stats.ReplicatorStatsImpl;
 import org.apache.pulsar.common.schema.SchemaInfo;
 import org.apache.pulsar.common.stats.Rate;
@@ -98,6 +99,8 @@ public class PersistentReplicator extends AbstractReplicator
 
     private final Rate msgOut = new Rate();
     private final Rate msgExpired = new Rate();
+    private final LongAdder bytesOutCounter = new LongAdder();
+    private final LongAdder msgOutCounter = new LongAdder();
 
     private int messageTTLInSeconds = 0;
 
@@ -180,15 +183,32 @@ public class PersistentReplicator extends AbstractReplicator
         }
     }
 
+
+    @Data
+    @AllArgsConstructor
+    private static class AvailablePermits {
+        private int messages;
+        private long bytes;
+
+        /**
+         * messages, bytes
+         * 0, O:  Producer queue is full, no permits.
+         * -1, -1:  Rate Limiter reaches limit.
+         * >0, >0:  available permits for read entries.
+         */
+        public boolean isExceeded() {
+            return messages == -1 && bytes == -1;
+        }
+
+        public boolean isReadable() {
+            return messages > 0 && bytes > 0;
+        }
+    }
+
     /**
      * Calculate available permits for read entries.
-     *
-     * @return
-     *   0:  Producer queue is full, no permits.
-     *  -1:  Rate Limiter reaches limit.
-     *  >0:  available permits for read entries.
      */
-    private int getAvailablePermits() {
+    private AvailablePermits getAvailablePermits() {
         int availablePermits = producerQueueSize - PENDING_MESSAGES_UPDATER.get(this);
 
         // return 0, if Producer queue is full, it will pause read entries.
@@ -197,17 +217,18 @@ public class PersistentReplicator extends AbstractReplicator
                 log.debug("[{}][{} -> {}] Producer queue is full, availablePermits: {}, pause reading",
                     topicName, localCluster, remoteCluster, availablePermits);
             }
-            return 0;
+            return new AvailablePermits(0, 0);
         }
 
         long availablePermitsOnMsg = -1;
+        long availablePermitsOnByte = -1;
 
         // handle rate limit
         if (dispatchRateLimiter.isPresent() && dispatchRateLimiter.get().isDispatchRateLimitingEnabled()) {
             DispatchRateLimiter rateLimiter = dispatchRateLimiter.get();
             // if dispatch-rate is in msg then read only msg according to available permit
             availablePermitsOnMsg = rateLimiter.getAvailableDispatchRateLimitOnMsg();
-            long availablePermitsOnByte = rateLimiter.getAvailableDispatchRateLimitOnByte();
+            availablePermitsOnByte = rateLimiter.getAvailableDispatchRateLimitOnByte();
             if (availablePermitsOnByte == 0 || availablePermitsOnMsg == 0) {
                 if (log.isDebugEnabled()) {
                     log.debug("[{}] message-read exceeded topic replicator message-rate {}/{},"
@@ -217,7 +238,7 @@ public class PersistentReplicator extends AbstractReplicator
                             rateLimiter.getDispatchRateOnByte(),
                             MESSAGE_RATE_BACKOFF_MS);
                 }
-                return -1;
+                return new AvailablePermits(-1, -1);
             }
         }
 
@@ -234,20 +255,28 @@ public class PersistentReplicator extends AbstractReplicator
                             rateLimiter.getDispatchRateOnByte(),
                             MESSAGE_RATE_BACKOFF_MS);
                 }
-                return -1;
+                return new AvailablePermits(-1, -1);
             }
             if (availablePermitsOnMsg == -1) {
                 availablePermitsOnMsg = rgAvailablePermitsOnMsg;
             } else {
                 availablePermitsOnMsg = Math.min(rgAvailablePermitsOnMsg, availablePermitsOnMsg);
             }
+            if (availablePermitsOnByte == -1) {
+                availablePermitsOnByte = rgAvailablePermitsOnByte;
+            } else {
+                availablePermitsOnByte = Math.min(rgAvailablePermitsOnByte, availablePermitsOnByte);
+            }
         }
 
-        if (availablePermitsOnMsg > 0) {
-            availablePermits = Math.min(availablePermits, (int) availablePermitsOnMsg);
-        }
+        availablePermitsOnMsg =
+                availablePermitsOnMsg != -1 ? Math.min(availablePermitsOnMsg, availablePermits) : availablePermits;
+        availablePermitsOnMsg = Math.min(availablePermitsOnMsg, readBatchSize);
 
-        return availablePermits;
+        availablePermitsOnByte =
+                availablePermitsOnByte == -1 ? readMaxSizeBytes : Math.min(readMaxSizeBytes, availablePermitsOnByte);
+
+        return new AvailablePermits((int) availablePermitsOnMsg, availablePermitsOnByte);
     }
 
     protected void readMoreEntries() {
@@ -256,10 +285,10 @@ public class PersistentReplicator extends AbstractReplicator
                     topicName, localCluster, remoteCluster);
             return;
         }
-        int availablePermits = getAvailablePermits();
-
-        if (availablePermits > 0) {
-            int messagesToRead = Math.min(availablePermits, readBatchSize);
+        AvailablePermits availablePermits = getAvailablePermits();
+        if (availablePermits.isReadable()) {
+            int messagesToRead = availablePermits.getMessages();
+            long bytesToRead = availablePermits.getBytes();
             if (!isWritable()) {
                 if (log.isDebugEnabled()) {
                     log.debug("[{}][{} -> {}] Throttling replication traffic because producer is not writable",
@@ -269,16 +298,13 @@ public class PersistentReplicator extends AbstractReplicator
                 messagesToRead = 1;
             }
 
-            // If messagesToRead is 0 or less, correct it to 1 to prevent IllegalArgumentException
-            messagesToRead = Math.max(messagesToRead, 1);
-
             // Schedule read
             if (HAVE_PENDING_READ_UPDATER.compareAndSet(this, FALSE, TRUE)) {
                 if (log.isDebugEnabled()) {
-                    log.debug("[{}][{} -> {}] Schedule read of {} messages", topicName, localCluster, remoteCluster,
-                            messagesToRead);
+                    log.debug("[{}] Schedule read of {} messages or {} bytes", replicatorId, messagesToRead,
+                            bytesToRead);
                 }
-                cursor.asyncReadEntriesOrWait(messagesToRead, readMaxSizeBytes, this,
+                cursor.asyncReadEntriesOrWait(messagesToRead, bytesToRead, this,
                         null, PositionImpl.LATEST);
             } else {
                 if (log.isDebugEnabled()) {
@@ -286,10 +312,9 @@ public class PersistentReplicator extends AbstractReplicator
                             localCluster, remoteCluster, messagesToRead);
                 }
             }
-        } else if (availablePermits == -1) {
+        } else if (availablePermits.isExceeded()) {
             // no permits from rate limit
-            topic.getBrokerService().executor().schedule(
-                () -> readMoreEntries(), MESSAGE_RATE_BACKOFF_MS, TimeUnit.MILLISECONDS);
+            scheduleReadMoreEntriesWhenExceeded();
         } else {
             if (log.isDebugEnabled()) {
                 log.debug("[{}][{} -> {}] No Permits for reading. availablePermits: {}",
@@ -321,6 +346,7 @@ public class PersistentReplicator extends AbstractReplicator
         boolean atLeastOneMessageSentForReplication = false;
         boolean isEnableReplicatedSubscriptions =
                 brokerService.pulsar().getConfiguration().isEnableReplicatedSubscriptions();
+        boolean exceeded = false;
 
         try {
             // This flag is set to true when we skip atleast one local message,
@@ -396,11 +422,23 @@ public class PersistentReplicator extends AbstractReplicator
                     continue;
                 }
 
-                dispatchRateLimiter.ifPresent(rateLimiter -> rateLimiter.tryDispatchPermit(1, entry.getLength()));
-                resourceGroupDispatchRateLimiter.ifPresent(
-                        rateLimiter -> rateLimiter.consumeDispatchQuota(1, entry.getLength()));
+                int msgCount = msg.getMessageBuilder().hasNumMessagesInBatch()
+                        ? msg.getMessageBuilder().getNumMessagesInBatch() : 1;
+                dispatchRateLimiter.ifPresent(
+                        rateLimiter -> rateLimiter.tryDispatchPermit(msgCount, entry.getLength()));
 
-                msgOut.recordEvent(headersAndPayload.readableBytes());
+                ResourceGroupDispatchLimiter resourceGroupLimiter =
+                        resourceGroupDispatchRateLimiter.orElse(null);
+                if (resourceGroupLimiter != null) {
+                    if (!resourceGroupLimiter.tryAcquire(msgCount, entry.getLength())) {
+                        entry.release();
+                        msg.recycle();
+                        cursor.cancelPendingReadRequest();
+                        cursor.rewind();
+                        exceeded = true;
+                        break;
+                    }
+                }
 
                 msg.setReplicatedFrom(localCluster);
 
@@ -433,6 +471,9 @@ public class PersistentReplicator extends AbstractReplicator
                     msg.setSchemaInfoForReplicator(schemaFuture.get());
                     // Increment pending messages for messages produced locally
                     PENDING_MESSAGES_UPDATER.incrementAndGet(this);
+                    msgOut.recordEvent(headersAndPayload.readableBytes());
+                    msgOutCounter.add(msgCount);
+                    bytesOutCounter.add(length);
                     producer.sendAsync(msg, ProducerSendCallback.create(this, entry, msg));
                     atLeastOneMessageSentForReplication = true;
                 }
@@ -451,8 +492,17 @@ public class PersistentReplicator extends AbstractReplicator
                         localCluster, remoteCluster, atLeastOneMessageSentForReplication, isWritable());
             }
         } else {
-            readMoreEntries();
+            if (exceeded) {
+                scheduleReadMoreEntriesWhenExceeded();
+            } else {
+                readMoreEntries();
+            }
         }
+    }
+
+    private void scheduleReadMoreEntriesWhenExceeded() {
+        topic.getBrokerService().executor().schedule(
+                () -> readMoreEntries(), MESSAGE_RATE_BACKOFF_MS, TimeUnit.MILLISECONDS);
     }
 
     private CompletableFuture<SchemaInfo> getSchemaInfo(MessageImpl msg) throws ExecutionException {
@@ -738,6 +788,8 @@ public class PersistentReplicator extends AbstractReplicator
         stats.replicationBacklog = cursor != null ? cursor.getNumberOfEntriesInBacklog(false) : 0;
         stats.connected = producer != null && producer.isConnected();
         stats.replicationDelayInSeconds = getReplicationDelayInSeconds();
+        stats.msgOutCounter = msgOutCounter.longValue();
+        stats.bytesOutCounter = bytesOutCounter.longValue();
 
         ProducerImpl producer = this.producer;
         if (producer != null) {
@@ -795,11 +847,10 @@ public class PersistentReplicator extends AbstractReplicator
                 this.dispatchRateLimiter = Optional.of(new DispatchRateLimiter(topic, Type.REPLICATOR));
             }
 
-            ResourceGroupService resourceGroupService = brokerService.getPulsar().getResourceGroupServiceManager();
-            HierarchyTopicPolicies hierarchyTopicPolicies = topic.getHierarchyTopicPolicies();
-            String resourceGroupName = hierarchyTopicPolicies.getResourceGroupName().get();
+            String resourceGroupName = topic.getHierarchyTopicPolicies().getResourceGroupName().get();
             if (resourceGroupName != null) {
-                ResourceGroup resourceGroup = resourceGroupService.resourceGroupGet(resourceGroupName);
+                ResourceGroup resourceGroup =
+                        brokerService.getPulsar().getResourceGroupServiceManager().resourceGroupGet(resourceGroupName);
                 if (resourceGroup != null) {
                     resourceGroupDispatchRateLimiter = Optional.of(resourceGroup
                             .getResourceGroupReplicationDispatchLimiter());
@@ -810,6 +861,12 @@ public class PersistentReplicator extends AbstractReplicator
                 }
             }
         }
+    }
+
+    @Override
+    public void updateRateLimiter() {
+        initializeDispatchRateLimiterIfNeeded();
+        dispatchRateLimiter.ifPresent(DispatchRateLimiter::updateDispatchRate);
     }
 
     private void checkReplicatedSubscriptionMarker(Position position, MessageImpl<?> msg, ByteBuf payload) {
