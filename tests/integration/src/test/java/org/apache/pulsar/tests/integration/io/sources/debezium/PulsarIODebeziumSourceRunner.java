@@ -19,6 +19,9 @@
 package org.apache.pulsar.tests.integration.io.sources.debezium;
 
 import com.google.common.base.Preconditions;
+import dev.failsafe.Failsafe;
+import lombok.Cleanup;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.pulsar.client.api.Consumer;
 import org.apache.pulsar.client.api.PulsarClient;
 import org.apache.pulsar.client.api.SubscriptionInitialPosition;
@@ -27,10 +30,6 @@ import org.apache.pulsar.tests.integration.io.sources.PulsarIOSourceRunner;
 import org.apache.pulsar.tests.integration.io.sources.SourceTester;
 import org.apache.pulsar.tests.integration.topologies.PulsarCluster;
 import org.testcontainers.containers.GenericContainer;
-
-import lombok.Cleanup;
-import lombok.extern.slf4j.Slf4j;
-import net.jodah.failsafe.Failsafe;
 
 @Slf4j
 public class PulsarIODebeziumSourceRunner extends PulsarIOSourceRunner {

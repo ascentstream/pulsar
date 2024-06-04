@@ -18,6 +18,7 @@
  */
 package org.apache.pulsar.tests.integration.io;
 
+import dev.failsafe.RetryPolicy;
 import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -33,7 +34,6 @@ import org.apache.pulsar.tests.integration.topologies.PulsarCluster;
 
 import lombok.Cleanup;
 import lombok.extern.slf4j.Slf4j;
-import net.jodah.failsafe.RetryPolicy;
 
 @Slf4j
 public abstract class PulsarIOTestRunner {
@@ -42,11 +42,11 @@ public abstract class PulsarIOTestRunner {
     final Duration ONE_MINUTE = Duration.ofMinutes(1);
     final Duration TEN_SECONDS = Duration.ofSeconds(10);
 
-    @SuppressWarnings({ "unchecked", "rawtypes" })
-	protected final RetryPolicy statusRetryPolicy = new RetryPolicy()
+	protected final RetryPolicy<?> statusRetryPolicy = RetryPolicy.builder()
             .withMaxDuration(ONE_MINUTE)
             .withDelay(TEN_SECONDS)
-            .onRetry(e -> log.error("Retry ... "));
+            .onRetry(e -> log.error("Retry ... "))
+            .build();
 
     protected PulsarCluster pulsarCluster;
     protected String functionRuntimeType;
