@@ -167,6 +167,9 @@ public class ClientCnx extends PulsarHandler {
     private TransactionBufferHandler transactionBufferHandler;
 
     @Getter
+    private boolean supportsGetPartitionedMetadataWithoutAutoCreation;
+
+    @Getter
     private long lastDisconnectedTimestamp;
 
     protected enum State {
@@ -342,6 +345,11 @@ public class ClientCnx extends PulsarHandler {
         if (log.isDebugEnabled()) {
             log.debug("{} Connection is ready", ctx.channel());
         }
+
+        supportsGetPartitionedMetadataWithoutAutoCreation =
+            connected.hasFeatureFlags()
+                    && connected.getFeatureFlags().isSupportsGetPartitionedMetadataWithoutAutoCreation();
+
         // set remote protocol version to the correct version before we complete the connection future
         setRemoteEndpointProtocolVersion(connected.getProtocolVersion());
         connectionFuture.complete(null);

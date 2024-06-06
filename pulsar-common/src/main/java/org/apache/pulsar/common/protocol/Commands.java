@@ -284,6 +284,8 @@ public class Commands {
         int versionToAdvertise = Math.min(currentProtocolVersion, clientProtocolVersion);
 
         connected.setProtocolVersion(versionToAdvertise);
+
+        connected.setFeatureFlags().setSupportsGetPartitionedMetadataWithoutAutoCreation(true);
         return cmd;
     }
 
