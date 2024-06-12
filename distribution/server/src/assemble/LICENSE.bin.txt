@@ -352,27 +352,27 @@ The Apache Software License, Version 2.0
     - org.apache.commons-commons-compress-1.26.0.jar
     - org.apache.commons-commons-lang3-3.11.jar
  * Netty
-    - io.netty-netty-buffer-4.1.108.Final.jar
-    - io.netty-netty-codec-4.1.108.Final.jar
-    - io.netty-netty-codec-dns-4.1.108.Final.jar
-    - io.netty-netty-codec-http-4.1.108.Final.jar
-    - io.netty-netty-codec-http2-4.1.108.Final.jar
-    - io.netty-netty-codec-socks-4.1.108.Final.jar
-    - io.netty-netty-codec-haproxy-4.1.108.Final.jar
-    - io.netty-netty-common-4.1.108.Final.jar
-    - io.netty-netty-handler-4.1.108.Final.jar
-    - io.netty-netty-handler-proxy-4.1.108.Final.jar
-    - io.netty-netty-resolver-4.1.108.Final.jar
-    - io.netty-netty-resolver-dns-4.1.108.Final.jar
-    - io.netty-netty-resolver-dns-classes-macos-4.1.108.Final.jar
-    - io.netty-netty-resolver-dns-native-macos-4.1.108.Final-osx-aarch_64.jar
-    - io.netty-netty-resolver-dns-native-macos-4.1.108.Final-osx-x86_64.jar
-    - io.netty-netty-transport-4.1.108.Final.jar
-    - io.netty-netty-transport-classes-epoll-4.1.108.Final.jar
-    - io.netty-netty-transport-native-epoll-4.1.108.Final-linux-aarch_64.jar
-    - io.netty-netty-transport-native-epoll-4.1.108.Final-linux-x86_64.jar
-    - io.netty-netty-transport-native-unix-common-4.1.108.Final.jar
-    - io.netty-netty-transport-native-unix-common-4.1.108.Final-linux-x86_64.jar
+    - io.netty-netty-buffer-4.1.111.Final.jar
+    - io.netty-netty-codec-4.1.111.Final.jar
+    - io.netty-netty-codec-dns-4.1.111.Final.jar
+    - io.netty-netty-codec-http-4.1.111.Final.jar
+    - io.netty-netty-codec-http2-4.1.111.Final.jar
+    - io.netty-netty-codec-socks-4.1.111.Final.jar
+    - io.netty-netty-codec-haproxy-4.1.111.Final.jar
+    - io.netty-netty-common-4.1.111.Final.jar
+    - io.netty-netty-handler-4.1.111.Final.jar
+    - io.netty-netty-handler-proxy-4.1.111.Final.jar
+    - io.netty-netty-resolver-4.1.111.Final.jar
+    - io.netty-netty-resolver-dns-4.1.111.Final.jar
+    - io.netty-netty-resolver-dns-classes-macos-4.1.111.Final.jar
+    - io.netty-netty-resolver-dns-native-macos-4.1.111.Final-osx-aarch_64.jar
+    - io.netty-netty-resolver-dns-native-macos-4.1.111.Final-osx-x86_64.jar
+    - io.netty-netty-transport-4.1.111.Final.jar
+    - io.netty-netty-transport-classes-epoll-4.1.111.Final.jar
+    - io.netty-netty-transport-native-epoll-4.1.111.Final-linux-aarch_64.jar
+    - io.netty-netty-transport-native-epoll-4.1.111.Final-linux-x86_64.jar
+    - io.netty-netty-transport-native-unix-common-4.1.111.Final.jar
+    - io.netty-netty-transport-native-unix-common-4.1.111.Final-linux-x86_64.jar
     - io.netty-netty-tcnative-boringssl-static-2.0.65.Final.jar
     - io.netty-netty-tcnative-boringssl-static-2.0.65.Final-linux-aarch_64.jar
     - io.netty-netty-tcnative-boringssl-static-2.0.65.Final-linux-x86_64.jar
@@ -476,22 +476,23 @@ The Apache Software License, Version 2.0
      - org.jetbrains.kotlin-kotlin-stdlib-jdk8-1.6.0.jar
      - org.jetbrains-annotations-13.0.jar
  * gRPC
-    - io.grpc-grpc-all-1.45.1.jar
-    - io.grpc-grpc-auth-1.45.1.jar
-    - io.grpc-grpc-context-1.45.1.jar
-    - io.grpc-grpc-core-1.45.1.jar
-    - io.grpc-grpc-netty-1.45.1.jar
-    - io.grpc-grpc-protobuf-1.45.1.jar
-    - io.grpc-grpc-protobuf-lite-1.45.1.jar
-    - io.grpc-grpc-stub-1.45.1.jar
-    - io.grpc-grpc-alts-1.45.1.jar
-    - io.grpc-grpc-api-1.45.1.jar
-    - io.grpc-grpc-grpclb-1.45.1.jar
-    - io.grpc-grpc-netty-shaded-1.45.1.jar
-    - io.grpc-grpc-services-1.45.1.jar
-    - io.grpc-grpc-xds-1.45.1.jar
-    - io.grpc-grpc-rls-1.45.1.jar
-    - com.google.auto.service-auto-service-annotations-1.0.jar
+ - io.grpc-grpc-all-1.55.3.jar
+    - io.grpc-grpc-auth-1.55.3.jar
+    - io.grpc-grpc-context-1.55.3.jar
+    - io.grpc-grpc-core-1.55.3.jar
+    - io.grpc-grpc-protobuf-1.55.3.jar
+    - io.grpc-grpc-protobuf-lite-1.55.3.jar
+    - io.grpc-grpc-stub-1.55.3.jar
+    - io.grpc-grpc-alts-1.55.3.jar
+    - io.grpc-grpc-api-1.55.3.jar
+    - io.grpc-grpc-grpclb-1.55.3.jar
+    - io.grpc-grpc-netty-shaded-1.55.3.jar
+    - io.grpc-grpc-services-1.55.3.jar
+    - io.grpc-grpc-xds-1.55.3.jar
+    - io.grpc-grpc-rls-1.55.3.jar
+    - io.grpc-grpc-servlet-1.55.3.jar
+    - io.grpc-grpc-servlet-jakarta-1.55.3.jar
+    - io.grpc-grpc-util-1.60.0.jar
   * Perfmark
     - io.perfmark-perfmark-api-0.19.0.jar
   * OpenCensus
@@ -547,10 +548,8 @@ The Apache Software License, Version 2.0
     - com.google.http-client-google-http-client-gson-1.41.0.jar
     - com.google.http-client-google-http-client-1.41.0.jar
     - com.google.auto.value-auto-value-annotations-1.9.jar
-    - com.google.re2j-re2j-1.5.jar
-  * Jetcd
-    - io.etcd-jetcd-common-0.5.11.jar
-    - io.etcd-jetcd-core-0.5.11.jar
+    - com.google.re2j-re2j-1.6.jar
+  * Jetcd - shaded
   * IPAddress
     - com.github.seancfoley-ipaddress-5.3.3.jar
   * RoaringBitmap
