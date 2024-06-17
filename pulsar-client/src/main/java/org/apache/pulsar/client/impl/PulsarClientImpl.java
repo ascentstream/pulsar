@@ -31,7 +31,9 @@ import java.net.InetSocketAddress;
 import java.time.Clock;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
@@ -704,6 +706,21 @@ public class PulsarClientImpl implements PulsarClient {
         return lookup.getSchema(topicName);
     }
 
+    private void closeUrlLookupMap() {
+        Map<String, LookupService> closedUrlLookupServices = new HashMap(urlLookupMap.size());
+        urlLookupMap.entrySet().forEach(e -> {
+            try {
+                e.getValue().close();
+            } catch (Exception ex) {
+                log.error("Error closing lookup service {}", e.getKey(), ex);
+            }
+            closedUrlLookupServices.put(e.getKey(), e.getValue());
+        });
+        closedUrlLookupServices.entrySet().forEach(e -> {
+            urlLookupMap.remove(e.getKey(), e.getValue());
+        });
+    }
+
     @Override
     public void close() throws PulsarClientException {
         try {
@@ -730,6 +747,8 @@ public class PulsarClientImpl implements PulsarClient {
 
         final CompletableFuture<Void> closeFuture = new CompletableFuture<>();
         List<CompletableFuture<Void>> futures = new ArrayList<>();
+
+        closeUrlLookupMap();
 
         producers.forEach(p -> futures.add(p.closeAsync()));
         consumers.forEach(c -> futures.add(c.closeAsync()));
@@ -978,6 +997,32 @@ public class PulsarClientImpl implements PulsarClient {
 
     public LookupService getLookup() {
         return lookup;
+    }
+
+    private Map<String, LookupService> urlLookupMap = new ConcurrentHashMap<>();
+
+    public LookupService getLookup(String serviceUrl) {
+        return urlLookupMap.computeIfAbsent(serviceUrl, url -> {
+            if (isClosed()) {
+                throw new IllegalStateException("Pulsar client has been closed, can not build LookupService when"
+                        + " calling get lookup with an url");
+            }
+            try {
+                return createLookup(serviceUrl);
+            } catch (PulsarClientException e) {
+                log.warn("Failed to update url to lookup service {}, {}", url, e.getMessage());
+                throw new IllegalStateException("Failed to update url " + url);
+            }
+        });
+    }
+
+    public LookupService createLookup(String url) throws PulsarClientException {
+        if (url.startsWith("http")) {
+            return new HttpLookupService(conf, eventLoopGroup);
+        } else {
+            return new BinaryProtoLookupService(this, url, conf.getListenerName(), conf.isUseTls(),
+                    externalExecutorProvider.getExecutor());
+        }
     }
 
     public void reloadLookUp() throws PulsarClientException {

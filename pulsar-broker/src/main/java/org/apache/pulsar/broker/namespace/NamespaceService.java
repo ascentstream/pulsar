@@ -36,6 +36,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
@@ -45,6 +46,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.collections4.ListUtils;
 import org.apache.commons.lang3.StringUtils;
@@ -63,6 +65,7 @@ import org.apache.pulsar.broker.service.nonpersistent.NonPersistentTopic;
 import org.apache.pulsar.broker.stats.prometheus.metrics.Summary;
 import org.apache.pulsar.broker.web.PulsarWebResource;
 import org.apache.pulsar.client.admin.PulsarAdmin;
+import org.apache.pulsar.client.admin.PulsarAdminException;
 import org.apache.pulsar.client.api.ClientBuilder;
 import org.apache.pulsar.client.api.PulsarClient;
 import org.apache.pulsar.client.api.PulsarClientException;
@@ -107,6 +110,7 @@ import org.slf4j.LoggerFactory;
  *
  * @see org.apache.pulsar.broker.PulsarService
  */
+@Slf4j
 public class NamespaceService implements AutoCloseable {
 
     public enum AddressType {
@@ -1131,30 +1135,99 @@ public class NamespaceService implements AutoCloseable {
                 });
     }
 
-    public CompletableFuture<Boolean> checkTopicExists(TopicName topic) {
+    /***
+     * Check topic exists( partitioned or non-partitioned ).
+     */
+    public CompletableFuture<TopicExistsInfo> checkTopicExists(TopicName topic) {
+        return pulsar.getBrokerService()
+            .fetchPartitionedTopicMetadataAsync(TopicName.get(topic.toString()))
+            .thenCompose(metadata -> {
+                if (metadata.partitions > 0) {
+                    return CompletableFuture.completedFuture(
+                            TopicExistsInfo.newPartitionedTopicExists(metadata.partitions));
+                }
+                return checkNonPartitionedTopicExists(topic)
+                    .thenApply(b -> b ? TopicExistsInfo.newNonPartitionedTopicExists()
+                            : TopicExistsInfo.newTopicNotExists());
+            });
+    }
+
+    /***
+     * Check non-partitioned topic exists.
+     */
+    public CompletableFuture<Boolean> checkNonPartitionedTopicExists(TopicName topic) {
         if (topic.isPersistent()) {
             return pulsar.getPulsarResources().getTopicResources().persistentTopicExists(topic);
         } else {
-            if (topic.isPartitioned()) {
-                final TopicName partitionedTopicName = TopicName.get(topic.getPartitionedTopicName());
-                return pulsar.getBrokerService()
-                        .fetchPartitionedTopicMetadataAsync(partitionedTopicName)
-                        .thenApply((metadata) -> topic.getPartitionIndex() < metadata.partitions);
-            } else {
-                // only checks and don't do any topic creating and loading.
-                CompletableFuture<Optional<Topic>> topicFuture =
-                        pulsar.getBrokerService().getTopics().get(topic.toString());
-                if (topicFuture == null) {
-                    return CompletableFuture.completedFuture(false);
-                } else {
-                    return topicFuture.thenApply(Optional::isPresent).exceptionally(throwable -> {
-                        LOG.warn("[{}] topicFuture completed with exception when checkTopicExists, {}",
-                                topic, throwable.getMessage());
-                        return false;
-                    });
-                }
-            }
+            return checkNonPersistentNonPartitionedTopicExists(topic.toString());
         }
+    }
+
+    /**
+     * Regarding non-persistent topic, we do not know whether it exists or not. Redirect the request to the ownership
+     * broker of this topic. HTTP API has implemented the mechanism that redirect to ownership broker, so just call
+     * HTTP API here.
+     */
+    public CompletableFuture<Boolean> checkNonPersistentNonPartitionedTopicExists(String topic) {
+        TopicName topicName = TopicName.get(topic);
+        // "non-partitioned & non-persistent" topics only exist on the owner broker.
+        return checkTopicOwnership(TopicName.get(topic)).thenCompose(isOwned -> {
+            // The current broker is the owner.
+            if (isOwned) {
+               CompletableFuture<Optional<Topic>> nonPersistentTopicFuture = pulsar.getBrokerService()
+                       .getTopic(topic, false);
+               if (nonPersistentTopicFuture != null) {
+                   return nonPersistentTopicFuture.thenApply(Optional::isPresent);
+               } else {
+                   return CompletableFuture.completedFuture(false);
+               }
+            }
+
+            // Forward to the owner broker.
+            PulsarClientImpl pulsarClient;
+            try {
+                pulsarClient = (PulsarClientImpl) pulsar.getClient();
+            } catch (Exception ex) {
+                // This error will never occur.
+                log.error("{} Failed to get partition metadata due to create internal admin client fails", topic, ex);
+                return FutureUtil.failedFuture(ex);
+            }
+            LookupOptions lookupOptions = LookupOptions.builder().readOnly(false).authoritative(true).build();
+            return getBrokerServiceUrlAsync(TopicName.get(topic), lookupOptions)
+                .thenCompose(lookupResult -> {
+                    if (!lookupResult.isPresent()) {
+                        log.error("{} Failed to get partition metadata due can not find the owner broker", topic);
+                        return FutureUtil.failedFuture(new ServiceUnitNotReadyException(
+                                "No broker was available to own " + topicName));
+                    }
+                    LookupData lookupData = lookupResult.get().getLookupData();
+                    String brokerUrl;
+                    if (pulsar.getConfiguration().isBrokerClientTlsEnabled()
+                            && StringUtils.isNotEmpty(lookupData.getBrokerUrlTls())) {
+                        brokerUrl = lookupData.getBrokerUrlTls();
+                    } else {
+                        brokerUrl = lookupData.getBrokerUrl();
+                    }
+                    return pulsarClient.getLookup(brokerUrl)
+                            .getPartitionedTopicMetadata(topicName, false)
+                            .thenApply(metadata -> true)
+                            .handle((res, ex) -> {
+                                if (ex == null) {
+                                    return res;
+                                }
+                                Throwable actEx = FutureUtil.unwrapCompletionException(ex);
+                                if (actEx instanceof PulsarClientException.NotFoundException
+                                        || actEx instanceof PulsarClientException.TopicDoesNotExistException
+                                        || actEx instanceof PulsarAdminException.NotFoundException) {
+                                    return false;
+                                } else {
+                                    log.error("{} Failed to get partition metadata due to redirecting fails", topic,
+                                            ex);
+                                    throw new CompletionException(ex);
+                                }
+                            });
+                });
+        });
     }
 
     public CompletableFuture<List<String>> getListOfTopics(NamespaceName namespaceName, Mode mode) {
