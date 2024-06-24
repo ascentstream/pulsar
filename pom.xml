@@ -294,9 +294,7 @@ flexible messaging model and an intuitive client API.</description>
     <dependency-check-maven.version>9.1.0</dependency-check-maven.version>
     <roaringbitmap.version>0.9.44</roaringbitmap.version>
     <oshi.version>6.4.0</oshi.version>
-
-    <!-- Used to configure rename.netty.native. Libs -->
-    <rename.netty.native.libs>rename-netty-native-libs.sh</rename.netty.native.libs>
+    <checkerframework.version>3.33.0</checkerframework.version>
   </properties>
 
   <dependencyManagement>
@@ -2262,10 +2260,6 @@ flexible messaging model and an intuitive client API.</description>
           <family>Windows</family>
         </os>
       </activation>
-      <properties>
-        <rename.netty.native.libs>rename-netty-native-libs.cmd</rename.netty.native.libs>
-      </properties>
-
     </profile>
     <!-- Primary Module profile -->
     <profile>
