@@ -123,7 +123,7 @@ public class UniformLoadShedder implements LoadSheddingStrategy {
             MutableInt msgRateRequiredFromUnloadedBundles = new MutableInt(
                     (int) ((maxMsgRate.getValue() - minMsgRate.getValue()) * conf.getMaxUnloadPercentage()));
             MutableInt msgThroughputRequiredFromUnloadedBundles = new MutableInt(
-                    (int) ((maxThroughput.getValue() - maxThroughput.getValue()) * conf.getMaxUnloadPercentage()));
+                    (int) ((maxThroughput.getValue() - minThroughput.getValue()) * conf.getMaxUnloadPercentage()));
             if (isMsgRateThresholdExceeded) {
                 if (log.isDebugEnabled()) {
                     log.debug("Found bundles for uniform load balancing. "
@@ -186,6 +186,10 @@ public class UniformLoadShedder implements LoadSheddingStrategy {
                                 return Pair.of(bundle, msgThroughput);
                             }).filter(e -> !recentlyUnloadedBundles.containsKey(e.getLeft()))
                             .sorted((e1, e2) -> Double.compare(e2.getRight(), e1.getRight())).forEach((e) -> {
+                                if (conf.getMaxUnloadBundleNumPerShedding() != -1
+                                        && selectedBundlesCache.size() >= conf.getMaxUnloadBundleNumPerShedding()) {
+                                    return;
+                                }
                                 String bundle = e.getLeft();
                                 double msgThroughput = e.getRight();
                                 if (msgThroughput <= (msgThroughputRequiredFromUnloadedBundles.getValue()
