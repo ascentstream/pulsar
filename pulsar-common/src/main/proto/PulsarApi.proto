@@ -289,6 +289,7 @@ message CommandConnect {
     optional FeatureFlags feature_flags = 10;
 }
 
+// Please also add a new enum for the class "PulsarClientException.FailedFeatureCheck" when adding a new feature flag.
 message FeatureFlags {
   optional bool supports_auth_refresh = 1 [default = false];
   optional bool supports_broker_entry_metadata = 2 [default = false];

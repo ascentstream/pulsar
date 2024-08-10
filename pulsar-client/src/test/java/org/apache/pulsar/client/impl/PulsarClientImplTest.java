@@ -113,7 +113,7 @@ public class PulsarClientImplTest {
                 any(NamespaceName.class),
                 any(CommandGetTopicsOfNamespace.Mode.class)))
                 .thenReturn(CompletableFuture.completedFuture(Collections.emptyList()));
-        when(lookup.getPartitionedTopicMetadata(any(TopicName.class), anyBoolean()))
+        when(lookup.getPartitionedTopicMetadata(any(TopicName.class), anyBoolean(), anyBoolean()))
                 .thenReturn(CompletableFuture.completedFuture(new PartitionedTopicMetadata()));
         when(lookup.getBroker(any(TopicName.class)))
                 .thenReturn(CompletableFuture.completedFuture(

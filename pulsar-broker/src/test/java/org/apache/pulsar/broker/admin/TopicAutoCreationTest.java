@@ -134,7 +134,7 @@ public class TopicAutoCreationTest extends ProducerConsumerBase {
             // we want to skip the "lookup" phase, because it is blocked by the HTTP API
             LookupService mockLookup = mock(LookupService.class);
             Whitebox.setInternalState(pulsarClient, "lookup", mockLookup);
-            when(mockLookup.getPartitionedTopicMetadata(any(), anyBoolean())).thenAnswer(i -> {
+            when(mockLookup.getPartitionedTopicMetadata(any(), anyBoolean(), anyBoolean())).thenAnswer(i -> {
                 return CompletableFuture.completedFuture(new PartitionedTopicMetadata(0));
             });
             when(mockLookup.getBroker(any())).thenAnswer(i -> {
