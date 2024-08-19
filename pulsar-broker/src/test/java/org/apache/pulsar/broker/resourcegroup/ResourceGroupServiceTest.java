@@ -20,11 +20,13 @@ package org.apache.pulsar.broker.resourcegroup;
 
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Policy.Expiration;
+import java.nio.charset.StandardCharsets;
 import java.util.HashSet;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import lombok.Cleanup;
 import org.apache.pulsar.broker.auth.MockedPulsarServiceBaseTest;
 import org.apache.pulsar.broker.resourcegroup.ResourceGroup.BytesAndMessagesCount;
 import org.apache.pulsar.broker.resourcegroup.ResourceGroup.PerBrokerUsageStats;
@@ -33,9 +35,12 @@ import org.apache.pulsar.broker.resourcegroup.ResourceGroup.ResourceGroupMonitor
 import org.apache.pulsar.broker.service.resource.usage.NetworkUsage;
 import org.apache.pulsar.broker.service.resource.usage.ResourceUsage;
 import org.apache.pulsar.client.admin.PulsarAdminException;
+import org.apache.pulsar.client.api.Producer;
+import org.apache.pulsar.client.api.PulsarClientException;
 import org.apache.pulsar.common.naming.NamespaceName;
 import org.apache.pulsar.common.naming.TopicName;
 import org.apache.pulsar.common.policies.data.ClusterData;
+import org.apache.pulsar.common.policies.data.TenantInfo;
 import org.awaitility.Awaitility;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -277,6 +282,57 @@ public class ResourceGroupServiceTest extends MockedPulsarServiceBaseTest {
         Assert.assertThrows(PulsarAdminException.class, () -> rgs.getPublishRateLimiters(rgName));
 
         Assert.assertEquals(rgs.getNumResourceGroups(), 0);
+
+        Assert.assertEquals(rgs.getTopicConsumeStats().estimatedSize(), 0);
+        Assert.assertEquals(rgs.getTopicProduceStats().estimatedSize(), 0);
+        Assert.assertEquals(rgs.getReplicationDispatchStats().estimatedSize(), 0);
+        Assert.assertEquals(rgs.getTopicToReplicatorsMap().size(), 0);
+    }
+
+    @Test
+    public void testCleanupStatsWhenNamespaceDeleted()
+            throws PulsarAdminException, PulsarClientException, InterruptedException {
+        String tenantName = UUID.randomUUID().toString();
+        admin.tenants().createTenant(tenantName,
+                TenantInfo.builder().allowedClusters(new HashSet<>(admin.clusters().getClusters())).build());
+        String nsName = tenantName + "/" + UUID.randomUUID();
+        admin.namespaces().createNamespace(nsName);
+        org.apache.pulsar.common.policies.data.ResourceGroup rgConfig =
+                new org.apache.pulsar.common.policies.data.ResourceGroup();
+        final String rgName = UUID.randomUUID().toString();
+        rgConfig.setPublishRateInBytes(15000L);
+        rgConfig.setPublishRateInMsgs(100);
+        rgConfig.setDispatchRateInBytes(40000L);
+        rgConfig.setDispatchRateInMsgs(500);
+        rgConfig.setReplicationDispatchRateInBytes(2000L);
+        rgConfig.setReplicationDispatchRateInMsgs(400L);
+
+        admin.resourcegroups().createResourceGroup(rgName, rgConfig);
+        admin.namespaces().setNamespaceResourceGroup(nsName, rgName);
+        Awaitility.await().ignoreExceptions().untilAsserted(() -> {
+            Assert.assertNotNull(rgs.getNamespaceResourceGroup(NamespaceName.get(nsName)));
+        });
+
+        String topic = nsName + "/" + UUID.randomUUID();
+        @Cleanup
+        Producer<byte[]> producer =
+                pulsarClient.newProducer().topic(topic).create();
+        producer.send("hi".getBytes(StandardCharsets.UTF_8));
+
+        rgs.aggregateResourceGroupLocalUsages();
+        producer.close();
+        Assert.assertEquals(rgs.getTopicProduceStats().asMap().size(), 1);
+        Assert.assertEquals(rgs.getTopicConsumeStats().asMap().size(), 0);
+        Assert.assertEquals(rgs.getReplicationDispatchStats().asMap().size(), 0);
+        admin.topics().delete(topic);
+        admin.namespaces().deleteNamespace(nsName);
+        admin.resourcegroups().deleteResourceGroup(rgName);
+        Awaitility.await().untilAsserted(() -> {
+            Assert.assertEquals(rgs.getTopicProduceStats().asMap().size(), 0);
+            Assert.assertEquals(rgs.getTopicConsumeStats().asMap().size(), 0);
+            Assert.assertEquals(rgs.getReplicationDispatchStats().asMap().size(), 0);
+            Assert.assertNull(rgs.getNamespaceResourceGroup(NamespaceName.get(nsName)));
+        });
     }
 
     @Test

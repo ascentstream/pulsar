@@ -25,11 +25,14 @@ import com.google.common.annotations.VisibleForTesting;
 import io.prometheus.client.Counter;
 import io.prometheus.client.Gauge;
 import io.prometheus.client.Summary;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArraySet;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.ReentrantLock;
 import lombok.Getter;
 import lombok.val;
 import org.apache.pulsar.broker.PulsarService;
@@ -293,6 +296,36 @@ public class ResourceGroupService implements AutoCloseable{
             throw new PulsarAdminException(errMesg);
         }
 
+        aggregateLock.lock();
+
+        Set<String> invalidateAllKeyForProduce = new HashSet<>();
+        topicProduceStats.asMap().forEach((key, value) -> {
+            TopicName topicName = TopicName.get(key);
+            if (topicName.getNamespaceObject().equals(fqNamespaceName)) {
+                invalidateAllKeyForProduce.add(key);
+            }
+        });
+        topicProduceStats.invalidateAll(invalidateAllKeyForProduce);
+
+        Set<String> invalidateAllKeyForReplication = new HashSet<>();
+        topicToReplicatorsMap.forEach((key, value) -> {
+            TopicName topicName = TopicName.get(key);
+            if (topicName.getNamespaceObject().equals(fqNamespaceName)) {
+                value.forEach(n -> invalidateAllKeyForReplication.add(key));
+            }
+        });
+        replicationDispatchStats.invalidateAll(invalidateAllKeyForReplication);
+
+        Set<TopicName> invalidateAllKeyForConsumer = new HashSet<>();
+        topicConsumeStats.asMap().forEach((key, value) -> {
+            TopicName topicName = TopicName.get(key);
+            if (topicName.getNamespaceObject().equals(fqNamespaceName)) {
+                invalidateAllKeyForConsumer.add(topicName);
+            }
+        });
+        topicConsumeStats.invalidate(invalidateAllKeyForConsumer);
+
+        aggregateLock.unlock();
         // Dissociate this NS-name from the RG.
         this.namespaceToRGsMap.remove(fqNamespaceName, rg);
         rgNamespaceUnRegisters.labels(resourceGroupName).inc();
@@ -326,15 +359,24 @@ public class ResourceGroupService implements AutoCloseable{
     /**
      * UnRegisters a topic from a resource group.
      *
-     * @param topicName         complete topic name
+     * @param topicName complete topic name
      */
     public void unRegisterTopic(TopicName topicName) {
-        ResourceGroup remove = this.topicToRGsMap.remove(topicName);
+        aggregateLock.lock();
+        String topicNameString = topicName.toString();
+        ResourceGroup remove = topicToRGsMap.remove(topicName);
         if (remove != null) {
-            remove.registerUsage(topicName.toString(), ResourceGroupRefTypes.Topics,
+            remove.registerUsage(topicNameString, ResourceGroupRefTypes.Topics,
                     false, this.resourceUsageTransportManagerMgr);
             rgTopicUnRegisters.labels(remove.resourceGroupName).inc();
+            topicProduceStats.invalidate(topicNameString);
+            topicConsumeStats.invalidate(topicNameString);
+            Set<String> replicators = topicToReplicatorsMap.remove(topicNameString);
+            if (replicators != null) {
+                replicationDispatchStats.invalidateAll(replicators);
+            }
         }
+        aggregateLock.unlock();
     }
 
     /**
@@ -496,6 +538,10 @@ public class ResourceGroupService implements AutoCloseable{
         return rg;
     }
 
+    private String getReplicatorKey(String topic, String replicationRemoteCluster) {
+        return topic + replicationRemoteCluster;
+    }
+
     // Find the difference between the last time stats were updated for this topic, and the current
     // time. If the difference is positive, update the stats.
     @VisibleForTesting
@@ -530,7 +576,14 @@ public class ResourceGroupService implements AutoCloseable{
 
         String key;
         if (monClass == ResourceGroupMonitoringClass.ReplicationDispatch) {
-            key = topicName + replicationRemoteCluster;
+            key = getReplicatorKey(topicName, replicationRemoteCluster);
+            topicToReplicatorsMap.compute(key, (n, value) -> {
+                if (value == null) {
+                    value = new CopyOnWriteArraySet<>();
+                }
+                value.add(replicationRemoteCluster);
+                return value;
+            });
         } else {
             key = topicName;
         }
@@ -644,6 +697,7 @@ public class ResourceGroupService implements AutoCloseable{
         BrokerService bs = this.pulsar.getBrokerService();
         Map<String, TopicStatsImpl> topicStatsMap = bs.getTopicStats();
 
+        aggregateLock.lock();
         for (Map.Entry<String, TopicStatsImpl> entry : topicStatsMap.entrySet()) {
             final String topicName = entry.getKey();
             final TopicStats topicStats = entry.getValue();
@@ -676,6 +730,7 @@ public class ResourceGroupService implements AutoCloseable{
                     topicStats.getBytesOutCounter(), topicStats.getMsgOutCounter(),
                     ResourceGroupMonitoringClass.Dispatch);
         }
+        aggregateLock.unlock();
         double diffTimeSeconds = aggrUsageTimer.observeDuration();
         if (log.isDebugEnabled()) {
             log.debug("aggregateResourceGroupLocalUsages took {} milliseconds", diffTimeSeconds * 1000);
@@ -869,6 +924,8 @@ public class ResourceGroupService implements AutoCloseable{
     // Given a qualified NS-name (i.e., in "tenant/namespace" format), record its associated resource-group
     private ConcurrentHashMap<NamespaceName, ResourceGroup> namespaceToRGsMap = new ConcurrentHashMap<>();
     private ConcurrentHashMap<TopicName, ResourceGroup> topicToRGsMap = new ConcurrentHashMap<>();
+    private ConcurrentHashMap<String, Set<String>> topicToReplicatorsMap = new ConcurrentHashMap<>();
+    private ReentrantLock aggregateLock = new ReentrantLock();
 
     // Maps to maintain the usage per topic, in produce/consume directions.
     private Cache<String, BytesAndMessagesCount> topicProduceStats;
@@ -988,6 +1045,11 @@ public class ResourceGroupService implements AutoCloseable{
     @VisibleForTesting
     Cache<String, BytesAndMessagesCount> getReplicationDispatchStats() {
         return this.replicationDispatchStats;
+    }
+
+    @VisibleForTesting
+    ConcurrentHashMap<String, Set<String>> getTopicToReplicatorsMap() {
+        return this.topicToReplicatorsMap;
     }
 
     @VisibleForTesting
