@@ -24,7 +24,7 @@
 
   <parent>
     <artifactId>pulsar</artifactId>
-    <groupId>org.apache.pulsar</groupId>
+    <groupId>com.ascentstream.pulsar</groupId>
     <version>3.0.8-SNAPSHOT</version>
   </parent>
 

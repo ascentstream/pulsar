@@ -24,7 +24,7 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
     <parent>
-        <groupId>org.apache.pulsar.tests</groupId>
+        <groupId>com.ascentstream.pulsar.tests</groupId>
         <artifactId>tests-parent</artifactId>
         <version>3.0.8-SNAPSHOT</version>
     </parent>
@@ -36,14 +36,14 @@
     <dependencies>
 
         <dependency>
-            <groupId>org.apache.pulsar</groupId>
+            <groupId>com.ascentstream.pulsar</groupId>
             <artifactId>pulsar-client-admin</artifactId>
             <version>${project.version}</version>
             <scope>test</scope>
         </dependency>
 
         <dependency>
-            <groupId>org.apache.pulsar</groupId>
+            <groupId>com.ascentstream.pulsar</groupId>
             <artifactId>pulsar-client-admin-api</artifactId>
             <version>${project.version}</version>
             <scope>test</scope>
@@ -56,7 +56,7 @@
         </dependency>
 
         <dependency>
-            <groupId>org.apache.pulsar</groupId>
+            <groupId>com.ascentstream.pulsar</groupId>
             <artifactId>pulsar-client-messagecrypto-bc</artifactId>
             <version>${project.version}</version>
             <scope>test</scope>

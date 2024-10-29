@@ -24,7 +24,7 @@
     <modelVersion>4.0.0</modelVersion>
 
     <parent>
-        <groupId>org.apache.pulsar</groupId>
+        <groupId>com.ascentstream.pulsar</groupId>
         <artifactId>pulsar-functions</artifactId>
         <version>3.0.8-SNAPSHOT</version>
         <relativePath>..</relativePath>
@@ -108,7 +108,7 @@
                             </transformers>
                             <artifactSet>
                                 <includes>
-                                    <include>org.apache.pulsar:*</include>
+                                    <include>com.ascentstream.pulsar:*</include>
                                     <include>org.apache.bookkeeper:*</include>
                                     <include>commons-*:*</include>
                                     <include>org.apache.commons:*</include>
@@ -142,7 +142,7 @@
                             </artifactSet>
                             <filters>
                                 <filter>
-                                    <artifact>org.apache.pulsar:pulsar-client-original</artifact>
+                                    <artifact>com.ascentstream.pulsar:pulsar-client-original</artifact>
                                     <includes>
                                         <include>**</include>
                                     </includes>
