@@ -31,12 +31,12 @@
 
   <groupId>com.ascentstream.pulsar</groupId>
   <artifactId>buildtools</artifactId>
-  <version>3.0.8-SNAPSHOT</version>
+  <version>3.0.8.0-SNAPSHOT-671eb0f</version>
   <packaging>jar</packaging>
   <name>Pulsar Build Tools</name>
 
   <properties>
-    <project.build.outputTimestamp>2024-10-04T15:38:15Z</project.build.outputTimestamp>
+    <project.build.outputTimestamp>2024-10-30T04:03:51Z</project.build.outputTimestamp>
     <maven.compiler.source>1.8</maven.compiler.source>
     <maven.compiler.target>1.8</maven.compiler.target>
     <surefire.version>3.1.0</surefire.version>

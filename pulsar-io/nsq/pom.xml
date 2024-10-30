@@ -24,7 +24,7 @@
   <parent>
     <groupId>com.ascentstream.pulsar</groupId>
     <artifactId>pulsar-io</artifactId>
-    <version>3.0.8-SNAPSHOT</version>
+    <version>3.0.8.0-SNAPSHOT-671eb0f</version>
   </parent>
  
   <artifactId>pulsar-io-nsq</artifactId>
