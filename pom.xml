@@ -29,7 +29,7 @@
     <version>29</version>
   </parent>
 
-  <groupId>org.apache.pulsar</groupId>
+  <groupId>com.ascentstream.pulsar</groupId>
   <artifactId>pulsar</artifactId>
 
   <version>3.0.8-SNAPSHOT</version>
@@ -61,9 +61,9 @@ flexible messaging model and an intuitive client API.</description>
   </licenses>
 
   <scm>
-    <url>https://github.com/apache/pulsar</url>
-    <connection>scm:git:https://github.com/apache/pulsar.git</connection>
-    <developerConnection>scm:git:ssh://git@github.com:apache/pulsar.git</developerConnection>
+    <url>https://github.com/ascentstream/pulsar</url>
+    <connection>scm:git:https://github.com/ascentstream/pulsar.git</connection>
+    <developerConnection>scm:git:ssh://git@github.com:ascentstream/pulsar.git</developerConnection>
   </scm>
 
   <ciManagement>
@@ -1547,7 +1547,7 @@ flexible messaging model and an intuitive client API.</description>
   <dependencies>
     <!-- These dependencies are common to all the submodules -->
     <dependency>
-      <groupId>org.apache.pulsar</groupId>
+      <groupId>com.ascentstream.pulsar</groupId>
       <artifactId>buildtools</artifactId>
       <version>${project.version}</version>
       <scope>test</scope>
@@ -1730,7 +1730,7 @@ flexible messaging model and an intuitive client API.</description>
             <configuration>
               <property>pulsar.basedir</property>
               <project>
-                <groupId>org.apache.pulsar</groupId>
+                <groupId>com.ascentstream.pulsar</groupId>
                 <artifactId>pulsar</artifactId>
               </project>
             </configuration>
@@ -2008,7 +2008,7 @@ flexible messaging model and an intuitive client API.</description>
                       <descriptors>
                         <descriptor>src/assembly-source-package.xml</descriptor>
                       </descriptors>
-                      <finalName>apache-pulsar-${project.version}-src</finalName>
+                      <finalName>as-pulsar-${project.version}-src</finalName>
                       <appendAssemblyId>false</appendAssemblyId>
                       <formats>
                           <format>tar.gz</format>
@@ -2731,6 +2731,61 @@ flexible messaging model and an intuitive client API.</description>
       </properties>
     </profile>
 
+    <profile>
+      <id>ascentstream-release</id>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.sonatype.plugins</groupId>
+            <artifactId>nexus-staging-maven-plugin</artifactId>
+            <version>1.7.0</version>
+            <extensions>true</extensions>
+            <configuration>
+              <serverId>ossrh</serverId>
+              <nexusUrl>https://s01.oss.sonatype.org/</nexusUrl>
+              <autoReleaseAfterClose>false</autoReleaseAfterClose>
+            </configuration>
+          </plugin>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-source-plugin</artifactId>
+            <executions>
+              <execution>
+                <id>attach-sources</id>
+                <goals>
+                  <goal>jar-no-fork</goal>
+                </goals>
+              </execution>
+            </executions>
+          </plugin>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-javadoc-plugin</artifactId>
+            <executions>
+              <execution>
+                <id>attach-javadocs</id>
+                <goals>
+                  <goal>jar</goal>
+                </goals>
+              </execution>
+            </executions>
+          </plugin>
+          <!-- We want to sign the artifact, the POM, and all attached artifacts (except for SHA-512 checksum) -->
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-gpg-plugin</artifactId>
+            <executions>
+              <execution>
+                <id>sign-release-artifacts</id>
+                <goals>
+                  <goal>sign</goal>
+                </goals>
+              </execution>
+            </executions>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
   </profiles>
 
   <repositories>
@@ -2758,4 +2813,15 @@ flexible messaging model and an intuitive client API.</description>
       </snapshots>
     </repository>
   </repositories>
+
+  <distributionManagement>
+    <snapshotRepository>
+      <id>ossrh</id>
+      <url>https://s01.oss.sonatype.org/content/repositories/snapshots</url>
+    </snapshotRepository>
+    <repository>
+      <id>ossrh</id>
+      <url>https://s01.oss.sonatype.org/service/local/staging/deploy/maven2/</url>
+    </repository>
+  </distributionManagement>
 </project>
