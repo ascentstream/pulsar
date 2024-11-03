@@ -25,7 +25,7 @@
     <parent>
         <groupId>com.ascentstream.pulsar</groupId>
         <artifactId>tiered-storage-parent</artifactId>
-        <version>3.0.8-SNAPSHOT</version>
+        <version>3.0.8.0-6dcf302-SNAPSHOT</version>
         <relativePath>..</relativePath>
     </parent>
 
