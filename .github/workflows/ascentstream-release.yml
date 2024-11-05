@@ -88,6 +88,10 @@ jobs:
               }
             ]
 
+
+      - name: Cat settings.xml
+        run: cat /home/runner/.m2/settings.xml
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
         with:
