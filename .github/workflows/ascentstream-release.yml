@@ -59,6 +59,35 @@ jobs:
           server-password: MAVEN_PASSWORD
           gpg-private-key: ${{ secrets.ASCENTSTREAM_GPG_KEY }}
           gpg-passphrase: MAVEN_GPG_PASSPHRASE
+
+      - uses: s4u/maven-settings-action@v3.1.0
+        with:
+          servers: |
+            <servers>
+              <server>
+              <id>apache.snapshots.https</id>
+              <configuration>
+              <httpHeaders>
+              <property>
+              <name>Authorization</name>
+              <value>Bearer ${env.MAVEN_PASSWORD}</value>
+              </property>
+              </httpHeaders>
+              </configuration>
+              </server>
+              <server>
+              <id>apache.releases.https</id>
+              <configuration>
+              <httpHeaders>
+              <property>
+              <name>Authorization</name>
+              <value>Bearer ${env.MAVEN_PASSWORD}</value>
+              </property>
+              </httpHeaders>
+              </configuration>
+              </server>
+            </servers>
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
         with:
