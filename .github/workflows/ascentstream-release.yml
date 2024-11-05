@@ -78,7 +78,7 @@ jobs:
           fi
           $MVN_MAIN clean deploy -Papache-release -DskipTests -Dlicense.skip=true -Dspotbugs.skip=true -Drat.skip=true -Dcheckstyle.skip=true -T 1C -DdistMgmtReleasesUrl=https://maven.pkg.github.com/ascentstream/pulsar -DdistMgmtSnapshotsUrl=https://maven.pkg.github.com/ascentstream/pulsar
         env:
-          MAVEN_USERNAME: 'github-actions'
+          MAVEN_USERNAME: $GITHUB_ACTOR
           MAVEN_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
           MAVEN_GPG_PASSPHRASE: ${{ secrets.ASCENTSTREAM_GPG_PASSWORD }}
 
@@ -99,4 +99,4 @@ jobs:
             distribution/shell/target/*-bin.tar.gz
             distribution/io/target/apache-pulsar-io-connectors-*-bin/*.nar
           fail_on_unmatched_files: false
-          name: v${{ env.RELEASE_VERSION }}
+          name: v$RELEASE_VERSION
