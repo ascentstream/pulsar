@@ -79,7 +79,7 @@ jobs:
           $MVN_MAIN clean deploy -Papache-release -DskipTests -Dlicense.skip=true -Dspotbugs.skip=true -Drat.skip=true -Dcheckstyle.skip=true -T 1C -DdistMgmtReleasesUrl=https://maven.pkg.github.com/ascentstream/pulsar -DdistMgmtSnapshotsUrl=https://maven.pkg.github.com/ascentstream/pulsar
         env:
           MAVEN_GPG_PASSPHRASE: ${{ secrets.ASCENTSTREAM_GPG_PASSWORD }}
-          MAVEN_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+          MAVEN_PASSWORD: ${{ secrets.ASCENTSTREAM_GITHUB_TOKEN }}
           MAVEN_USERNAME: ${{ github.actor }}
 
       - name: Build and publish image to DockerHub
