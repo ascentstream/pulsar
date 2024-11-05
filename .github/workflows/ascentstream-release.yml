@@ -78,7 +78,7 @@ jobs:
           fi
           $MVN_MAIN clean deploy -Papache-release -DskipTests -Dlicense.skip=true -Dspotbugs.skip=true -Drat.skip=true -Dcheckstyle.skip=true -T 1C -DdistMgmtReleasesUrl=https://maven.pkg.github.com/ascentstream/pulsar -DdistMgmtSnapshotsUrl=https://maven.pkg.github.com/ascentstream/pulsar
         env:
-          MAVEN_USERNAME: 'github-actions'
+          MAVEN_USERNAME: ${{ env.GITHUB_ACTOR }}
           MAVEN_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
           MAVEN_GPG_PASSPHRASE: ${{ secrets.ASCENTSTREAM_GPG_PASSWORD }}
 
