@@ -54,11 +54,7 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: 17
-          server-id: github
-          server-username: MAVEN_USERNAME
-          server-password: MAVEN_PASSWORD
           gpg-private-key: ${{ secrets.ASCENTSTREAM_GPG_KEY }}
-          gpg-passphrase: MAVEN_GPG_PASSPHRASE
 
       - uses: s4u/maven-settings-action@v3.1.0
         with:
@@ -85,9 +81,12 @@ jobs:
                     }
                   }
                 }
+              },
+              {
+                "id": "gpg.passphrase",
+                "passphrase": "${env.MAVEN_GPG_PASSPHRASE}"
               }
             ]
-
 
       - name: Cat settings.xml
         run: cat /home/runner/.m2/settings.xml
