@@ -80,7 +80,7 @@ jobs:
         env:
           MAVEN_GPG_PASSPHRASE: ${{ secrets.ASCENTSTREAM_GPG_PASSWORD }}
           MAVEN_PASSWORD: ${{ secrets.ASCENTSTREAM_GITHUB_TOKEN }}
-          MAVEN_USERNAME: ${{ github.actor }}
+          MAVEN_USERNAME: 'ascentstream-bot'
 
       - name: Build and publish image to DockerHub
         run: |
