@@ -1,4 +1,4 @@
-<?xml version="1.0"?>
+<?xml version='1.0' encoding='UTF-8'?>
 <!--
 
     Licensed to the Apache Software Foundation (ASF) under one
@@ -19,14 +19,12 @@
     under the License.
 
 -->
-<project
-        xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd"
-        xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
   <parent>
-    <groupId>org.apache.pulsar</groupId>
+    <groupId>com.ascentstream.pulsar</groupId>
     <artifactId>pulsar</artifactId>
-    <version>3.0.8-SNAPSHOT</version>
+    <version>3.0.8.0-3c4291c-SNAPSHOT</version>
   </parent>
 
   <artifactId>jetcd-core-shaded</artifactId>
@@ -185,14 +183,27 @@
             </goals>
             <configuration>
               <target>
-                <unzip src="${project.build.directory}/${project.artifactId}-${project.version}-shaded.jar"
-                       dest="${project.build.outputDirectory}"
-                       overwrite="true" />
+                <unzip src="${project.build.directory}/${project.artifactId}-${project.version}-shaded.jar" dest="${project.build.outputDirectory}" overwrite="true"/>
               </target>
             </configuration>
           </execution>
         </executions>
       </plugin>
-    </plugins>
+    <plugin>
+    <artifactId>maven-jar-plugin</artifactId>
+    <version>3.3.0</version>
+    <executions>
+        <execution>
+            <id>javadoc-jar</id>
+            <phase>package</phase>
+            <goals>
+                <goal>jar</goal>
+            </goals>
+            <configuration>
+                <classifier>javadoc</classifier>
+            </configuration>
+        </execution>
+    </executions>
+</plugin></plugins>
   </build>
 </project>
