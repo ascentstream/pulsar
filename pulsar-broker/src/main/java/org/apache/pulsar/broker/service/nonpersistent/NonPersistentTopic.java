@@ -246,7 +246,7 @@ public class NonPersistentTopic extends AbstractTopic implements Topic, TopicPol
                 option.getSubType(), option.getPriorityLevel(), option.getConsumerName(),
                 option.isDurable(), option.getStartMessageId(), option.getMetadata(),
                 option.isReadCompacted(), option.getInitialPosition(),
-                option.getStartMessageRollbackDurationSec(), option.isReplicatedSubscriptionStateArg(),
+                option.getStartMessageRollbackDurationSec(), option.getReplicatedSubscriptionStateArg(),
                 option.getKeySharedMeta(), option.getSubscriptionProperties().orElse(null));
     }
 

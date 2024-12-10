@@ -72,7 +72,7 @@ public class TopicPolicies {
     private DispatchRateImpl replicatorDispatchRate;
     private SchemaCompatibilityStrategy schemaCompatibilityStrategy;
     private String resourceGroupName;
-
+    private Boolean replicateSubscriptionEnabled;
     public boolean isGlobalPolicies() {
         return isGlobal != null && isGlobal;
     }

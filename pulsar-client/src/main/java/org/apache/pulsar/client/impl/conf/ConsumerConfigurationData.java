@@ -145,7 +145,7 @@ public class ConsumerConfigurationData<T> implements Serializable, Cloneable {
 
     private long autoUpdatePartitionsIntervalSeconds = 60;
 
-    private boolean replicateSubscriptionState = false;
+    private Boolean replicateSubscriptionState;
 
     private boolean resetIncludeHead = false;
 
@@ -184,5 +184,13 @@ public class ConsumerConfigurationData<T> implements Serializable, Cloneable {
         } catch (CloneNotSupportedException e) {
             throw new RuntimeException("Failed to clone ConsumerConfigurationData");
         }
+    }
+
+    /**
+     * @deprecated Using {@link #getReplicateSubscriptionState()} instead.
+     */
+    @Deprecated
+    public boolean isReplicateSubscriptionState() {
+        return replicateSubscriptionState != null && replicateSubscriptionState;
     }
 }
