@@ -2922,6 +2922,15 @@ public abstract class NamespacesBase extends AdminResource {
         internalSetPolicies("resource_group_name", rgName);
     }
 
+    protected void internalSetReplicateSubscriptionsEnabled(Boolean enabled) {
+        validateNamespacePolicyOperation(namespaceName, PolicyName.REPLICATED_SUBSCRIPTION,
+                PolicyOperation.WRITE);
+        validatePoliciesReadOnlyAccess();
+        updatePolicies(namespaceName, policies -> {
+            policies.replicate_subscriptions_enabled = enabled;
+            return policies;
+        });
+    }
 
     private static final Logger log = LoggerFactory.getLogger(NamespacesBase.class);
 }

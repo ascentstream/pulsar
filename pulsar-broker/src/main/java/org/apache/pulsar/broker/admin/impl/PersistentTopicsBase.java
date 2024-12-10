@@ -5013,6 +5013,29 @@ public class PersistentTopicsBase extends AdminResource {
         }
     }
 
+    protected CompletableFuture<Void> internalSetEnableReplicatedSubscription(Boolean enabled,
+                                                                              boolean isGlobal) {
+        return getTopicPoliciesAsyncWithRetry(topicName, isGlobal)
+                .thenCompose(op -> {
+                    TopicPolicies topicPolicies = op.orElseGet(TopicPolicies::new);
+                    topicPolicies.setReplicateSubscriptionEnabled(enabled);
+                    topicPolicies.setIsGlobal(isGlobal);
+                    return pulsar().getTopicPoliciesService().updateTopicPoliciesAsync(topicName, topicPolicies);
+                });
+    }
+
+    protected CompletableFuture<Boolean> internalGetReplicateSubscriptionsEnabled(boolean applied,
+                                                                                  boolean isGlobal) {
+        return getTopicPoliciesAsyncWithRetry(topicName, isGlobal)
+                .thenApply(op -> op.map(TopicPolicies::getReplicateSubscriptionEnabled)
+                        .orElseGet(() -> {
+                            if (applied) {
+                                return getNamespacePolicies(namespaceName).replicate_subscriptions_enabled;
+                            }
+                            return null;
+                        }));
+    }
+
     protected void internalSetReplicatedSubscriptionStatus(AsyncResponse asyncResponse, String subName,
             boolean authoritative, boolean enabled) {
         log.info("[{}] Attempting to change replicated subscription status to {} - {} {}", clientAppId(), enabled,

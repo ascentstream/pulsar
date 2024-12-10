@@ -57,8 +57,8 @@ public class HierarchyTopicPolicies {
     final PolicyHierarchyValue<DispatchRateImpl> subscriptionDispatchRate;
     final PolicyHierarchyValue<SchemaCompatibilityStrategy> schemaCompatibilityStrategy;
     final PolicyHierarchyValue<DispatchRateImpl> dispatchRate;
-
     final PolicyHierarchyValue<String> resourceGroupName;
+    final PolicyHierarchyValue<Boolean> replicateSubscriptionsEnabled;
 
     public HierarchyTopicPolicies() {
         replicationClusters = new PolicyHierarchyValue<>();
@@ -89,5 +89,6 @@ public class HierarchyTopicPolicies {
         schemaCompatibilityStrategy = new PolicyHierarchyValue<>();
         dispatchRate = new PolicyHierarchyValue<>();
         resourceGroupName = new PolicyHierarchyValue<>();
+        replicateSubscriptionsEnabled = new PolicyHierarchyValue<>();
     }
 }
