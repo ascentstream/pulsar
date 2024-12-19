@@ -42,6 +42,7 @@ import javax.ws.rs.WebApplicationException;
 import javax.ws.rs.container.AsyncResponse;
 import javax.ws.rs.container.Suspended;
 import javax.ws.rs.core.MediaType;
+import javax.ws.rs.core.Response;
 import org.apache.pulsar.broker.admin.impl.NamespacesBase;
 import org.apache.pulsar.broker.web.RestException;
 import org.apache.pulsar.client.api.SubscriptionType;
@@ -1944,6 +1945,43 @@ public class Namespaces extends NamespacesBase {
                                           @PathParam("namespace") String namespace) {
         validateNamespaceName(tenant, namespace);
         internalSetNamespaceResourceGroup(null);
+    }
+
+    @GET
+    @Path("/{tenant}/{namespace}/replicateSubscriptionsEnabled")
+    @ApiOperation(value = "Get the enabled status of subscriptions replication on a namespace.", response =
+            Boolean.class)
+    @ApiResponses(value = {@ApiResponse(code = 403, message = "Don't have admin permission"),
+            @ApiResponse(code = 404, message = "Tenant or cluster or namespace doesn't exist")})
+    public Boolean getReplicateSubscriptionsEnabled(@PathParam("tenant") String tenant,
+                                                     @PathParam("namespace") String namespace) {
+        validateNamespaceName(tenant, namespace);
+        validateNamespacePolicyOperation(NamespaceName.get(tenant, namespace),
+                PolicyName.REPLICATED_SUBSCRIPTION, PolicyOperation.READ);
+
+        Policies policies = getNamespacePolicies(namespaceName);
+        return policies.replicate_subscriptions_enabled;
+    }
+
+    @POST
+    @Path("/{tenant}/{namespace}/replicateSubscriptionsEnabled")
+    @ApiOperation(value = "Enable or disable subscriptions replication on a namespace.")
+    @ApiResponses(value = {@ApiResponse(code = 403, message = "Don't have admin permission"),
+            @ApiResponse(code = 404, message = "Tenant or cluster or namespace doesn't exist")})
+    public void setReplicateSubscriptionsEnabled(@Suspended final AsyncResponse asyncResponse,
+                                                 @PathParam("tenant") String tenant,
+                                                 @PathParam("namespace") String namespace,
+                                                 @ApiParam(value = "Whether to enable subscriptions replication",
+                                                         required = true)
+                                                 Boolean enabled) {
+        validateNamespaceName(tenant, namespace);
+        internalSetReplicateSubscriptionsEnabledAsync(enabled)
+                .thenRun(() -> asyncResponse.resume(Response.noContent().build()))
+                .exceptionally(ex -> {
+                    log.error("set replicate subscriptions enabled failed", ex);
+                    resumeAsyncResponseExceptionally(asyncResponse, ex);
+                    return null;
+                });
     }
 
     private static final Logger log = LoggerFactory.getLogger(Namespaces.class);

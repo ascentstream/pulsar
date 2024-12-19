@@ -851,7 +851,7 @@ public class ConsumerImpl<T> extends ConsumerBase<T> implements ConnectionHandle
             setClientCnx(cnx);
             ByteBuf request = Commands.newSubscribe(topic, subscription, consumerId, requestId, getSubType(),
                     priorityLevel, consumerName, isDurable, startMessageIdData, metadata, readCompacted,
-                    conf.isReplicateSubscriptionState(),
+                    conf.getReplicateSubscriptionState(),
                     InitialPosition.valueOf(subscriptionInitialPosition.getValue()),
                     startMessageRollbackDuration, si, createTopicIfDoesNotExist, conf.getKeySharedPolicy(),
                     // Use the current epoch to subscribe.

@@ -2514,4 +2514,41 @@ public class NamespacesImpl extends BaseResource implements Namespaces {
         namespacePath = WebTargets.addParts(namespacePath, parts);
         return namespacePath;
     }
+
+    @Override
+    public void setReplicateSubscriptionsEnabled(String namespace, Boolean enabled) throws PulsarAdminException {
+        sync(() -> setReplicateSubscriptionsEnabledAsync(namespace, enabled));
+    }
+
+    @Override
+    public CompletableFuture<Void> setReplicateSubscriptionsEnabledAsync(String namespace, Boolean enabled) {
+        NamespaceName ns = NamespaceName.get(namespace);
+        WebTarget path = namespacePath(ns, "replicateSubscriptionsEnabled");
+        return asyncPostRequest(path, Entity.entity(enabled, MediaType.APPLICATION_JSON));
+    }
+
+    @Override
+    public Boolean getReplicateSubscriptionsEnabled(String namespace) throws PulsarAdminException {
+        return sync(() -> getReplicateSubscriptionsEnabledAsync(namespace));
+    }
+
+    @Override
+    public CompletableFuture<Boolean> getReplicateSubscriptionsEnabledAsync(String namespace) {
+        NamespaceName ns = NamespaceName.get(namespace);
+        WebTarget path = namespacePath(ns, "replicateSubscriptionsEnabled");
+        final CompletableFuture<Boolean> future = new CompletableFuture<>();
+        asyncGetRequest(path,
+                new InvocationCallback<Boolean>() {
+                    @Override
+                    public void completed(Boolean enabled) {
+                        future.complete(enabled);
+                    }
+
+                    @Override
+                    public void failed(Throwable throwable) {
+                        future.completeExceptionally(getApiException(throwable.getCause()));
+                    }
+                });
+        return future;
+    }
 }
