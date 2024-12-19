@@ -115,13 +115,15 @@ public class PersistentSubscription extends AbstractSubscription implements Subs
     private final PendingAckHandle pendingAckHandle;
     private volatile Map<String, String> subscriptionProperties;
     private volatile CompletableFuture<Void> fenceFuture;
+    private volatile Boolean replicatedControlled;
 
     static {
         REPLICATED_SUBSCRIPTION_CURSOR_PROPERTIES.put(REPLICATED_SUBSCRIPTION_PROPERTY, 1L);
     }
 
-    static Map<String, Long> getBaseCursorProperties(boolean isReplicated) {
-        return isReplicated ? REPLICATED_SUBSCRIPTION_CURSOR_PROPERTIES : NON_REPLICATED_SUBSCRIPTION_CURSOR_PROPERTIES;
+    static Map<String, Long> getBaseCursorProperties(Boolean isReplicated) {
+        return isReplicated != null && isReplicated ? REPLICATED_SUBSCRIPTION_CURSOR_PROPERTIES :
+                NON_REPLICATED_SUBSCRIPTION_CURSOR_PROPERTIES;
     }
 
     static boolean isCursorFromReplicatedSubscription(ManagedCursor cursor) {
@@ -129,19 +131,22 @@ public class PersistentSubscription extends AbstractSubscription implements Subs
     }
 
     public PersistentSubscription(PersistentTopic topic, String subscriptionName, ManagedCursor cursor,
-                                                         boolean replicated) {
+                                                         Boolean replicated) {
         this(topic, subscriptionName, cursor, replicated, Collections.emptyMap());
     }
 
     public PersistentSubscription(PersistentTopic topic, String subscriptionName, ManagedCursor cursor,
-                                  boolean replicated, Map<String, String> subscriptionProperties) {
+                                  Boolean replicated, Map<String, String> subscriptionProperties) {
         this.topic = topic;
         this.cursor = cursor;
         this.topicName = topic.getName();
         this.subName = subscriptionName;
         this.fullName = MoreObjects.toStringHelper(this).add("topic", topicName).add("name", subName).toString();
         this.expiryMonitor = new PersistentMessageExpiryMonitor(topic, subscriptionName, cursor, this);
-        this.setReplicated(replicated);
+        this.replicatedControlled = replicated;
+        if (this.replicatedControlled != null) {
+            this.setReplicated(this.replicatedControlled);
+        }
         this.subscriptionProperties = MapUtils.isEmpty(subscriptionProperties)
                 ? Collections.emptyMap() : Collections.unmodifiableMap(subscriptionProperties);
         if (topic.getBrokerService().getPulsar().getConfig().isTransactionCoordinatorEnabled()
@@ -179,6 +184,11 @@ public class PersistentSubscription extends AbstractSubscription implements Subs
     }
 
     public boolean setReplicated(boolean replicated) {
+        replicatedControlled = replicated;
+        return setReplicated(replicated, true);
+    }
+
+    public boolean setReplicated(boolean replicated, boolean isPersistent) {
         ServiceConfiguration config = topic.getBrokerService().getPulsar().getConfig();
 
         if (!replicated || !config.isEnableReplicatedSubscriptions()) {
@@ -188,7 +198,7 @@ public class PersistentSubscription extends AbstractSubscription implements Subs
                     config.getReplicatedSubscriptionsSnapshotMaxCachedPerSubscription());
         }
 
-        if (this.cursor != null) {
+        if (this.cursor != null && isPersistent) {
             if (replicated) {
                 if (!config.isEnableReplicatedSubscriptions()) {
                     log.warn("[{}][{}] Failed set replicated subscription status to {}, please enable the "
@@ -1229,5 +1239,10 @@ public class PersistentSubscription extends AbstractSubscription implements Subs
     @VisibleForTesting
     public PendingAckHandle getPendingAckHandle() {
         return pendingAckHandle;
+    }
+
+    @VisibleForTesting
+    public Boolean getReplicatedControlled() {
+        return replicatedControlled;
     }
 }

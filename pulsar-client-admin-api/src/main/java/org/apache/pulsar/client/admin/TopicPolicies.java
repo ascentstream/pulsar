@@ -1776,4 +1776,53 @@ public interface TopicPolicies {
      * @param topic Topic name
      */
     CompletableFuture<Void> removeResourceGroupAsync(String topic);
+
+    /**
+     * Enable or disable subscriptions replication on a topic.
+     *
+     * @param topic   Topic name
+     * @param enabled The replication status to set:
+     *                <ul>
+     *                  <li><code>true</code>: Enable subscriptions replication.</li>
+     *                  <li><code>false</code>: Disable subscriptions replication.</li>
+     *                  <li><code>null</code>: Remove config.</li>
+     *                </ul>
+     */
+    void setReplicateSubscriptionsEnabled(String topic, Boolean enabled) throws PulsarAdminException;
+
+    /**
+     * Enable or disable subscriptions replication on a topic asynchronously.
+     *
+     * @param topic Topic name
+     * @param enabled The replication status to set:
+     *                <ul>
+     *                  <li><code>true</code>: Enable subscriptions replication.</li>
+     *                  <li><code>false</code>: Disable subscriptions replication.</li>
+     *                  <li><code>null</code>: Remove config.</li>
+     *                </ul>
+     */
+    CompletableFuture<Void> setReplicateSubscriptionsEnabledAsync(String topic, Boolean enabled);
+
+    /**
+     * Get the enabled status of subscriptions replication on a topic.
+     *
+     * @param topic Topic name
+     * @return <code>true</code> Subscriptions replication is enabled.
+     * <code>false</code> Subscriptions replication is disabled.
+     * <code>null</code> Subscriptions replication is not configured.
+     */
+    Boolean getReplicateSubscriptionsEnabled(String topic, boolean applied) throws PulsarAdminException;
+
+    /**
+     * Get the enabled status of subscriptions replication on a topic.
+     *
+     * @param topic Topic name
+     * @return A {@link CompletableFuture} that will complete with the replication status:
+     * <ul>
+     *   <li><code>true</code>: Subscriptions replication is enabled.</li>
+     *   <li><code>false</code>: Subscriptions replication is disabled.</li>
+     *   <li><code>null</code>: Subscriptions replication is not configured.</li>
+     * </ul>
+     */
+    CompletableFuture<Boolean> getReplicateSubscriptionsEnabledAsync(String topic, boolean applied);
 }
