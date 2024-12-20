@@ -20,7 +20,9 @@ package org.apache.pulsar.client.impl.conf;
 
 import static com.google.common.base.Preconditions.checkArgument;
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.google.common.collect.Sets;
+import io.swagger.annotations.ApiModelProperty;
 import java.io.Serializable;
 import java.util.Map;
 import java.util.Set;
@@ -145,7 +147,13 @@ public class ConsumerConfigurationData<T> implements Serializable, Cloneable {
 
     private long autoUpdatePartitionsIntervalSeconds = 60;
 
-    private boolean replicateSubscriptionState = false;
+    @ApiModelProperty(
+            name = "replicateSubscriptionState",
+            value = "If `replicateSubscriptionState` is enabled, a subscription state is replicated to geo-replicated"
+                    + " clusters."
+    )
+    @JsonProperty(access = JsonProperty.Access.READ_WRITE)
+    private Boolean replicateSubscriptionState;
 
     private boolean resetIncludeHead = false;
 
@@ -184,5 +192,15 @@ public class ConsumerConfigurationData<T> implements Serializable, Cloneable {
         } catch (CloneNotSupportedException e) {
             throw new RuntimeException("Failed to clone ConsumerConfigurationData");
         }
+    }
+
+    /**
+     * Backward compatibility with the old `replicateSubscriptionState` field.
+     * @deprecated Using {@link #getReplicateSubscriptionState()} instead.
+     */
+    @JsonIgnore
+    @Deprecated
+    public boolean isReplicateSubscriptionState() {
+        return replicateSubscriptionState != null && replicateSubscriptionState;
     }
 }
