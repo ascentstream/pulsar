@@ -201,6 +201,7 @@ public abstract class AbstractTopic implements Topic, TopicPolicyListener<TopicP
             topicPolicies.getReplicationClusters().updateTopicValue(data.getReplicationClusters());
             topicPolicies.getSchemaCompatibilityStrategy()
                     .updateTopicValue(formatSchemaCompatibilityStrategy(data.getSchemaCompatibilityStrategy()));
+            topicPolicies.getReplicateSubscriptionState().updateTopicValue(data.getReplicateSubscriptionState());
         }
         topicPolicies.getRetentionPolicies().updateTopicValue(data.getRetentionPolicies());
         topicPolicies.getMaxSubscriptionsPerTopic().updateTopicValue(data.getMaxSubscriptionsPerTopic());
@@ -239,6 +240,10 @@ public abstract class AbstractTopic implements Topic, TopicPolicyListener<TopicP
         }
         if (namespacePolicies.deleted) {
             return;
+        }
+        if (!isSystemTopic()) {
+            topicPolicies.getReplicateSubscriptionState()
+                    .updateNamespaceValue(namespacePolicies.replicate_subscription_state);
         }
         topicPolicies.getRetentionPolicies().updateNamespaceValue(namespacePolicies.retention_policies);
         topicPolicies.getCompactionThreshold().updateNamespaceValue(namespacePolicies.compaction_threshold);
