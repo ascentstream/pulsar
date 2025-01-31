@@ -64,11 +64,7 @@ public class ClientBuilderImpl implements ClientBuilder {
                 conf.setServiceUrl(conf.getServiceUrlProvider().getServiceUrl());
             }
         }
-        PulsarClient client = new PulsarClientImpl(conf);
-        if (conf.getServiceUrlProvider() != null) {
-            conf.getServiceUrlProvider().initialize(client);
-        }
-        return client;
+        return new PulsarClientImpl(conf);
     }
 
     @Override
