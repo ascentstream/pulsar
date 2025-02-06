@@ -34,7 +34,7 @@ jobs:
 
   unit-tests:
     name: pulsar-ci-test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     timeout-minutes: 60
     strategy:
       fail-fast: false
