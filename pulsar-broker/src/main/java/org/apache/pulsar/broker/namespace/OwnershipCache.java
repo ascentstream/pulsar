@@ -190,7 +190,7 @@ public class OwnershipCache {
                 } catch (Exception e) {
                     log.error("Failed to reacquire ownership for namespace bundle [{}] on broker [{}]: {}",
                             suName, selfOwnerInfo, e.getMessage(), e);
-                    return CompletableFuture.failedFuture(e);
+                    return FutureUtil.failedFuture(e);
                 }
             }
             return CompletableFuture.completedFuture(owner);
