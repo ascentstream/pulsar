@@ -219,8 +219,6 @@ public class ServerCnx extends PulsarHandler implements TransportCnx {
 
     private final long connectionLivenessCheckTimeoutMillis = 5000;
 
-    private final boolean ignoreConsumerReplicateSubscriptionState;
-
     // Number of bytes pending to be published from a single specific IO thread.
     private static final FastThreadLocal<MutableLong> pendingBytesPerThread = new FastThreadLocal<MutableLong>() {
         @Override
@@ -283,9 +281,6 @@ public class ServerCnx extends PulsarHandler implements TransportCnx {
         this.resumeThresholdPendingBytesPerThread = this.maxPendingBytesPerThread / 2;
         this.connectionController = new ConnectionController.DefaultConnectionController(conf);
         this.brokerInterceptor = this.service != null ? this.service.getInterceptor() : null;
-        this.ignoreConsumerReplicateSubscriptionState =
-                Boolean.parseBoolean(
-                        conf.getProperties().getProperty("ignoreConsumerReplicateSubscriptionState", "false"));
     }
 
     @Override
@@ -989,8 +984,8 @@ public class ServerCnx extends PulsarHandler implements TransportCnx {
                 ? subscribe.getStartMessageRollbackDurationSec()
                 : -1;
         final SchemaData schema = subscribe.hasSchema() ? getSchema(subscribe.getSchema()) : null;
-        final Boolean isReplicated = ignoreConsumerReplicateSubscriptionState ? null :
-                (subscribe.hasReplicateSubscriptionState() ? subscribe.isReplicateSubscriptionState() : null);
+        final Boolean isReplicated =
+                subscribe.hasReplicateSubscriptionState() ? subscribe.isReplicateSubscriptionState() : null;
         final boolean forceTopicCreation = subscribe.isForceTopicCreation();
         final KeySharedMeta keySharedMeta = subscribe.hasKeySharedMeta()
               ? new KeySharedMeta().copyFrom(subscribe.getKeySharedMeta())

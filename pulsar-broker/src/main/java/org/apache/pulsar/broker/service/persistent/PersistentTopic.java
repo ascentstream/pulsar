@@ -710,13 +710,6 @@ public class PersistentTopic extends AbstractTopic implements Topic, AddEntryCal
         }
 
         return brokerService.checkTopicNsOwnership(getName()).thenCompose(__ -> {
-            Boolean replicatedSubscriptionState = replicatedSubscriptionStateArg;
-            if (replicatedSubscriptionState != null && replicatedSubscriptionState
-                    && !brokerService.pulsar().getConfiguration().isEnableReplicatedSubscriptions()) {
-                log.warn("[{}] Replicated Subscription is disabled by broker.", getName());
-                replicatedSubscriptionState = false;
-            }
-
             if (subType == SubType.Key_Shared
                     && !brokerService.pulsar().getConfiguration().isSubscriptionKeySharedEnable()) {
                 return FutureUtil.failedFuture(
@@ -782,7 +775,7 @@ public class PersistentTopic extends AbstractTopic implements Topic, AddEntryCal
 
             CompletableFuture<? extends Subscription> subscriptionFuture = isDurable
                     ? getDurableSubscription(subscriptionName, initialPosition, startMessageRollbackDurationSec,
-                    replicatedSubscriptionState, subscriptionProperties)
+                    replicatedSubscriptionStateArg, subscriptionProperties)
                     : getNonDurableSubscription(subscriptionName, startMessageId, initialPosition,
                     startMessageRollbackDurationSec, readCompacted, subscriptionProperties);
 
@@ -2944,14 +2937,22 @@ public class PersistentTopic extends AbstractTopic implements Topic, AddEntryCal
             });
     }
 
+    private boolean replicateSubscriptionStateEnabledByTopicPolicies;
+
     public synchronized void checkReplicatedSubscriptionControllerState() {
-        Boolean replicatedSubscriptionStatus = topicPolicies.getReplicateSubscriptionState().get();
+        Boolean replicatedSubscriptionState = topicPolicies.getReplicateSubscriptionState().get();
         AtomicBoolean shouldBeEnabled = new AtomicBoolean(false);
         subscriptions.forEach((name, subscription) -> {
-            // If the subscription does not have a replicated flag configured, please apply the topic policies to the
-            // subscription.
-            if (subscription.getReplicatedControlled() == null) {
-                subscription.setReplicated(replicatedSubscriptionStatus, false);
+            if (Boolean.TRUE.equals(replicatedSubscriptionState)) {
+                if (!subscription.isReplicated() && subscription.setReplicated(true, false)) {
+                    replicateSubscriptionStateEnabledByTopicPolicies = true;
+                }
+            } else if (replicateSubscriptionStateEnabledByTopicPolicies) {
+                if (!PersistentSubscription.isCursorFromReplicatedSubscription(subscription.getCursor())) {
+                    if (subscription.isReplicated()) {
+                        subscription.setReplicated(false, false);
+                    }
+                }
             }
             if (subscription.isReplicated()) {
                 shouldBeEnabled.set(true);
@@ -2959,7 +2960,13 @@ public class PersistentTopic extends AbstractTopic implements Topic, AddEntryCal
         });
 
         if (!shouldBeEnabled.get()) {
-            log.info("[{}] There are no replicated subscriptions on the topic", topic);
+            if (log.isDebugEnabled()) {
+                log.debug("[{}] There are no replicated subscriptions on the topic", topic);
+            }
+            // When no replication subscriptions, set the flag to false.
+            if (replicateSubscriptionStateEnabledByTopicPolicies) {
+                replicateSubscriptionStateEnabledByTopicPolicies = false;
+            }
         }
 
         checkReplicatedSubscriptionControllerState(shouldBeEnabled.get());

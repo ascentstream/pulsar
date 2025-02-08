@@ -22,7 +22,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertNotNull;
-import static org.testng.Assert.assertNull;
 import static org.testng.Assert.assertTrue;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
@@ -87,23 +86,14 @@ public class ReplicateSubscriptionTest extends ProducerConsumerBase {
         Consumer<String> ignored = consumerBuilder.subscribe();
         CompletableFuture<Optional<Topic>> topicIfExists = pulsar.getBrokerService().getTopicIfExists(topic);
         assertThat(topicIfExists)
-                .succeedsWithin(1, TimeUnit.SECONDS)
+                .succeedsWithin(3, TimeUnit.SECONDS)
                 .matches(optionalTopic -> {
                     assertTrue(optionalTopic.isPresent());
                     Topic topicRef = optionalTopic.get();
                     Subscription subscription = topicRef.getSubscription(subName);
                     assertNotNull(subscription);
-                    assertTrue(subscription instanceof PersistentSubscription);
-                    PersistentSubscription persistentSubscription = (PersistentSubscription) subscription;
-                    Long replicatedSubcriptionLong = persistentSubscription.getCursor()
-                            .getProperties().get(PersistentSubscription.REPLICATED_SUBSCRIPTION_PROPERTY);
-                    if (replicateSubscriptionState == null) {
-                        assertNull(replicatedSubcriptionLong);
-                    } else {
-                        assertEquals(replicatedSubcriptionLong,
-                                Long.valueOf(Boolean.TRUE.equals(replicateSubscriptionState) ? 1L : 0L));
-                    }
-                    assertEquals(persistentSubscription.getReplicatedControlled(), replicateSubscriptionState);
+                    assertEquals(subscription.isReplicated(), replicateSubscriptionState != null
+                            && replicateSubscriptionState);
                     return true;
                 });
     }
@@ -114,13 +104,10 @@ public class ReplicateSubscriptionTest extends ProducerConsumerBase {
                 // consumer level high priority.
                 {Boolean.TRUE, Boolean.TRUE, Boolean.TRUE, true},
                 {Boolean.TRUE, Boolean.TRUE, Boolean.TRUE, false},
-                {Boolean.TRUE, Boolean.TRUE, Boolean.TRUE, null},
                 {Boolean.TRUE, Boolean.FALSE, Boolean.FALSE, true},
                 {Boolean.TRUE, Boolean.FALSE, Boolean.FALSE, false},
-                {Boolean.TRUE, Boolean.FALSE, Boolean.FALSE, null},
                 {Boolean.FALSE, Boolean.TRUE, Boolean.TRUE, true},
                 {Boolean.FALSE, Boolean.TRUE, Boolean.TRUE, false},
-                {Boolean.FALSE, Boolean.TRUE, Boolean.TRUE, null},
 
                 // namespace level high priority
                 {null, Boolean.TRUE, null, true},
@@ -143,14 +130,19 @@ public class ReplicateSubscriptionTest extends ProducerConsumerBase {
     }
 
     /**
-     * The priority list is from high to low: consumer/subscription, topic, namespace.
+     * The priority order is as follows (from high to low):
+     * 1. Consumer/Subscription level
+     * 2. Topic level
+     * 3. Namespace level
+     *
+     * If the Consumer/Subscription level is set to false, it should be excluded from the evaluation process.
      */
     @Test(dataProvider = "replicateSubscriptionStateMultipleLevel")
     public void testReplicateSubscriptionStatePriority(
             Boolean consumerReplicateSubscriptionState,
             Boolean replicateSubscriptionEnabledOnNamespaceLevel,
             Boolean replicateSubscriptionEnabledOnTopicLevel,
-            Boolean replicatedSubscriptionStatus
+            boolean replicatedSubscriptionStatus
     ) throws Exception {
         String nsName = "my-property/my-ns-" + System.nanoTime();
         admin.namespaces().createNamespace(nsName);
@@ -172,11 +164,8 @@ public class ReplicateSubscriptionTest extends ProducerConsumerBase {
         Topic topicRef = topicOptional.get();
         Subscription subscription = topicRef.getSubscription(subName);
         assertNotNull(subscription);
-        PersistentSubscription persistentSubscription = (PersistentSubscription) subscription;
 
-        // Verify the consumer level.
-        assertEquals(persistentSubscription.getReplicatedControlled(), consumerReplicateSubscriptionState);
-        assertEquals(persistentSubscription.isReplicated(),
+        assertEquals(subscription.isReplicated(),
                 consumerReplicateSubscriptionState != null && consumerReplicateSubscriptionState);
 
         // Verify the namespace level.
@@ -186,14 +175,12 @@ public class ReplicateSubscriptionTest extends ProducerConsumerBase {
                     replicateSubscriptionEnabledOnNamespaceLevel);
             assertEquals(admin.topicPolicies().getReplicateSubscriptionState(topic, true),
                     replicateSubscriptionEnabledOnNamespaceLevel);
-            if (consumerReplicateSubscriptionState == null) {
-                // Using namespace policy.
-                assertEquals(persistentSubscription.isReplicated(), replicateSubscriptionEnabledOnNamespaceLevel != null
-                        && replicateSubscriptionEnabledOnNamespaceLevel);
+            if (Boolean.TRUE.equals(replicateSubscriptionEnabledOnNamespaceLevel)) {
+                assertTrue(subscription.isReplicated());
             } else {
                 // Using subscription policy.
-                assertEquals(persistentSubscription.isReplicated(),
-                        consumerReplicateSubscriptionState.booleanValue());
+                assertEquals(subscription.isReplicated(),
+                        consumerReplicateSubscriptionState != null && consumerReplicateSubscriptionState);
             }
         });
 
@@ -205,49 +192,43 @@ public class ReplicateSubscriptionTest extends ProducerConsumerBase {
             Boolean replicateSubscriptionState = admin.topicPolicies().getReplicateSubscriptionState(topic, true);
             assertTrue(replicateSubscriptionState == replicateSubscriptionEnabledOnTopicLevel
                     || replicateSubscriptionState == replicateSubscriptionEnabledOnNamespaceLevel);
-            if (consumerReplicateSubscriptionState == null) {
+            if (consumerReplicateSubscriptionState == null || !consumerReplicateSubscriptionState) {
                 if (replicateSubscriptionEnabledOnTopicLevel != null) {
                     // Using topic policy.
-                    assertEquals(persistentSubscription.isReplicated(),
+                    assertEquals(subscription.isReplicated(),
                             replicateSubscriptionEnabledOnTopicLevel.booleanValue());
                 } else {
                     // Using namespace policy.
-                    assertEquals(persistentSubscription.isReplicated(),
+                    assertEquals(subscription.isReplicated(),
                             replicateSubscriptionEnabledOnNamespaceLevel != null
                                     && replicateSubscriptionEnabledOnNamespaceLevel);
                 }
             } else {
                 // Using subscription policy.
-                assertEquals(persistentSubscription.isReplicated(),
-                        consumerReplicateSubscriptionState.booleanValue());
+                assertTrue(subscription.isReplicated());
             }
         });
 
         // Verify the subscription level takes priority over the topic and namespace level.
         admin.topics().setReplicatedSubscriptionStatus(topic, subName, replicatedSubscriptionStatus);
         Boolean finalReplicateSubscriptionState;
-        if (replicatedSubscriptionStatus != null) {
-            finalReplicateSubscriptionState = replicatedSubscriptionStatus;
-        } else {
-            if (replicateSubscriptionEnabledOnTopicLevel != null) {
-                finalReplicateSubscriptionState = replicateSubscriptionEnabledOnTopicLevel;
-            } else {
-                finalReplicateSubscriptionState = replicateSubscriptionEnabledOnNamespaceLevel;
-            }
-        }
-        await().untilAsserted(() -> {
-            assertEquals(persistentSubscription.isReplicated(),
-                    finalReplicateSubscriptionState != null && finalReplicateSubscriptionState);
 
-            assertEquals(persistentSubscription.getReplicatedControlled(), replicatedSubscriptionStatus);
-            Long replicatedSubcriptionLong = persistentSubscription.getCursor()
-                    .getProperties().get(PersistentSubscription.REPLICATED_SUBSCRIPTION_PROPERTY);
-            if (replicatedSubscriptionStatus == null) {
-                assertNull(replicatedSubcriptionLong);
-            } else {
-                assertEquals(replicatedSubcriptionLong,
-                        Long.valueOf(Boolean.TRUE.equals(replicatedSubscriptionStatus) ? 1L : 0L));
-            }
+        if (Boolean.TRUE.equals(replicatedSubscriptionStatus)) {
+            finalReplicateSubscriptionState = true;
+        } else if (replicateSubscriptionEnabledOnTopicLevel != null) {
+            finalReplicateSubscriptionState = replicateSubscriptionEnabledOnTopicLevel;
+        } else {
+            finalReplicateSubscriptionState = replicateSubscriptionEnabledOnNamespaceLevel;
+        }
+
+        await().untilAsserted(() -> {
+            assertEquals(subscription.isReplicated(),
+                    finalReplicateSubscriptionState != null && finalReplicateSubscriptionState);
+            assertTrue(subscription instanceof PersistentSubscription);
+            PersistentSubscription persistentSubscription = (PersistentSubscription) subscription;
+            boolean cursorFromReplicatedSubscription =
+                    PersistentSubscription.isCursorFromReplicatedSubscription(persistentSubscription.getCursor());
+            assertEquals(cursorFromReplicatedSubscription, replicatedSubscriptionStatus);
         });
     }
 
@@ -274,9 +255,8 @@ public class ReplicateSubscriptionTest extends ProducerConsumerBase {
                         Topic topicRef = optionalTopic.get();
                         Subscription subscription = topicRef.getSubscription(subName);
                         assertNotNull(subscription);
-                        assertTrue(subscription instanceof PersistentSubscription);
-                        PersistentSubscription persistentSubscription = (PersistentSubscription) subscription;
-                        assertEquals(persistentSubscription.getReplicatedControlled(), replicateSubscriptionState);
+                        assertEquals(subscription.isReplicated(), replicateSubscriptionState != null
+                                && replicateSubscriptionState);
                         return true;
                     });
         });
