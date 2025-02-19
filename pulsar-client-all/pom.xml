@@ -1,4 +1,4 @@
-<?xml version="1.0" ?>
+<?xml version='1.0' encoding='UTF-8'?>
 <!--
 
     Licensed to the Apache Software Foundation (ASF) under one
@@ -19,13 +19,12 @@
     under the License.
 
 -->
-<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
   <parent>
-    <groupId>org.apache.pulsar</groupId>
+    <groupId>com.ascentstream.pulsar</groupId>
     <artifactId>pulsar</artifactId>
-    <version>3.0.10-SNAPSHOT</version>
+    <version>3.0.10.0</version>
     <relativePath>..</relativePath>
   </parent>
   <artifactId>pulsar-client-all</artifactId>
@@ -117,8 +116,7 @@
             <configuration>
               <target>
                 <!-- shade the AsyncHttpClient ahc-default.properties files -->
-                <replace file="${project.build.directory}/classes/org/asynchttpclient/config/ahc-default.properties"
-                         token="org.asynchttpclient." value="org.apache.pulsar.shade.org.asynchttpclient."/>
+                <replace file="${project.build.directory}/classes/org/asynchttpclient/config/ahc-default.properties" token="org.asynchttpclient." value="org.apache.pulsar.shade.org.asynchttpclient."/>
               </target>
             </configuration>
           </execution>
@@ -184,11 +182,11 @@
                   <include>org.apache.bookkeeper:*</include>
                   <include>org.apache.commons:commons-compress</include>
                   <include>org.apache.commons:commons-lang3</include>
-                  <include>org.apache.pulsar:pulsar-client-admin-original</include>
+                  <include>com.ascentstream.pulsar:pulsar-client-admin-original</include>
                   <!-- Issue #6834, Since Netty ByteBuf shaded, we need also shade this module -->
-                  <include>org.apache.pulsar:pulsar-client-messagecrypto-bc</include>
-                  <include>org.apache.pulsar:pulsar-client-original</include>
-                  <include>org.apache.pulsar:pulsar-common</include>
+                  <include>com.ascentstream.pulsar:pulsar-client-messagecrypto-bc</include>
+                  <include>com.ascentstream.pulsar:pulsar-client-original</include>
+                  <include>com.ascentstream.pulsar:pulsar-common</include>
                   <include>org.asynchttpclient:*</include>
                   <include>org.checkerframework:*</include>
                   <include>org.eclipse.jetty:*</include>
@@ -208,7 +206,7 @@
               </artifactSet>
               <filters>
                 <filter>
-                  <artifact>org.apache.pulsar:pulsar-client-original</artifact>
+                  <artifact>com.ascentstream.pulsar:pulsar-client-original</artifact>
                   <includes>
                     <include>**</include>
                   </includes>
@@ -498,6 +496,21 @@
           </dependency>
         </dependencies>
       </plugin>
-    </plugins>
+    <plugin>
+    <artifactId>maven-jar-plugin</artifactId>
+    <version>3.3.0</version>
+    <executions>
+        <execution>
+            <id>javadoc-jar</id>
+            <phase>package</phase>
+            <goals>
+                <goal>jar</goal>
+            </goals>
+            <configuration>
+                <classifier>javadoc</classifier>
+            </configuration>
+        </execution>
+    </executions>
+</plugin></plugins>
   </build>
 </project>
