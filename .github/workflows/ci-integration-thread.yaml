@@ -56,7 +56,7 @@ jobs:
 
       - name: Cache local Maven repository
         if: ${{ steps.check_changes.outputs.docs_only != 'true' }}
-        uses: actions/cache@v2
+        uses: actions/cache@v4
         with:
           path: |
             ~/.m2/repository/*/*/*

@@ -88,7 +88,7 @@ jobs:
       - name: Cache local Maven repository
         if: ${{ github.event_name == 'schedule' || steps.changes.outputs.poms == 'true' }}
         id: cache
-        uses: actions/cache@v2
+        uses: actions/cache@v4
         with:
           path: |
             ~/.m2/repository/*/*/*
