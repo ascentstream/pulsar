@@ -1532,11 +1532,12 @@ public abstract class NamespacesBase extends AdminResource {
         return policies.clusterSubscribeRate.get(pulsar().getConfiguration().getClusterName());
     }
 
-    protected void internalRemoveReplicatorDispatchRate() {
+    protected void internalRemoveReplicatorDispatchRate(String cluster) {
         validateSuperUserAccess();
         try {
             updatePolicies(namespaceName, policies -> {
-                policies.replicatorDispatchRate.remove(pulsar().getConfiguration().getClusterName());
+                policies.replicatorDispatchRate.remove(
+                        StringUtils.isNotEmpty(cluster) ? cluster : pulsar().getConfiguration().getClusterName());
                 return policies;
             });
             log.info("[{}] Successfully delete the replicatorDispatchRate for cluster on namespace {}", clientAppId(),
@@ -1548,12 +1549,14 @@ public abstract class NamespacesBase extends AdminResource {
         }
     }
 
-    protected void internalSetReplicatorDispatchRate(DispatchRateImpl dispatchRate) {
+    protected void internalSetReplicatorDispatchRate(String cluster, DispatchRateImpl dispatchRate) {
         validateSuperUserAccess();
         log.info("[{}] Set namespace replicator dispatch-rate {}/{}", clientAppId(), namespaceName, dispatchRate);
         try {
             updatePolicies(namespaceName, policies -> {
-                policies.replicatorDispatchRate.put(pulsar().getConfiguration().getClusterName(), dispatchRate);
+                policies.replicatorDispatchRate.put(
+                        StringUtils.isNotEmpty(cluster) ? cluster : pulsar().getConfiguration().getClusterName(),
+                        dispatchRate);
                 return policies;
             });
             log.info("[{}] Successfully updated the replicatorDispatchRate for cluster on namespace {}", clientAppId(),
@@ -1565,11 +1568,12 @@ public abstract class NamespacesBase extends AdminResource {
         }
     }
 
-    protected DispatchRate internalGetReplicatorDispatchRate() {
+    protected DispatchRate internalGetReplicatorDispatchRate(String cluster) {
         validateNamespacePolicyOperation(namespaceName, PolicyName.REPLICATION_RATE, PolicyOperation.READ);
 
         Policies policies = getNamespacePolicies(namespaceName);
-        return policies.replicatorDispatchRate.get(pulsar().getConfiguration().getClusterName());
+        return policies.replicatorDispatchRate.get(
+                StringUtils.isNotEmpty(cluster) ? cluster : pulsar().getConfiguration().getClusterName());
     }
 
     protected void internalSetBacklogQuota(BacklogQuotaType backlogQuotaType, BacklogQuota backlogQuota) {
