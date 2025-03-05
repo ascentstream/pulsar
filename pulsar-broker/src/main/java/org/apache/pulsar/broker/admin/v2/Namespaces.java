@@ -717,9 +717,11 @@ public class Namespaces extends NamespacesBase {
     @ApiResponses(value = {@ApiResponse(code = 403, message = "Don't have admin permission")})
     public void removeReplicatorDispatchRate(
             @PathParam("tenant") String tenant,
-            @PathParam("namespace") String namespace) {
+            @PathParam("namespace") String namespace,
+            @QueryParam("cluster") String cluster
+    ) {
         validateNamespaceName(tenant, namespace);
-        internalRemoveReplicatorDispatchRate();
+        internalRemoveReplicatorDispatchRate(cluster);
     }
 
     @POST
@@ -727,11 +729,12 @@ public class Namespaces extends NamespacesBase {
     @ApiOperation(value = "Set replicator dispatch-rate throttling for all topics of the namespace")
     @ApiResponses(value = {@ApiResponse(code = 403, message = "Don't have admin permission")})
     public void setReplicatorDispatchRate(@PathParam("tenant") String tenant,
-                                          @PathParam("namespace") String namespace, @ApiParam(value =
+                                          @PathParam("namespace") String namespace,
+                                          @QueryParam("cluster") String cluster, @ApiParam(value =
             "Replicator dispatch rate for all topics of the specified namespace")
                                                       DispatchRateImpl dispatchRate) {
         validateNamespaceName(tenant, namespace);
-        internalSetReplicatorDispatchRate(dispatchRate);
+        internalSetReplicatorDispatchRate(cluster, dispatchRate);
     }
 
     @GET
@@ -742,9 +745,11 @@ public class Namespaces extends NamespacesBase {
     @ApiResponses(value = { @ApiResponse(code = 403, message = "Don't have admin permission"),
         @ApiResponse(code = 404, message = "Namespace does not exist") })
     public DispatchRate getReplicatorDispatchRate(@PathParam("tenant") String tenant,
-                                                    @PathParam("namespace") String namespace) {
+                                                    @PathParam("namespace") String namespace,
+                                                    @QueryParam("cluster") String cluster
+                                                  ) {
         validateNamespaceName(tenant, namespace);
-        return internalGetReplicatorDispatchRate();
+        return internalGetReplicatorDispatchRate(cluster);
     }
 
     @GET

@@ -183,8 +183,14 @@ public abstract class AbstractTopic implements Topic, TopicPolicyListener<TopicP
         return this.topicPolicies.getSchemaCompatibilityStrategy().get();
     }
 
-    public DispatchRateImpl getReplicatorDispatchRate() {
-        return this.topicPolicies.getReplicatorDispatchRate().get();
+    public DispatchRateImpl getReplicatorDispatchRate(String remoteCluster) {
+        Map<String, DispatchRateImpl> dispatchRateMap = topicPolicies.getReplicatorDispatchRate().get();
+        DispatchRateImpl dispatchRate = dispatchRateMap.get(remoteCluster);
+        if (dispatchRate == null) {
+            // Use the default dispatch rate.
+            dispatchRate = dispatchRateMap.get(brokerService.pulsar().getConfiguration().getClusterName());
+        }
+        return normalize(dispatchRate);
     }
 
     public DispatchRateImpl getDispatchRate() {
@@ -225,7 +231,8 @@ public abstract class AbstractTopic implements Topic, TopicPolicyListener<TopicP
         topicPolicies.getMessageTTLInSeconds().updateTopicValue(data.getMessageTTLInSeconds());
         topicPolicies.getPublishRate().updateTopicValue(PublishRate.normalize(data.getPublishRate()));
         topicPolicies.getDelayedDeliveryEnabled().updateTopicValue(data.getDelayedDeliveryEnabled());
-        topicPolicies.getReplicatorDispatchRate().updateTopicValue(normalize(data.getReplicatorDispatchRate()));
+        topicPolicies.getReplicatorDispatchRate().updateTopicValue(
+                data.getFinalReplicatorDispatchRateMap(brokerService.pulsar().getConfiguration().getClusterName()));
         topicPolicies.getDelayedDeliveryTickTimeMillis().updateTopicValue(data.getDelayedDeliveryTickTimeMillis());
         topicPolicies.getSubscribeRate().updateTopicValue(SubscribeRate.normalize(data.getSubscribeRate()));
         topicPolicies.getSubscriptionDispatchRate().updateTopicValue(normalize(data.getSubscriptionDispatchRate()));
@@ -272,8 +279,7 @@ public abstract class AbstractTopic implements Topic, TopicPolicyListener<TopicP
                         .map(DelayedDeliveryPolicies::getTickTime).orElse(null));
         topicPolicies.getSubscriptionTypesEnabled().updateNamespaceValue(
                 subTypeStringsToEnumSet(namespacePolicies.subscription_types_enabled));
-        updateNamespaceReplicatorDispatchRate(namespacePolicies,
-            brokerService.getPulsar().getConfig().getClusterName());
+        topicPolicies.getReplicatorDispatchRate().updateNamespaceValue(namespacePolicies.replicatorDispatchRate);
         Arrays.stream(BacklogQuota.BacklogQuotaType.values()).forEach(
                 type -> this.topicPolicies.getBackLogQuotaMap().get(type)
                         .updateNamespaceValue(MapUtils.getObject(namespacePolicies.backlog_quota_map, type)));
@@ -301,11 +307,6 @@ public abstract class AbstractTopic implements Topic, TopicPolicyListener<TopicP
     private void updateNamespaceSubscriptionDispatchRate(Policies namespacePolicies, String cluster) {
         topicPolicies.getSubscriptionDispatchRate()
             .updateNamespaceValue(normalize(namespacePolicies.subscriptionDispatchRate.get(cluster)));
-    }
-
-    private void updateNamespaceReplicatorDispatchRate(Policies namespacePolicies, String cluster) {
-        topicPolicies.getReplicatorDispatchRate()
-            .updateNamespaceValue(normalize(namespacePolicies.replicatorDispatchRate.get(cluster)));
     }
 
     private DispatchRateImpl normalize(DispatchRateImpl dispatchRate) {
@@ -411,12 +412,14 @@ public abstract class AbstractTopic implements Topic, TopicPolicyListener<TopicP
             .build();
     }
 
-    private DispatchRateImpl replicatorDispatchRateInBroker(ServiceConfiguration config) {
-        return DispatchRateImpl.builder()
-            .dispatchThrottlingRateInMsg(config.getDispatchThrottlingRatePerReplicatorInMsg())
-            .dispatchThrottlingRateInByte(config.getDispatchThrottlingRatePerReplicatorInByte())
-            .ratePeriodInSecond(1)
-            .build();
+    private Map<String, DispatchRateImpl> replicatorDispatchRateInBroker(ServiceConfiguration config) {
+        Map<String, DispatchRateImpl> dispatchRate = new ConcurrentHashMap<>();
+        dispatchRate.put(brokerService.pulsar().getConfiguration().getClusterName(), DispatchRateImpl.builder()
+                .dispatchThrottlingRateInMsg(config.getDispatchThrottlingRatePerReplicatorInMsg())
+                .dispatchThrottlingRateInByte(config.getDispatchThrottlingRatePerReplicatorInByte())
+                .ratePeriodInSecond(1)
+                .build());
+        return dispatchRate;
     }
 
     private EnumSet<SubType> subTypeStringsToEnumSet(Set<String> getSubscriptionTypesEnabled) {

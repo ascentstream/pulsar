@@ -3597,25 +3597,42 @@ public class PersistentTopicsBase extends AdminResource {
             });
     }
 
-    protected CompletableFuture<DispatchRateImpl> internalGetReplicatorDispatchRate(boolean applied, boolean isGlobal) {
+    protected CompletableFuture<DispatchRateImpl> internalGetReplicatorDispatchRate(String cluster, boolean applied,
+                                                                                    boolean isGlobal) {
         return getTopicPoliciesAsyncWithRetry(topicName, isGlobal)
-            .thenApply(op -> op.map(TopicPolicies::getReplicatorDispatchRate)
-                .orElseGet(() -> {
+                .thenApply(op -> op.map(n -> {
+                    String key = StringUtils.isNotEmpty(cluster) ? cluster :
+                            pulsar().getConfiguration().getClusterName();
+                    return n.getFinalReplicatorDispatchRateMap(pulsar().getConfiguration().getClusterName()).get(key);
+                }).orElseGet(() -> {
                     if (applied) {
+                        String key = StringUtils.isNotEmpty(cluster) ? cluster :
+                                pulsar().getConfiguration().getClusterName();
                         DispatchRateImpl namespacePolicy = getNamespacePolicies(namespaceName)
-                                .replicatorDispatchRate.get(pulsar().getConfiguration().getClusterName());
+                                .replicatorDispatchRate.get(key);
                         return namespacePolicy == null ? replicatorDispatchRate() : namespacePolicy;
                     }
                     return null;
                 }));
     }
 
-    protected CompletableFuture<Void> internalSetReplicatorDispatchRate(DispatchRateImpl dispatchRate,
+    protected CompletableFuture<Void> internalSetReplicatorDispatchRate(String cluster, DispatchRateImpl dispatchRate,
                                                                         boolean isGlobal) {
         return getTopicPoliciesAsyncWithRetry(topicName, isGlobal)
             .thenCompose(op -> {
                 TopicPolicies topicPolicies = op.orElseGet(TopicPolicies::new);
-                topicPolicies.setReplicatorDispatchRate(dispatchRate);
+                boolean usingDefaultCluster = StringUtils.isEmpty(cluster);
+                if (dispatchRate == null) {
+                    topicPolicies.getReplicatorDispatchRateMap()
+                            .remove(usingDefaultCluster ? pulsar().getConfiguration().getClusterName() : cluster);
+                } else {
+                    topicPolicies.getReplicatorDispatchRateMap()
+                            .put(usingDefaultCluster ? pulsar().getConfiguration().getClusterName() : cluster,
+                                    dispatchRate);
+                }
+                if (usingDefaultCluster) {
+                    topicPolicies.setReplicatorDispatchRate(dispatchRate);
+                }
                 topicPolicies.setIsGlobal(isGlobal);
                 return pulsar().getTopicPoliciesService().updateTopicPoliciesAsync(topicName, topicPolicies);
             });
