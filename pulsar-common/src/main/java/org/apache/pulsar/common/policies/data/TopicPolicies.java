@@ -20,6 +20,7 @@ package org.apache.pulsar.common.policies.data;
 
 import com.google.common.collect.Sets;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -69,7 +70,13 @@ public class TopicPolicies {
     private Integer deduplicationSnapshotIntervalSeconds;
     private Integer maxMessageSize;
     private Integer maxSubscriptionsPerTopic;
+    /**
+     * @deprecated Use {@link #replicatorDispatchRateMap} instead.
+     */
+    @Deprecated
     private DispatchRateImpl replicatorDispatchRate;
+    @Builder.Default
+    private Map<String, DispatchRateImpl> replicatorDispatchRateMap = new HashMap<>();
     private SchemaCompatibilityStrategy schemaCompatibilityStrategy;
     private String resourceGroupName;
     private Boolean replicateSubscriptionState;
@@ -171,5 +178,23 @@ public class TopicPolicies {
 
     public Set<String> getReplicationClustersSet() {
         return replicationClusters != null ? Sets.newTreeSet(this.replicationClusters) : null;
+    }
+
+    /**
+     * Returns the complete replicator dispatch rate map, ensuring backward compatibility.
+     *
+     * @param currentCluster The name of the current cluster, as defined in
+     *                       {@link org.apache.pulsar.broker.ServiceConfiguration#clusterName}.
+     * @return A complete map of replicator dispatch rates, including the default dispatch rate
+     * for the current cluster if it does not exist.
+     */
+    public Map<String, DispatchRateImpl> getFinalReplicatorDispatchRateMap(String currentCluster) {
+        if (replicatorDispatchRateMap.containsKey(currentCluster)) {
+            return Collections.unmodifiableMap(replicatorDispatchRateMap);
+        } else {
+            Map<String, DispatchRateImpl> result = new HashMap<>(replicatorDispatchRateMap);
+            result.put(currentCluster, replicatorDispatchRate);
+            return Collections.unmodifiableMap(result);
+        }
     }
 }
