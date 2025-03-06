@@ -39,7 +39,7 @@ public class ReplicatorDispatchRateTest {
         // Put r1-cluster and dispatch rate to the map, and then check if the map includes that.
         String r1ClusterName = currentClusterName;
         DispatchRateImpl r1DispatchRate = DispatchRateImpl.builder().build();
-        topicPolicies.getFinalReplicatorDispatchRateMap(currentClusterName).put(r1ClusterName, r1DispatchRate);
+        topicPolicies.getReplicatorDispatchRateMap().put(r1ClusterName, r1DispatchRate);
         result = topicPolicies.getFinalReplicatorDispatchRateMap(currentClusterName);
         assertEquals(result.size(), 1);
         assertEquals(result.get(r1ClusterName), r1DispatchRate);
@@ -47,7 +47,7 @@ public class ReplicatorDispatchRateTest {
         // Put r2-cluster and dispatch rate to the map, and then check if the map includes that.
         String r2ClusterName = "r2-cluster";
         DispatchRateImpl r2DispatchRate = DispatchRateImpl.builder().build();
-        topicPolicies.getFinalReplicatorDispatchRateMap(currentClusterName).put(r2ClusterName, r2DispatchRate);
+        topicPolicies.getReplicatorDispatchRateMap().put(r2ClusterName, r2DispatchRate);
         result = topicPolicies.getFinalReplicatorDispatchRateMap(currentClusterName);
         assertEquals(result.size(), 2);
         assertEquals(result.get(r2ClusterName), r2DispatchRate);

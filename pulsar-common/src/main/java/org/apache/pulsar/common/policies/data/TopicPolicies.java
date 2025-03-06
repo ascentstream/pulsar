@@ -20,6 +20,7 @@ package org.apache.pulsar.common.policies.data;
 
 import com.google.common.collect.Sets;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -189,11 +190,11 @@ public class TopicPolicies {
      */
     public Map<String, DispatchRateImpl> getFinalReplicatorDispatchRateMap(String currentCluster) {
         if (replicatorDispatchRateMap.containsKey(currentCluster)) {
-            return replicatorDispatchRateMap;
+            return Collections.unmodifiableMap(replicatorDispatchRateMap);
         } else {
             Map<String, DispatchRateImpl> result = new HashMap<>(replicatorDispatchRateMap);
             result.put(currentCluster, replicatorDispatchRate);
-            return result;
+            return Collections.unmodifiableMap(result);
         }
     }
 }
