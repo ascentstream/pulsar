@@ -2990,7 +2990,8 @@ public class PersistentTopic extends AbstractTopic implements Topic, AddEntryCal
         }
     }
 
-    void receivedReplicatedSubscriptionMarker(Position position, int markerType, ByteBuf payload) {
+    void receivedReplicatedSubscriptionMarker(String remoteCluster, Position position, int markerType,
+                                              ByteBuf payload) {
         ReplicatedSubscriptionsController ctrl = replicatedSubscriptionsController.orElse(null);
         if (ctrl == null) {
             // Force to start the replication controller
@@ -2998,7 +2999,7 @@ public class PersistentTopic extends AbstractTopic implements Topic, AddEntryCal
             ctrl = replicatedSubscriptionsController.get();
         }
 
-        ctrl.receivedReplicatedSubscriptionMarker(position, markerType, payload);
+        ctrl.receivedReplicatedSubscriptionMarker(remoteCluster, position, markerType, payload);
      }
 
     public Optional<ReplicatedSubscriptionsController> getReplicatedSubscriptionController() {
