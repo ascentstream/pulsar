@@ -18,6 +18,7 @@
  */
 package org.apache.pulsar.admin.cli;
 
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.longThat;
 import static org.mockito.Mockito.doReturn;
@@ -403,17 +404,18 @@ public class PulsarAdminToolTest {
         verify(mockNamespaces).deleteBookieAffinityGroup("myprop/clust/ns1");
 
         namespaces.run(split("set-replicator-dispatch-rate myprop/clust/ns1 -md 10 -bd 11 -dt 12"));
-        verify(mockNamespaces).setReplicatorDispatchRate("myprop/clust/ns1", DispatchRate.builder()
-                .dispatchThrottlingRateInMsg(10)
-                .dispatchThrottlingRateInByte(11)
-                .ratePeriodInSecond(12)
-                .build());
+        verify(mockNamespaces).setReplicatorDispatchRate("myprop/clust/ns1", null,
+                DispatchRate.builder()
+                        .dispatchThrottlingRateInMsg(10)
+                        .dispatchThrottlingRateInByte(11)
+                        .ratePeriodInSecond(12)
+                        .build());
 
         namespaces.run(split("get-replicator-dispatch-rate myprop/clust/ns1"));
-        verify(mockNamespaces).getReplicatorDispatchRate("myprop/clust/ns1");
+        verify(mockNamespaces).getReplicatorDispatchRate("myprop/clust/ns1", null);
 
         namespaces.run(split("remove-replicator-dispatch-rate myprop/clust/ns1"));
-        verify(mockNamespaces).removeReplicatorDispatchRate("myprop/clust/ns1");
+        verify(mockNamespaces).removeReplicatorDispatchRate("myprop/clust/ns1", null);
 
         namespaces.run(split("unload myprop/clust/ns1"));
         verify(mockNamespaces).unload("myprop/clust/ns1");
@@ -960,15 +962,16 @@ public class PulsarAdminToolTest {
 
         cmdTopics.run(split("set-replicator-dispatch-rate persistent://myprop/clust/ns1/ds1 -md -1 -bd -1 -dt 2"));
         verify(mockTopicsPolicies).setReplicatorDispatchRate("persistent://myprop/clust/ns1/ds1",
+                null,
                 DispatchRate.builder()
                         .dispatchThrottlingRateInMsg(-1)
                         .dispatchThrottlingRateInByte(-1)
                         .ratePeriodInSecond(2)
                         .build());
         cmdTopics.run(split("get-replicator-dispatch-rate persistent://myprop/clust/ns1/ds1"));
-        verify(mockTopicsPolicies).getReplicatorDispatchRate("persistent://myprop/clust/ns1/ds1", false);
+        verify(mockTopicsPolicies).getReplicatorDispatchRate("persistent://myprop/clust/ns1/ds1", null, false);
         cmdTopics.run(split("remove-replicator-dispatch-rate persistent://myprop/clust/ns1/ds1"));
-        verify(mockTopicsPolicies).removeReplicatorDispatchRate("persistent://myprop/clust/ns1/ds1");
+        verify(mockTopicsPolicies).removeReplicatorDispatchRate("persistent://myprop/clust/ns1/ds1", null);
 
         cmdTopics.run(split("set-subscription-dispatch-rate persistent://myprop/clust/ns1/ds1 -md -1 -bd -1 -dt 2"));
         verify(mockTopicsPolicies).setSubscriptionDispatchRate("persistent://myprop/clust/ns1/ds1",
@@ -1246,15 +1249,16 @@ public class PulsarAdminToolTest {
 
         cmdTopics.run(split("set-replicator-dispatch-rate persistent://myprop/clust/ns1/ds1 -md -1 -bd -1 -dt 2 -g"));
         verify(mockGlobalTopicsPolicies).setReplicatorDispatchRate("persistent://myprop/clust/ns1/ds1",
+                null,
                 DispatchRate.builder()
                         .dispatchThrottlingRateInMsg(-1)
                         .dispatchThrottlingRateInByte(-1)
                         .ratePeriodInSecond(2)
                         .build());
         cmdTopics.run(split("get-replicator-dispatch-rate persistent://myprop/clust/ns1/ds1 -g"));
-        verify(mockGlobalTopicsPolicies).getReplicatorDispatchRate("persistent://myprop/clust/ns1/ds1", false);
+        verify(mockGlobalTopicsPolicies).getReplicatorDispatchRate("persistent://myprop/clust/ns1/ds1", null, false);
         cmdTopics.run(split("remove-replicator-dispatch-rate persistent://myprop/clust/ns1/ds1 -g"));
-        verify(mockGlobalTopicsPolicies).removeReplicatorDispatchRate("persistent://myprop/clust/ns1/ds1");
+        verify(mockGlobalTopicsPolicies).removeReplicatorDispatchRate("persistent://myprop/clust/ns1/ds1", null);
 
         cmdTopics.run(split("set-subscription-dispatch-rate persistent://myprop/clust/ns1/ds1 -md -1 -bd -1 -dt 2 -g"));
         verify(mockGlobalTopicsPolicies).setSubscriptionDispatchRate("persistent://myprop/clust/ns1/ds1",
@@ -2143,6 +2147,56 @@ public class PulsarAdminToolTest {
         postSchemaPayload.setSchema(SchemaExtractor.getJsonSchemaInfo(schemaDefinition));
         postSchemaPayload.setProperties(schemaDefinition.getProperties());
         verify(schemas).createSchema("persistent://tn1/ns1/tp1", postSchemaPayload);
+    }
+
+    @Test
+    public void testReplicatorDispatchRateWithClusterByCmdNamespace() throws Exception {
+        PulsarAdmin admin = Mockito.mock(PulsarAdmin.class);
+        Namespaces mockNamespaces = mock(Namespaces.class);
+        when(admin.namespaces()).thenReturn(mockNamespaces);
+        Lookup mockLookup = mock(Lookup.class);
+        when(admin.lookups()).thenReturn(mockLookup);
+
+        CmdNamespaces namespaces = new CmdNamespaces(() -> admin);
+
+        namespaces.run(split("set-replicator-dispatch-rate tenant1/ns1 -md 10 -bd 11 -dt 12 --cluster r1"));
+        verify(mockNamespaces).setReplicatorDispatchRate("tenant1/ns1", "r1",
+                DispatchRate.builder()
+                        .dispatchThrottlingRateInMsg(10)
+                        .dispatchThrottlingRateInByte(11)
+                        .ratePeriodInSecond(12)
+                        .build());
+
+        namespaces.run(split("get-replicator-dispatch-rate tenant1/ns1 --cluster r1"));
+        verify(mockNamespaces).getReplicatorDispatchRate("tenant1/ns1", "r1");
+
+        namespaces.run(split("remove-replicator-dispatch-rate tenant1/ns1 --cluster r1"));
+        verify(mockNamespaces).removeReplicatorDispatchRate("tenant1/ns1", "r1");
+    }
+
+    @Test
+    public void testReplicatorDispatchRateWithClusterByCmdTopicPolicies() throws Exception {
+        PulsarAdmin admin = Mockito.mock(PulsarAdmin.class);
+        TopicPolicies mockTopicPolicies = mock(TopicPolicies.class);
+        when(admin.topicPolicies(anyBoolean())).thenReturn(mockTopicPolicies);
+        Lookup mockLookup = mock(Lookup.class);
+        when(admin.lookups()).thenReturn(mockLookup);
+
+        CmdTopicPolicies topicPolicies = new CmdTopicPolicies(() -> admin);
+
+        topicPolicies.run(split("set-replicator-dispatch-rate tenant1/ns1/topic1 -md 10 -bd 11 -dt 12 --cluster r1"));
+        verify(mockTopicPolicies).setReplicatorDispatchRate("persistent://tenant1/ns1/topic1", "r1",
+                DispatchRate.builder()
+                        .dispatchThrottlingRateInMsg(10)
+                        .dispatchThrottlingRateInByte(11)
+                        .ratePeriodInSecond(12)
+                        .build());
+
+        topicPolicies.run(split("get-replicator-dispatch-rate tenant1/ns1/topic1 --cluster r1"));
+        verify(mockTopicPolicies).getReplicatorDispatchRate("persistent://tenant1/ns1/topic1", "r1", false);
+
+        topicPolicies.run(split("remove-replicator-dispatch-rate tenant1/ns1/topic1 --cluster r1"));
+        verify(mockTopicPolicies).removeReplicatorDispatchRate("persistent://tenant1/ns1/topic1", "r1");
     }
 
     public static class SchemaDemo {
