@@ -163,12 +163,16 @@ public class DispatchRateLimiter {
                 .build();
     }
 
+    public void updateDispatchRate(){
+        updateDispatchRate((String) null);
+    }
+
     /**
      * Update dispatch-throttling-rate.
      * Topic-level has the highest priority, then namespace-level, and finally use dispatch-throttling-rate in
      * broker-level
      */
-    public void updateDispatchRate() {
+    public void updateDispatchRate(String remoteCluster) {
         switch (type) {
             case TOPIC:
                 updateDispatchRate(topic.getDispatchRate());
@@ -177,7 +181,7 @@ public class DispatchRateLimiter {
                 updateDispatchRate(topic.getSubscriptionDispatchRate());
                 return;
             case REPLICATOR:
-                updateDispatchRate(topic.getReplicatorDispatchRate());
+                updateDispatchRate(topic.getReplicatorDispatchRate(remoteCluster));
                 return;
         }
 

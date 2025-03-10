@@ -69,7 +69,13 @@ public class TopicPolicies {
     private Integer deduplicationSnapshotIntervalSeconds;
     private Integer maxMessageSize;
     private Integer maxSubscriptionsPerTopic;
+    /**
+     * @deprecated Use {@link #replicatorDispatchRateMap} instead.
+     */
+    @Deprecated
     private DispatchRateImpl replicatorDispatchRate;
+    @Builder.Default
+    private Map<String, DispatchRateImpl> replicatorDispatchRateMap = new HashMap<>();
     private SchemaCompatibilityStrategy schemaCompatibilityStrategy;
     private String resourceGroupName;
     private Boolean replicateSubscriptionState;
