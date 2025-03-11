@@ -1134,10 +1134,14 @@ public class CmdNamespaces extends CmdBase {
                 + "(default 1 second will be overwrite if not passed)", required = false)
         private int dispatchRatePeriodSec = 1;
 
+        @Parameter(names = "--cluster", description = "The remote cluster for which set the dispatch rate, default to"
+                + " null", required = false)
+        private String cluster = null;
+
         @Override
         void run() throws PulsarAdminException {
             String namespace = validateNamespace(params);
-            getAdmin().namespaces().setReplicatorDispatchRate(namespace,
+            getAdmin().namespaces().setReplicatorDispatchRate(namespace, cluster,
                     DispatchRate.builder()
                             .dispatchThrottlingRateInMsg(msgDispatchRate)
                             .dispatchThrottlingRateInByte(byteDispatchRate)
@@ -1152,10 +1156,14 @@ public class CmdNamespaces extends CmdBase {
         @Parameter(description = "tenant/namespace", required = true)
         private java.util.List<String> params;
 
+        @Parameter(names = "--cluster", description = "The remote cluster for which set the dispatch rate, default to"
+                + " null", required = false)
+        private String cluster = null;
+
         @Override
         void run() throws PulsarAdminException {
             String namespace = validateNamespace(params);
-            print(getAdmin().namespaces().getReplicatorDispatchRate(namespace));
+            print(getAdmin().namespaces().getReplicatorDispatchRate(namespace, cluster));
         }
     }
 
@@ -1165,10 +1173,14 @@ public class CmdNamespaces extends CmdBase {
         @Parameter(description = "tenant/namespace", required = true)
         private java.util.List<String> params;
 
+        @Parameter(names = "--cluster", description = "The remote cluster for which set the dispatch rate, default to"
+                + " null", required = false)
+        private String cluster = null;
+
         @Override
         void run() throws PulsarAdminException {
             String namespace = validateNamespace(params);
-            getAdmin().namespaces().removeReplicatorDispatchRate(namespace);
+            getAdmin().namespaces().removeReplicatorDispatchRate(namespace, cluster);
         }
     }
 

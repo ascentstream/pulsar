@@ -1377,10 +1377,14 @@ public class CmdTopicPolicies extends CmdBase {
                 + "If set to true, broker returned global topic policies")
         private boolean isGlobal = false;
 
+        @Parameter(names = "--cluster", description = "The remote cluster for which set the dispatch rate, default to"
+                + " null", required = false)
+        private String cluster = null;
+
         @Override
         void run() throws PulsarAdminException {
             String persistentTopic = validatePersistentTopic(params);
-            print(getTopicPolicies(isGlobal).getReplicatorDispatchRate(persistentTopic, applied));
+            print(getTopicPolicies(isGlobal).getReplicatorDispatchRate(persistentTopic, cluster, applied));
         }
     }
 
@@ -1411,10 +1415,14 @@ public class CmdTopicPolicies extends CmdBase {
                 + "If set to true, the policy will be replicate to other clusters asynchronously")
         private boolean isGlobal = false;
 
+        @Parameter(names = "--cluster", description = "The remote cluster for which set the dispatch rate, default to"
+                + " null", required = false)
+        private String cluster = null;
+
         @Override
         void run() throws PulsarAdminException {
             String persistentTopic = validatePersistentTopic(params);
-            getTopicPolicies(isGlobal).setReplicatorDispatchRate(persistentTopic,
+            getTopicPolicies(isGlobal).setReplicatorDispatchRate(persistentTopic, cluster,
                     DispatchRate.builder()
                             .dispatchThrottlingRateInMsg(msgDispatchRate)
                             .dispatchThrottlingRateInByte(byteDispatchRate)
@@ -1433,10 +1441,14 @@ public class CmdTopicPolicies extends CmdBase {
                 + "If set to true, the policy will be replicate to other clusters asynchronously")
         private boolean isGlobal = false;
 
+        @Parameter(names = "--cluster", description = "The remote cluster for which set the dispatch rate, default to"
+                + " null", required = false)
+        private String cluster = null;
+
         @Override
         void run() throws PulsarAdminException {
             String persistentTopic = validatePersistentTopic(params);
-            getTopicPolicies(isGlobal).removeReplicatorDispatchRate(persistentTopic);
+            getTopicPolicies(isGlobal).removeReplicatorDispatchRate(persistentTopic, cluster);
         }
 
     }

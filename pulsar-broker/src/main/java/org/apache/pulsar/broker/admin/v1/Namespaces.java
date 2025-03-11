@@ -753,10 +753,11 @@ public class Namespaces extends NamespacesBase {
     public void setReplicatorDispatchRate(
             @PathParam("tenant") String tenant,
             @PathParam("cluster") String cluster, @PathParam("namespace") String namespace,
+            @QueryParam("cluster") String queryCluster,
             @ApiParam(value = "Replicator dispatch rate for all topics of the specified namespace")
                     DispatchRateImpl dispatchRate) {
         validateNamespaceName(tenant, cluster, namespace);
-        internalSetReplicatorDispatchRate(dispatchRate);
+        internalSetReplicatorDispatchRate(queryCluster, dispatchRate);
     }
 
     @GET
@@ -768,9 +769,10 @@ public class Namespaces extends NamespacesBase {
         @ApiResponse(code = 404, message = "Namespace does not exist") })
     public DispatchRate getReplicatorDispatchRate(@PathParam("tenant") String tenant,
                                                     @PathParam("cluster") String cluster,
-                                                    @PathParam("namespace") String namespace) {
+                                                  @PathParam("namespace") String namespace,
+                                                  @QueryParam("cluster") String queryCluster) {
         validateNamespaceName(tenant, cluster, namespace);
-        return internalGetReplicatorDispatchRate();
+        return internalGetReplicatorDispatchRate(queryCluster);
     }
 
     @GET
