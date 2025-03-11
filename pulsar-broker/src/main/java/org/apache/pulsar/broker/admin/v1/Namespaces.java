@@ -772,7 +772,7 @@ public class Namespaces extends NamespacesBase {
                                                   @PathParam("namespace") String namespace,
                                                   @QueryParam("cluster") String queryCluster) {
         validateNamespaceName(tenant, cluster, namespace);
-        return internalGetReplicatorDispatchRate(cluster);
+        return internalGetReplicatorDispatchRate(queryCluster);
     }
 
     @GET
