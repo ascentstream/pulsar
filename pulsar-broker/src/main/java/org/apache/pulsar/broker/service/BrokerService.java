@@ -124,6 +124,8 @@ import org.apache.pulsar.broker.service.persistent.PersistentTopic;
 import org.apache.pulsar.broker.service.persistent.SystemTopic;
 import org.apache.pulsar.broker.service.plugin.EntryFilterProvider;
 import org.apache.pulsar.broker.service.plugin.EntryFilterWithClassLoader;
+import org.apache.pulsar.broker.service.schema.BookkeeperSchemaStorage;
+import org.apache.pulsar.broker.service.schema.SchemaRegistryService;
 import org.apache.pulsar.broker.stats.ClusterReplicationMetrics;
 import org.apache.pulsar.broker.stats.prometheus.metrics.ObserverGauge;
 import org.apache.pulsar.broker.stats.prometheus.metrics.Summary;
@@ -1193,23 +1195,26 @@ public class BrokerService implements Closeable {
 
         CompletableFuture<Void> deleteTopicAuthenticationFuture = new CompletableFuture<>();
         deleteTopicAuthenticationWithRetry(topic, deleteTopicAuthenticationFuture, 5);
-        deleteTopicAuthenticationFuture.whenComplete((v, ex) -> {
-            if (ex != null) {
-                future.completeExceptionally(ex);
-                return;
-            }
-            managedLedgerFactory.asyncDelete(tn.getPersistenceNamingEncoding(), new DeleteLedgerCallback() {
-                @Override
-                public void deleteLedgerComplete(Object ctx) {
-                    future.complete(null);
-                }
+        deleteTopicAuthenticationFuture
+                .thenCompose(__ -> deleteSchema(tn))
+                .thenCompose(__ -> deleteTopicPolicies(tn))
+                .whenComplete((v, ex) -> {
+                    if (ex != null) {
+                        future.completeExceptionally(ex);
+                        return;
+                    }
+                    managedLedgerFactory.asyncDelete(tn.getPersistenceNamingEncoding(), new DeleteLedgerCallback() {
+                        @Override
+                        public void deleteLedgerComplete(Object ctx) {
+                            future.complete(null);
+                        }
 
-                @Override
-                public void deleteLedgerFailed(ManagedLedgerException exception, Object ctx) {
-                    future.completeExceptionally(exception);
-                }
-            }, null);
-        });
+                        @Override
+                        public void deleteLedgerFailed(ManagedLedgerException exception, Object ctx) {
+                            future.completeExceptionally(exception);
+                        }
+                    }, null);
+                });
 
 
         return future;
@@ -3370,11 +3375,20 @@ public class BrokerService implements Closeable {
 
     public CompletableFuture<Void> deleteTopicPolicies(TopicName topicName) {
         final PulsarService pulsarService = pulsar();
-        if (!pulsarService.getConfig().isTopicLevelPoliciesEnabled()) {
+        if (!pulsarService.getConfig().isTopicLevelPoliciesEnabled() || isSelf(topicName)) {
             return CompletableFuture.completedFuture(null);
         }
         return pulsar.getTopicPoliciesService()
                 .deleteTopicPoliciesAsync(TopicName.get(topicName.getPartitionedTopicName()));
+    }
+
+    private static boolean isSelf(TopicName topicName) {
+        String localName = topicName.getLocalName();
+        if (!topicName.isPartitioned()) {
+            return localName.equals(EventsTopicNames.NAMESPACE_EVENTS_LOCAL_NAME);
+        }
+        int index = localName.lastIndexOf(TopicName.PARTITIONED_TOPIC_SUFFIX);
+        return localName.substring(0, index).equals(EventsTopicNames.NAMESPACE_EVENTS_LOCAL_NAME);
     }
 
     public CompletableFuture<SchemaVersion> deleteSchema(TopicName topicName) {
@@ -3384,15 +3398,20 @@ public class BrokerService implements Closeable {
         }
         String base = topicName.getPartitionedTopicName();
         String id = TopicName.get(base).getSchemaName();
-        return getPulsar().getSchemaRegistryService().deleteSchemaStorage(id).whenComplete((vid, ex) -> {
-            if (vid != null && ex == null) {
-                // It's different from `SchemasResource.deleteSchema`
-                // because when we delete a topic, the schema
-                // history is meaningless. But when we delete a schema of a topic, a new schema could be
-                // registered in the future.
-                log.info("Deleted schema storage of id: {}", id);
-            }
-        });
+        SchemaRegistryService schemaRegistryService = getPulsar().getSchemaRegistryService();
+        return BookkeeperSchemaStorage.ignoreUnrecoverableBKException(schemaRegistryService.getSchema(id))
+                .thenCompose(schema -> {
+                    if (schema != null) {
+                        // It's different from `SchemasResource.deleteSchema`
+                        // because when we delete a topic, the schema
+                        // history is meaningless. But when we delete a schema of a topic, a new schema could be
+                        // registered in the future.
+                        log.info("Delete schema storage of id: {}", id);
+                        return getPulsar().getSchemaRegistryService().deleteSchemaStorage(id);
+                    } else {
+                        return CompletableFuture.completedFuture(null);
+                    }
+                });
     }
 
     private CompletableFuture<Void> checkMaxTopicsPerNamespace(TopicName topicName, int numPartitions) {
