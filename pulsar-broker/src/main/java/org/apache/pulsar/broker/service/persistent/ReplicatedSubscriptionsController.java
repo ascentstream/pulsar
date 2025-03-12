@@ -230,7 +230,7 @@ public class ReplicatedSubscriptionsController implements AutoCloseable, Topic.P
     }
 
     private void recordReceivedMarkerMessage(String remoteCluster, MarkerType markerType) {
-        receivedMarkerMessageCounter.labels(topic.getName(),remoteCluster, markerType.name()).inc();
+        receivedMarkerMessageCounter.labels(topic.getName(), remoteCluster, markerType.name()).inc();
     }
 
     private void startNewSnapshot() {
