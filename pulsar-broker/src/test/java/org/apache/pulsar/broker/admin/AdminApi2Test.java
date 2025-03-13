@@ -1535,7 +1535,7 @@ public class AdminApi2Test extends MockedPulsarServiceBaseTest {
     public void testDeleteNamespace(NamespaceAttr namespaceAttr) throws Exception {
         // Set conf.
         internalCleanup();
-        conf.setTopicLevelPoliciesEnabled(true);
+        conf.setTopicLevelPoliciesEnabled(namespaceAttr.systemTopicEnabled);
         NamespaceAttr originalNamespaceAttr = markOriginalNamespaceAttr();
         setNamespaceAttr(namespaceAttr);
         setup();
