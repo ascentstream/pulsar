@@ -196,12 +196,8 @@ public class PartitionedSystemTopicTest extends BrokerTestBase {
         admin.brokers().healthcheck(TopicVersion.V2);
         NamespaceName namespaceName = NamespaceService.getHeartbeatNamespaceV2(pulsar.getAdvertisedAddress(),
                 pulsar.getConfig());
-        TopicName topicName = TopicName.get("persistent", namespaceName,
-                EventsTopicNames.NAMESPACE_EVENTS_LOCAL_NAME);
-        for (int partition = 0; partition < PARTITIONS; partition ++) {
-            pulsar.getBrokerService()
-                    .getTopic(topicName.getPartition(partition).toString(), true).join();
-        }
+        TopicName topicName = TopicName.get("persistent", namespaceName, "testHeartbeatTopicNotAllowedToSendEvent");
+        admin.topics().createNonPartitionedTopic(topicName.toString());
         Assert.assertThrows(PulsarAdminException.ConflictException.class, () -> {
             admin.topicPolicies().setMaxConsumers(topicName.toString(), 2);
         });

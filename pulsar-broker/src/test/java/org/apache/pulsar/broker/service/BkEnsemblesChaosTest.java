@@ -20,6 +20,7 @@ package org.apache.pulsar.broker.service;
 
 import org.apache.pulsar.broker.BrokerTestUtil;
 import org.apache.pulsar.client.api.Producer;
+import org.awaitility.Awaitility;
 import org.testng.annotations.AfterClass;
 import org.testng.annotations.BeforeClass;
 import org.testng.annotations.Test;
@@ -64,7 +65,7 @@ public class BkEnsemblesChaosTest extends CanReconnectZKClientPulsarServiceBaseT
         stopLocalMetadataStoreAlwaysReconnect();
 
         // Ensure broker still works.
-        admin.topics().unload(topicName);
+        Awaitility.await().ignoreExceptions().untilAsserted(() -> admin.topics().unload(topicName));
         Producer<byte[]> producer2 = client.newProducer().topic(topicName).create();
         producer2.send(msgValue);
     }
