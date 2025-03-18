@@ -977,59 +977,6 @@ public class BrokerService implements Closeable {
     }
 
     /**
-     * Validates that the topic is consistent with its partition metadata.
-     *
-     * This method ensures the topic (partitioned or non-partitioned) correctly
-     * matches the actual partition configuration in the metadata. Inconsistencies typically
-     * indicate configuration issues or metadata synchronization problems.
-     *
-     * This validation is particularly important in geo-replicated environments where
-     * topic metadata may not be fully synchronized across all regions, potentially
-     * leading to access errors if not properly handled.
-     *
-     * @param topicName The topic name to validate
-     * @param metadata  The partition metadata retrieved for this topic
-     * @return CompletableFuture that completes normally if validation passes, or
-     * completes exceptionally with NotAllowedException if validation fails
-     */
-    private CompletableFuture<Void> validateTopicConsistency(TopicName topicName, PartitionedTopicMetadata metadata) {
-        if (topicName.isPartitioned()) {
-            if (metadata.partitions == 0) {
-                // Edge case: When a complete partitioned topic name is provided but metadata shows 0 partitions.
-                // This indicates that the partitioned topic/metadata doesn't exist.
-                //
-                // Resolution options:
-                // 1. Creates the partitioned topic via admin API.
-                // 2. Uses the basic topic name and then rely on auto-creation if enabled.
-                return FutureUtil.failedFuture(
-                        new BrokerServiceException.NotAllowedException(
-                                "Partition metadata not found for the partitioned topic " + topicName));
-            }
-            if (topicName.getPartitionIndex() >= metadata.partitions) {
-                final String errorMsg =
-                        String.format(
-                                "Illegal topic partition name %s with max allowed "
-                                        + "%d partitions", topicName,
-                                metadata.partitions);
-                log.warn(errorMsg);
-                return FutureUtil.failedFuture(
-                        new BrokerServiceException.NotAllowedException(errorMsg));
-            }
-        } else if (metadata.partitions > 0) {
-            // Edge case: Non-partitioned topic name was provided, but metadata indicates this is actually a partitioned
-            // topic (partitions > 0).
-            //
-            // Resolution: Must use the complete partitioned topic name('topic-name-partition-N').
-            //
-            // This ensures proper routing to the specific partition and prevents ambiguity in topic addressing.
-            return FutureUtil.failedFuture(new BrokerServiceException.NotAllowedException(
-                    "Found partitioned metadata for non-partitioned topic " + topicName));
-        }
-
-        return CompletableFuture.completedFuture(null);
-    }
-
-    /**
      * Retrieves or creates a topic based on the specified parameters.
      * 0. If disable PersistentTopics or NonPersistentTopics, it will return a failed future with NotAllowedException.
      * 1. If topic future exists in the cache returned directly regardless of whether it fails or timeout.
@@ -1075,18 +1022,30 @@ public class BrokerService implements Closeable {
                         throw FutureUtil.wrapToCompletionException(new ServiceUnitNotReadyException(errorInfo));
                     }).thenCompose(optionalTopicPolicies -> {
                         final TopicPolicies topicPolicies = optionalTopicPolicies.orElse(null);
-                        final TopicName topicNameEntity = TopicName.get(topicName.getPartitionedTopicName());
-                        return fetchPartitionedTopicMetadataAsync(topicNameEntity)
-                                .thenCompose((metadata) -> validateTopicConsistency(topicName, metadata)
-                                        .whenComplete((__, ex) -> {
-                                            if (ex != null) {
-                                                topicEventsDispatcher.notify(topicName.toString(), TopicEvent.LOAD,
-                                                        EventStage.FAILURE);
-                                            }
-                                        }))
-                                .thenCompose((__) -> topics.computeIfAbsent(topicName.toString(), (tpName) ->
-                                        loadOrCreatePersistentTopic(tpName, createIfMissing, properties,
-                                                topicPolicies)));
+                        if (topicName.isPartitioned()) {
+                            final TopicName topicNameEntity = TopicName.get(topicName.getPartitionedTopicName());
+                            return fetchPartitionedTopicMetadataAsync(topicNameEntity)
+                                    .thenCompose((metadata) -> {
+                                        // Allow crate non-partitioned persistent topic that name includes
+                                        // `partition`
+                                        if (metadata.partitions == 0
+                                                || topicName.getPartitionIndex() < metadata.partitions) {
+                                            return topics.computeIfAbsent(topicName.toString(), (tpName) ->
+                                                    loadOrCreatePersistentTopic(tpName,
+                                                            createIfMissing, properties, topicPolicies));
+                                        } else {
+                                            final String errorMsg =
+                                                    String.format("Illegal topic partition name %s with max allowed "
+                                                            + "%d partitions", topicName, metadata.partitions);
+                                            log.warn(errorMsg);
+                                            return FutureUtil.failedFuture(
+                                                    new BrokerServiceException.NotAllowedException(errorMsg));
+                                        }
+                                    });
+                        } else {
+                            return topics.computeIfAbsent(topicName.toString(), (tpName) ->
+                                    loadOrCreatePersistentTopic(tpName, createIfMissing, properties, topicPolicies));
+                        }
                     });
                 });
             } else {
@@ -1102,15 +1061,9 @@ public class BrokerService implements Closeable {
                 }
                 if (topicName.isPartitioned()) {
                     final TopicName partitionedTopicName = TopicName.get(topicName.getPartitionedTopicName());
-                    return this.fetchPartitionedTopicMetadataAsync(partitionedTopicName)
-                            .thenCompose((metadata) -> validateTopicConsistency(topicName, metadata)
-                                    .whenComplete((__, ex) -> {
-                                        if (ex != null) {
-                                            topicEventsDispatcher.notify(topicName.toString(), TopicEvent.LOAD,
-                                                    EventStage.FAILURE);
-                                        }
-                                    }))
-                            .thenCompose((__) -> topics.computeIfAbsent(topicName.toString(), (name) -> {
+                    return this.fetchPartitionedTopicMetadataAsync(partitionedTopicName).thenCompose((metadata) -> {
+                        if (topicName.getPartitionIndex() < metadata.partitions) {
+                            return topics.computeIfAbsent(topicName.toString(), (name) -> {
                                 topicEventsDispatcher
                                         .notify(topicName.toString(), TopicEvent.CREATE, EventStage.BEFORE);
 
@@ -1121,7 +1074,11 @@ public class BrokerService implements Closeable {
                                 topicEventsDispatcher
                                         .notifyOnCompletion(eventFuture, topicName.toString(), TopicEvent.LOAD);
                                 return res;
-                            }));
+                            });
+                        }
+                        topicEventsDispatcher.notify(topicName.toString(), TopicEvent.LOAD, EventStage.FAILURE);
+                        return CompletableFuture.completedFuture(Optional.empty());
+                    });
                 } else if (createIfMissing) {
                     return topics.computeIfAbsent(topicName.toString(), (name) -> {
                         topicEventsDispatcher.notify(topicName.toString(), TopicEvent.CREATE, EventStage.BEFORE);

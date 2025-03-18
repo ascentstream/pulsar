@@ -44,7 +44,6 @@ import org.apache.pulsar.client.api.MessageId;
 import org.apache.pulsar.client.api.Producer;
 import org.apache.pulsar.client.api.PulsarClient;
 import org.apache.pulsar.client.api.Schema;
-import org.apache.pulsar.client.api.SubscriptionInitialPosition;
 import org.apache.pulsar.client.impl.ProducerImpl;
 import org.apache.pulsar.common.policies.data.ClusterData;
 import org.apache.pulsar.common.policies.data.RetentionPolicies;
@@ -326,7 +325,6 @@ public class OneWayReplicatorTest extends OneWayReplicatorTestBase {
         enableReplication(topic1);
         // Verify: since the replication was started at latest, there is no message to consume.
         Consumer<String> c1 = client2.newConsumer(Schema.STRING).topic(topic1).subscriptionName(subscription1)
-                .subscriptionInitialPosition(SubscriptionInitialPosition.Earliest)
                 .subscribe();
         Message<String> msg1 = c1.receive(2, TimeUnit.SECONDS);
         assertNull(msg1);
@@ -348,7 +346,6 @@ public class OneWayReplicatorTest extends OneWayReplicatorTestBase {
         enableReplication(topic2);
         // Verify: since the replication was started at earliest, there is one message to consume.
         Consumer<String> c2 = client2.newConsumer(Schema.STRING).topic(topic2).subscriptionName(subscription1)
-                .subscriptionInitialPosition(SubscriptionInitialPosition.Earliest)
                 .subscribe();
         Message<String> msg2 = c2.receive(2, TimeUnit.SECONDS);
         assertNotNull(msg2);
@@ -371,7 +368,6 @@ public class OneWayReplicatorTest extends OneWayReplicatorTestBase {
         enableReplication(topic3);
         // Verify: since the replication was started at latest, there is no message to consume.
         Consumer<String> c3 = client2.newConsumer(Schema.STRING).topic(topic3).subscriptionName(subscription1)
-                .subscriptionInitialPosition(SubscriptionInitialPosition.Earliest)
                 .subscribe();
         Message<String> msg3 = c3.receive(2, TimeUnit.SECONDS);
         assertNull(msg3);

@@ -66,7 +66,6 @@ import org.apache.bookkeeper.mledger.impl.PositionImpl;
 import org.apache.pulsar.broker.BrokerTestUtil;
 import org.apache.pulsar.broker.PulsarService;
 import org.apache.pulsar.broker.service.BrokerServiceException.NamingException;
-import org.apache.pulsar.broker.service.BrokerServiceException.NotAllowedException;
 import org.apache.pulsar.broker.service.persistent.PersistentReplicator;
 import org.apache.pulsar.broker.service.persistent.PersistentTopic;
 import org.apache.pulsar.client.admin.PulsarAdmin;
@@ -1244,7 +1243,7 @@ public class ReplicatorTest extends ReplicatorTestBase {
             if (!isPartitionedTopic) {
                 fail("Topic creation should not fail without any partitioned topic");
             }
-            assertTrue(e.getCause() instanceof NotAllowedException);
+            assertTrue(e.getCause() instanceof NamingException);
         }
 
         // non-persistent topic test
