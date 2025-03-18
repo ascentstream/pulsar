@@ -44,6 +44,7 @@ import java.util.function.Supplier;
 import javax.servlet.ServletContext;
 import javax.servlet.http.HttpServletRequest;
 import javax.ws.rs.WebApplicationException;
+import javax.ws.rs.container.AsyncResponse;
 import javax.ws.rs.core.Context;
 import javax.ws.rs.core.Response;
 import javax.ws.rs.core.Response.Status;
@@ -70,6 +71,8 @@ import org.apache.pulsar.broker.resources.ResourceGroupResources;
 import org.apache.pulsar.broker.resources.TenantResources;
 import org.apache.pulsar.broker.resources.TopicResources;
 import org.apache.pulsar.broker.service.BrokerService;
+import org.apache.pulsar.broker.service.BrokerServiceException;
+import org.apache.pulsar.client.admin.PulsarAdminException;
 import org.apache.pulsar.client.api.PulsarClientException;
 import org.apache.pulsar.client.impl.PulsarServiceNameResolver;
 import org.apache.pulsar.common.naming.Constants;
@@ -90,6 +93,7 @@ import org.apache.pulsar.common.policies.data.TopicOperation;
 import org.apache.pulsar.common.policies.path.PolicyPath;
 import org.apache.pulsar.common.util.FutureUtil;
 import org.apache.pulsar.common.util.ObjectMapperFactory;
+import org.apache.pulsar.metadata.api.MetadataStoreException;
 import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
@@ -1203,6 +1207,23 @@ public abstract class PulsarWebResource {
         } catch (InterruptedException ex) {
             Thread.currentThread().interrupt();
             throw new RestException(ex);
+        }
+    }
+
+    protected static void resumeAsyncResponseExceptionally(AsyncResponse asyncResponse, Throwable exception) {
+        Throwable realCause = FutureUtil.unwrapCompletionException(exception);
+        if (realCause instanceof WebApplicationException) {
+            asyncResponse.resume(realCause);
+        } else if (realCause instanceof BrokerServiceException.NotAllowedException) {
+            asyncResponse.resume(new RestException(Status.CONFLICT, realCause));
+        } else if (realCause instanceof MetadataStoreException.NotFoundException) {
+            asyncResponse.resume(new RestException(Status.NOT_FOUND, realCause));
+        } else if (realCause instanceof MetadataStoreException.BadVersionException) {
+            asyncResponse.resume(new RestException(Status.CONFLICT, "Concurrent modification"));
+        } else if (realCause instanceof PulsarAdminException) {
+            asyncResponse.resume(new RestException(((PulsarAdminException) realCause)));
+        } else {
+            asyncResponse.resume(new RestException(realCause));
         }
     }
 }
