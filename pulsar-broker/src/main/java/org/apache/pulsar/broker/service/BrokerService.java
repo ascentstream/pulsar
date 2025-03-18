@@ -3007,7 +3007,8 @@ public class BrokerService implements Closeable {
                                                 return CompletableFuture.completedFuture(partitionedTopicMetadata);
                                             }
                                             // The partitioned topic might be created concurrently.
-                                            if (ex.getCause() instanceof MetadataStoreException.AlreadyExistsException) {
+                                            if (ex.getCause()
+                                                    instanceof MetadataStoreException.AlreadyExistsException) {
                                                 log.info(
                                                         "[{}] The partitioned topic is already created, try to "
                                                                 + "refresh "
