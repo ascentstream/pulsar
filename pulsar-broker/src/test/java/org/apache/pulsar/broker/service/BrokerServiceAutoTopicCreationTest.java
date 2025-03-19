@@ -436,7 +436,8 @@ public class BrokerServiceAutoTopicCreationTest extends BrokerTestBase{
     public void testDynamicConfigurationTopicAutoCreationNonPartitioned() throws PulsarAdminException, PulsarClientException {
         pulsar.getConfiguration().setAllowAutoTopicCreation(false);
         pulsar.getConfiguration().setAllowAutoTopicCreationType("partitioned");
-        final String namespaceName = "prop/ns-abc";
+        final String namespaceName = "prop/ns-abc" + System.currentTimeMillis();
+        admin.namespaces().createNamespace(namespaceName);
         final String topic = "persistent://" + namespaceName + "/test-dynamicConfiguration-topic-auto-creation-"
                 + UUID.randomUUID();
         // test enable AllowAutoTopicCreation, non-partitioned
@@ -458,7 +459,8 @@ public class BrokerServiceAutoTopicCreationTest extends BrokerTestBase{
         pulsar.getConfiguration().setAllowAutoTopicCreation(false);
         pulsar.getConfiguration().setAllowAutoTopicCreationType("non-partitioned");
         pulsar.getConfiguration().setMaxNumPartitionsPerPartitionedTopic(0);
-        final String namespaceName = "prop/ns-abc";
+        final String namespaceName = "prop/ns-abc" + System.currentTimeMillis();
+        admin.namespaces().createNamespace(namespaceName);
         final String topic = "persistent://" + namespaceName + "/test-dynamicConfiguration-topic-auto-creation-"
                 + UUID.randomUUID();
         // test enable AllowAutoTopicCreation, partitioned
@@ -484,7 +486,8 @@ public class BrokerServiceAutoTopicCreationTest extends BrokerTestBase{
         pulsar.getConfiguration().setAllowAutoTopicCreation(true);
         pulsar.getConfiguration().setAllowAutoTopicCreationType("partitioned");
         pulsar.getConfiguration().setMaxNumPartitionsPerPartitionedTopic(0);
-        final String namespaceName = "prop/ns-abc";
+        final String namespaceName = "prop/ns-abc" + System.currentTimeMillis();
+        admin.namespaces().createNamespace(namespaceName);
         String topic = "persistent://" + namespaceName + "/test-dynamicConfiguration-topic-auto-creation-"
                 + UUID.randomUUID();
         // test enable AllowAutoTopicCreation, partitioned when maxNumPartitionsPerPartitionedTopic < defaultNumPartitions

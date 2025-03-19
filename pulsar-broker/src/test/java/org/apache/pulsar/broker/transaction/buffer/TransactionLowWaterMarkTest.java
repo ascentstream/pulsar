@@ -147,7 +147,8 @@ public class TransactionLowWaterMarkTest extends TransactionTestBase {
 
         PartitionedTopicMetadata partitionedTopicMetadata =
                 ((PulsarClientImpl) pulsarClient).getLookup()
-                        .getPartitionedTopicMetadata(TopicName.TRANSACTION_COORDINATOR_ASSIGN, false).get();
+                        .getPartitionedTopicMetadata(TopicName.TRANSACTION_COORDINATOR_ASSIGN, false)
+                        .get();
         Transaction lowWaterMarkTxn = null;
         for (int i = 0; i < partitionedTopicMetadata.partitions; i++) {
             lowWaterMarkTxn = pulsarClient.newTransaction()
@@ -252,7 +253,8 @@ public class TransactionLowWaterMarkTest extends TransactionTestBase {
 
         PartitionedTopicMetadata partitionedTopicMetadata =
                 ((PulsarClientImpl) pulsarClient).getLookup()
-                        .getPartitionedTopicMetadata(TopicName.TRANSACTION_COORDINATOR_ASSIGN, false).get();
+                        .getPartitionedTopicMetadata(TopicName.TRANSACTION_COORDINATOR_ASSIGN, false)
+                        .get();
         Transaction lowWaterMarkTxn = null;
         for (int i = 0; i < partitionedTopicMetadata.partitions; i++) {
             lowWaterMarkTxn = pulsarClient.newTransaction()
