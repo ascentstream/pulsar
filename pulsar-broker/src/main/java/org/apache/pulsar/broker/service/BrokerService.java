@@ -957,15 +957,9 @@ public class BrokerService implements Closeable {
     }
 
     public CompletableFuture<Topic> getOrCreateTopic(final String topic) {
-        final TopicName topicName;
-        try {
-             topicName = TopicName.get(topic);
-        } catch (Throwable ex) {
-            return FutureUtil.failedFuture(ex);
-        }
-        return isAllowAutoTopicCreationAsync(topicName)
-                .thenCompose(isAllowAutoTopicCreation -> getTopic(topic, isAllowAutoTopicCreation)
-                        .thenApply(Optional::get));
+        return isAllowAutoTopicCreationAsync(topic)
+                .thenCompose(isAllowed -> getTopic(topic, isAllowed))
+                .thenApply(Optional::get);
     }
 
     public CompletableFuture<Optional<Topic>> getTopic(final String topic, boolean createIfMissing) {
@@ -3251,33 +3245,14 @@ public class BrokerService implements Closeable {
         cnxSet.forEach(consumer);
     }
 
-    /**
-     * @deprecated Avoid using the deprecated method
-     * #{@link org.apache.pulsar.broker.resources.NamespaceResources#getPoliciesIfCached(NamespaceName)}
-     * You can use #{@link BrokerService#isAllowAutoTopicCreationAsync(TopicName)}
-     */
-    @Deprecated
-    public boolean isAllowAutoTopicCreation(final String topic) {
+    public CompletableFuture<Boolean> isAllowAutoTopicCreationAsync(final String topic) {
         TopicName topicName = TopicName.get(topic);
-        return isAllowAutoTopicCreation(topicName);
-    }
-
-    /**
-     * @deprecated Avoid using the deprecated method
-     * #{@link org.apache.pulsar.broker.resources.NamespaceResources#getPoliciesIfCached(NamespaceName)}
-     * You can use #{@link BrokerService#isAllowAutoTopicCreationAsync(TopicName)}
-     */
-    @Deprecated
-    public boolean isAllowAutoTopicCreation(final TopicName topicName) {
-        Optional<Policies> policies =
-                pulsar.getPulsarResources().getNamespaceResources()
-                        .getPoliciesIfCached(topicName.getNamespaceObject());
-        return isAllowAutoTopicCreation(topicName, policies);
+        return isAllowAutoTopicCreationAsync(topicName);
     }
 
     public CompletableFuture<Boolean> isAllowAutoTopicCreationAsync(final TopicName topicName) {
         return pulsar.getPulsarResources().getNamespaceResources().getPoliciesAsync(topicName.getNamespaceObject())
-                .thenApply(policies -> isAllowAutoTopicCreation(topicName, policies));
+                .thenCompose(policies -> isAllowAutoTopicCreationAsync(topicName, policies));
     }
 
     public CompletableFuture<Boolean> isAllowAutoTopicCreationAsync(final TopicName topicName,
@@ -3291,29 +3266,21 @@ public class BrokerService implements Closeable {
         if (pulsar.getConfiguration().isSystemTopicEnabled() && isSystemTopic(topicName)) {
             return CompletableFuture.completedFuture(true);
         }
+        final boolean allowed;
         AutoTopicCreationOverride autoTopicCreationOverride = getAutoTopicCreationOverride(topicName, policies);
         if (autoTopicCreationOverride != null) {
-            return CompletableFuture.completedFuture(autoTopicCreationOverride.isAllowAutoTopicCreation());
+            allowed = autoTopicCreationOverride.isAllowAutoTopicCreation();
         } else {
-            return CompletableFuture.completedFuture(pulsar.getConfiguration().isAllowAutoTopicCreation());
+            allowed = pulsar.getConfiguration().isAllowAutoTopicCreation();
         }
-    }
 
-    public boolean isAllowAutoTopicCreation(final TopicName topicName, final Optional<Policies> policies) {
-        if (policies.isPresent() && policies.get().deleted) {
-            log.info("Preventing AutoTopicCreation on a namespace that is being deleted {}",
-                    topicName.getNamespaceObject());
-            return false;
-        }
-        //System topic can always be created automatically
-        if (pulsar.getConfiguration().isSystemTopicEnabled() && isSystemTopic(topicName)) {
-            return true;
-        }
-        AutoTopicCreationOverride autoTopicCreationOverride = getAutoTopicCreationOverride(topicName, policies);
-        if (autoTopicCreationOverride != null) {
-            return autoTopicCreationOverride.isAllowAutoTopicCreation();
+        if (allowed && topicName.isPartitioned()) {
+            // cannot re-create topic while it is being deleted
+            return pulsar.getPulsarResources().getNamespaceResources().getPartitionedTopicResources()
+                    .isPartitionedTopicBeingDeletedAsync(topicName)
+                    .thenApply(beingDeleted -> !beingDeleted);
         } else {
-            return pulsar.getConfiguration().isAllowAutoTopicCreation();
+            return CompletableFuture.completedFuture(allowed);
         }
     }
 

@@ -882,8 +882,9 @@ public class PersistentTopicsBase extends AdminResource {
                                     .thenCompose(unused -> internalRemovePartitionsTopicAsync(numPartitions, force));
                         })
                 // Only tries to delete the znode for partitioned topic when all its partitions are successfully deleted
-                ).thenCompose(__ -> namespaceResources()
-                                .getPartitionedTopicResources().deletePartitionedTopicAsync(topicName))
+                ).thenCompose(__ -> getPulsarResources().getNamespaceResources().getPartitionedTopicResources()
+                        .runWithMarkDeleteAsync(topicName, () -> namespaceResources()
+                                .getPartitionedTopicResources().deletePartitionedTopicAsync(topicName)))
                 .thenAccept(__ -> {
                     log.info("[{}] Deleted partitioned topic {}", clientAppId(), topicName);
                     asyncResponse.resume(Response.noContent().build());
@@ -916,6 +917,13 @@ public class PersistentTopicsBase extends AdminResource {
     }
 
     private CompletableFuture<Void> internalRemovePartitionsTopicAsync(int numPartitions, boolean force) {
+        return pulsar().getPulsarResources().getNamespaceResources().getPartitionedTopicResources()
+                .runWithMarkDeleteAsync(topicName,
+                    () -> internalRemovePartitionsTopicNoAutocreationDisableAsync(numPartitions, force));
+    }
+
+    private CompletableFuture<Void> internalRemovePartitionsTopicNoAutocreationDisableAsync(int numPartitions,
+                                                                                            boolean force) {
         return FutureUtil.waitForAll(IntStream.range(0, numPartitions)
                 .mapToObj(i -> {
                     TopicName topicNamePartition = topicName.getPartition(i);
@@ -2518,13 +2526,12 @@ public class PersistentTopicsBase extends AdminResource {
             MessageIdImpl targetMessageId, boolean authoritative, boolean replicated,
             Map<String, String> properties) {
 
-        pulsar().getBrokerService().isAllowAutoTopicCreationAsync(topicName)
-            .thenCompose(isAllowAutoTopicCreation -> validateTopicOwnershipAsync(topicName, authoritative)
-                    .thenCompose(__ -> {
-                        validateTopicOperation(topicName, TopicOperation.SUBSCRIBE, subscriptionName);
-                        return pulsar().getBrokerService().getTopic(topicName.toString(), isAllowAutoTopicCreation);
-                    }))
-           .thenApply(optTopic -> {
+        validateTopicOwnershipAsync(topicName, authoritative)
+        .thenCompose(__ -> validateTopicOperationAsync(topicName, TopicOperation.SUBSCRIBE, subscriptionName))
+        .thenCompose(__ -> pulsar().getBrokerService().isAllowAutoTopicCreationAsync(topicName))
+        .thenCompose(isAllowAutoTopicCreation -> pulsar().getBrokerService()
+                .getTopic(topicName.toString(), isAllowAutoTopicCreation))
+        .thenApply(optTopic -> {
             if (optTopic.isPresent()) {
                 return optTopic.get();
             } else {

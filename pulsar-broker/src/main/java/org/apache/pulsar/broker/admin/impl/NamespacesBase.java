@@ -637,17 +637,12 @@ public abstract class NamespacesBase extends AdminResource {
         if (CollectionUtils.isEmpty(topicNames)) {
             return CompletableFuture.completedFuture(null);
         }
-        PulsarAdmin admin;
-        try {
-            admin = pulsar().getAdminClient();
-        } catch (Exception ex) {
-            log.error("[{}] Get admin client error when preparing to delete topics.", clientAppId(), ex);
-            return FutureUtil.failedFuture(ex);
-        }
         List<CompletableFuture<Void>> futures = new ArrayList<>();
         for (String topicName : topicNames) {
             TopicName tn = TopicName.get(topicName);
-            futures.add(admin.topics().deletePartitionedTopicAsync(topicName, true, true));
+            futures.add(pulsar().getPulsarResources().getNamespaceResources().getPartitionedTopicResources()
+                    .runWithMarkDeleteAsync(tn,
+                            () -> namespaceResources().getPartitionedTopicResources().deletePartitionedTopicAsync(tn)));
         }
         return FutureUtil.waitForAll(futures);
     }
