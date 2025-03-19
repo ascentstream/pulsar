@@ -369,8 +369,10 @@ public abstract class NamespacesBase extends AdminResource {
         }
         List<CompletableFuture<Void>> futures = new ArrayList<>();
         for (String topicName : topicNames) {
-            futures.add(namespaceResources().getPartitionedTopicResources()
-                    .deletePartitionedTopicAsync(TopicName.get(topicName)));
+            TopicName tn = TopicName.get(topicName);
+            futures.add(pulsar().getPulsarResources().getNamespaceResources().getPartitionedTopicResources()
+                    .runWithMarkDeleteAsync(tn,
+                            () -> namespaceResources().getPartitionedTopicResources().deletePartitionedTopicAsync(tn)));
         }
         return FutureUtil.waitForAll(futures);
     }
@@ -442,7 +444,8 @@ public abstract class NamespacesBase extends AdminResource {
                                                     replClusterUrl = new URL(replClusterData.getServiceUrlTls());
                                                 } else {
                                                     throw new RestException(Status.PRECONDITION_FAILED,
-                                                            "The replication cluster does not provide TLS encrypted service");
+                                                            "The replication cluster does not provide TLS encrypted "
+                                                                    + "service");
                                                 }
                                             } catch (MalformedURLException checkedEx) {
                                                 throw new RestException(checkedEx);

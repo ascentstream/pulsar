@@ -101,6 +101,8 @@ public class ProducerConfigurationData implements Serializable, Cloneable {
 
     private SortedMap<String, String> properties = new TreeMap<>();
 
+    private boolean isNonPartitionedTopicExpected;
+
     private String initialSubscriptionName = null;
 
     /**

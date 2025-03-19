@@ -145,6 +145,11 @@ public class PersistentReplicator extends AbstractReplicator
 
         cursor.cancelPendingReadRequest();
         HAVE_PENDING_READ_UPDATER.set(this, FALSE);
+        if (!(producer instanceof ProducerImpl)) {
+            log.error("[{}] The partitions count between two clusters is not the same, the replicator can not be"
+                    + " created successfully: {}", replicatorId);
+            throw new ClassCastException(producer.getClass().getName() + " can not be cast to ProducerImpl");
+        }
         this.producer = (ProducerImpl) producer;
 
         if (STATE_UPDATER.compareAndSet(this, State.Starting, State.Started)) {
