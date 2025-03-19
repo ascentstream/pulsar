@@ -76,4 +76,4 @@ jobs:
 
       - name: build package
         if: ${{ steps.check_changes.outputs.docs_only != 'true' }}
-        run: mvn -B clean install -DskipTests
+        run: mvn -B clean install -DskipTests -T 1C
