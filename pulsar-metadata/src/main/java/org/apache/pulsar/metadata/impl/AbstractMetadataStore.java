@@ -231,6 +231,7 @@ public abstract class AbstractMetadataStore implements MetadataStoreExtended, Co
         if (!isValidPath(path)) {
             return FutureUtil.failedFuture(new MetadataStoreException.InvalidPathException(path));
         }
+        log.info("Deleting path: {} (v. {})", path, expectedVersion);
         // Ensure caches are invalidated before the operation is confirmed
         return storeDelete(path, expectedVersion)
                 .thenRun(() -> {
@@ -241,24 +242,22 @@ public abstract class AbstractMetadataStore implements MetadataStoreExtended, Co
                         childrenCache.synchronous().invalidate(parent);
                     }
 
-                    metadataCaches.forEach(c -> c.invalidate(path));
-                });
+            metadataCaches.forEach(c -> c.invalidate(path));
+            log.info("Deleted path: {} (v. {})", path, expectedVersion);
+        });
     }
 
     @Override
     public CompletableFuture<Void> deleteRecursive(String path) {
+        log.info("Deleting recursively path: {}", path);
         return getChildren(path)
                 .thenCompose(children -> FutureUtil.waitForAll(
                         children.stream()
                                 .map(child -> deleteRecursive(path + "/" + child))
                                 .collect(Collectors.toList())))
-                .thenCompose(__ -> exists(path))
-                .thenCompose(exists -> {
-                    if (exists) {
-                        return delete(path, Optional.empty());
-                    } else {
-                        return CompletableFuture.completedFuture(null);
-                    }
+                .thenCompose(__ -> {
+                    log.info("After deleting all children, now deleting path: {}", path);
+                    return deleteIfExists(path, Optional.empty());
                 });
     }
 

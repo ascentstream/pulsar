@@ -79,37 +79,19 @@ public class TopicResources {
 
     public CompletableFuture<Void> clearNamespacePersistence(NamespaceName ns) {
         String path = MANAGED_LEDGER_PATH + "/" + ns;
-        return store.exists(path)
-                .thenCompose(exists -> {
-                    if (exists) {
-                        return store.delete(path, Optional.empty());
-                    } else {
-                        return CompletableFuture.completedFuture(null);
-                    }
-                });
+        log.info("Clearing namespace persistence for namespace: {}, path {}", ns, path);
+        return store.deleteIfExists(path, Optional.empty());
     }
 
     public CompletableFuture<Void> clearDomainPersistence(NamespaceName ns) {
         String path = MANAGED_LEDGER_PATH + "/" + ns + "/persistent";
-        return store.exists(path)
-                .thenCompose(exists -> {
-                    if (exists) {
-                        return store.delete(path, Optional.empty());
-                    } else {
-                        return CompletableFuture.completedFuture(null);
-                    }
-                });
+        log.info("Clearing domain persistence for namespace: {}, path {}", ns, path);
+        return store.deleteIfExists(path, Optional.empty());
     }
 
     public CompletableFuture<Void> clearTenantPersistence(String tenant) {
         String path = MANAGED_LEDGER_PATH + "/" + tenant;
-        return store.exists(path)
-                .thenCompose(exists -> {
-                    if (exists) {
-                        return store.delete(path, Optional.empty());
-                    } else {
-                        return CompletableFuture.completedFuture(null);
-                    }
-                });
+        log.info("Clearing tenant persistence for tenant: {}, path {}", tenant, path);
+        return store.deleteRecursive(path);
     }
 }
