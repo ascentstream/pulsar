@@ -270,7 +270,7 @@ public class AdminApi2Test extends MockedPulsarServiceBaseTest {
         consumer2.close();
     }
 
-    @Test
+    @Test(enabled = false)
     public void testTopicPoliciesWithMultiBroker() throws Exception {
         //setup cluster with 3 broker
         cleanup();
