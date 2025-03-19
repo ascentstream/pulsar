@@ -151,6 +151,8 @@ public class MultiTopicsConsumerImplTest {
         when(clientMock.getPartitionedTopicMetadata(any(), anyBoolean(), anyBoolean()))
                 .thenAnswer(invocation -> createDelayedCompletedFuture(
                 new PartitionedTopicMetadata(), completionDelayMillis));
+        when(clientMock.<byte[]>preProcessSchemaBeforeSubscribe(any(), any(), any()))
+                .thenReturn(CompletableFuture.completedFuture(schema));
         MultiTopicsConsumerImpl<byte[]> impl = new MultiTopicsConsumerImpl<byte[]>(
                 clientMock, consumerConfData, executorProvider,
                 new CompletableFuture<>(), schema, null, true);
