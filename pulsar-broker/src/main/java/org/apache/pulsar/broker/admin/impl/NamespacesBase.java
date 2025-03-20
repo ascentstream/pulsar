@@ -1299,8 +1299,7 @@ public abstract class NamespacesBase extends AdminResource {
         validateSuperUserAccess();
         try {
             updatePolicies(namespaceName, policies -> {
-                policies.replicatorDispatchRate.remove(
-                        StringUtils.isNotEmpty(cluster) ? cluster : pulsar().getConfiguration().getClusterName());
+                policies.replicatorDispatchRate.remove(getReplicatorDispatchRateKey(cluster));
                 return policies;
             });
             log.info("[{}] Successfully delete the replicatorDispatchRate for cluster on namespace {}", clientAppId(),
@@ -1317,9 +1316,7 @@ public abstract class NamespacesBase extends AdminResource {
         log.info("[{}] Set namespace replicator dispatch-rate {}/{}", clientAppId(), namespaceName, dispatchRate);
         try {
             updatePolicies(namespaceName, policies -> {
-                policies.replicatorDispatchRate.put(
-                        StringUtils.isNotEmpty(cluster) ? cluster : pulsar().getConfiguration().getClusterName(),
-                        dispatchRate);
+                policies.replicatorDispatchRate.put(getReplicatorDispatchRateKey(cluster), dispatchRate);
                 return policies;
             });
             log.info("[{}] Successfully updated the replicatorDispatchRate for cluster on namespace {}", clientAppId(),
@@ -1335,8 +1332,7 @@ public abstract class NamespacesBase extends AdminResource {
         validateNamespacePolicyOperation(namespaceName, PolicyName.REPLICATION_RATE, PolicyOperation.READ);
 
         Policies policies = getNamespacePolicies(namespaceName);
-        return policies.replicatorDispatchRate.get(
-                StringUtils.isNotEmpty(cluster) ? cluster : pulsar().getConfiguration().getClusterName());
+        return policies.replicatorDispatchRate.get(getReplicatorDispatchRateKey(cluster));
     }
 
     protected void internalSetBacklogQuota(BacklogQuotaType backlogQuotaType, BacklogQuota backlogQuota) {

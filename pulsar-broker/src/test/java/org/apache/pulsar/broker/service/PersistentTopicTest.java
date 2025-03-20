@@ -573,16 +573,12 @@ public class PersistentTopicTest extends MockedBookKeeperTestCase {
     @Test
     public void testMaxProducersForBroker() throws Exception {
         // set max clients
-        ServiceConfiguration svcConfig = spy(ServiceConfiguration.class);
-        doReturn(2).when(svcConfig).getMaxProducersPerTopic();
-        doReturn(svcConfig).when(pulsar).getConfiguration();
+        pulsar.getConfiguration().setMaxProducersPerTopic(2);
         testMaxProducers();
     }
 
     @Test
     public void testMaxProducersForNamespace() throws Exception {
-        ServiceConfiguration svcConfig = spy(ServiceConfiguration.class);
-        doReturn(svcConfig).when(pulsar).getConfiguration();
         // set max clients
         Policies policies = new Policies();
         policies.max_producers_per_topic = 2;
@@ -618,9 +614,7 @@ public class PersistentTopicTest extends MockedBookKeeperTestCase {
     @Test
     public void testMaxSameAddressProducers() throws Exception {
         // set max clients
-        ServiceConfiguration svcConfig = spy(ServiceConfiguration.class);
-        doReturn(2).when(svcConfig).getMaxSameAddressProducersPerTopic();
-        doReturn(svcConfig).when(pulsar).getConfiguration();
+        pulsar.getConfiguration().setMaxSameAddressProducersPerTopic(2);
 
         PersistentTopic topic = new PersistentTopic(successTopicName, ledgerMock, brokerService);
 
@@ -932,19 +926,14 @@ public class PersistentTopicTest extends MockedBookKeeperTestCase {
     @Test
     public void testMaxConsumersSharedForBroker() throws Exception {
         // set max clients
-        ServiceConfiguration svcConfig = spy(ServiceConfiguration.class);
-        doReturn(2).when(svcConfig).getMaxConsumersPerSubscription();
-        doReturn(3).when(svcConfig).getMaxConsumersPerTopic();
-        doReturn(svcConfig).when(pulsar).getConfiguration();
+        pulsar.getConfiguration().setMaxConsumersPerSubscription(2);
+        pulsar.getConfiguration().setMaxConsumersPerTopic(3);
 
         testMaxConsumersShared();
     }
 
     @Test
     public void testMaxConsumersSharedForNamespace() throws Exception {
-        ServiceConfiguration svcConfig = spy(ServiceConfiguration.class);
-        doReturn(svcConfig).when(pulsar).getConfiguration();
-
         // set max clients
         Policies policies = new Policies();
         policies.max_consumers_per_subscription = 2;
@@ -1041,6 +1030,7 @@ public class PersistentTopicTest extends MockedBookKeeperTestCase {
     public void testMaxConsumersFailoverForBroker() throws Exception {
         // set max clients
         ServiceConfiguration svcConfig = spy(ServiceConfiguration.class);
+        svcConfig.setClusterName("test-cluster");
         doReturn(2).when(svcConfig).getMaxConsumersPerSubscription();
         doReturn(3).when(svcConfig).getMaxConsumersPerTopic();
         doReturn(svcConfig).when(pulsar).getConfiguration();
@@ -1050,9 +1040,6 @@ public class PersistentTopicTest extends MockedBookKeeperTestCase {
 
     @Test
     public void testMaxConsumersFailoverForNamespace() throws Exception {
-        ServiceConfiguration svcConfig = spy(ServiceConfiguration.class);
-        doReturn(svcConfig).when(pulsar).getConfiguration();
-
         // set max clients
         Policies policies = new Policies();
         policies.max_consumers_per_subscription = 2;
@@ -1089,9 +1076,7 @@ public class PersistentTopicTest extends MockedBookKeeperTestCase {
     @Test
     public void testMaxSameAddressConsumers() throws Exception {
         // set max clients
-        ServiceConfiguration svcConfig = spy(ServiceConfiguration.class);
-        doReturn(2).when(svcConfig).getMaxSameAddressConsumersPerTopic();
-        doReturn(svcConfig).when(pulsar).getConfiguration();
+        pulsar.getConfiguration().setMaxSameAddressConsumersPerTopic(2);
 
         PersistentTopic topic = new PersistentTopic(successTopicName, ledgerMock, brokerService);
         PersistentSubscription sub1 = new PersistentSubscription(topic, "sub1", cursorMock, false);
@@ -2152,8 +2137,6 @@ public class PersistentTopicTest extends MockedBookKeeperTestCase {
 
     @Test
     public void testTopicFencingTimeout() throws Exception {
-        ServiceConfiguration svcConfig = spy(ServiceConfiguration.class);
-        doReturn(svcConfig).when(pulsar).getConfiguration();
         PersistentTopic topic = new PersistentTopic(successTopicName, ledgerMock, brokerService);
 
         Method fence = PersistentTopic.class.getDeclaredMethod("fence");
@@ -2168,7 +2151,7 @@ public class PersistentTopicTest extends MockedBookKeeperTestCase {
         Field isClosingOrDeletingField = PersistentTopic.class.getDeclaredField("isClosingOrDeleting");
         isClosingOrDeletingField.setAccessible(true);
 
-        doReturn(10).when(svcConfig).getTopicFencingTimeoutSeconds();
+        pulsar.getConfiguration().setTopicFencingTimeoutSeconds(10);
         fence.invoke(topic);
         unfence.invoke(topic);
         ScheduledFuture<?> fencedTopicMonitoringTask = (ScheduledFuture<?>) fencedTopicMonitoringTaskField.get(topic);
@@ -2177,7 +2160,7 @@ public class PersistentTopicTest extends MockedBookKeeperTestCase {
         assertFalse((boolean) isFencedField.get(topic));
         assertFalse((boolean) isClosingOrDeletingField.get(topic));
 
-        doReturn(1).when(svcConfig).getTopicFencingTimeoutSeconds();
+        pulsar.getConfiguration().setTopicFencingTimeoutSeconds(1);
         fence.invoke(topic);
         Thread.sleep(2000);
         fencedTopicMonitoringTask = (ScheduledFuture<?>) fencedTopicMonitoringTaskField.get(topic);
