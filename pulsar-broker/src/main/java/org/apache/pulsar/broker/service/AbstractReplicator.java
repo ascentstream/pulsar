@@ -20,12 +20,16 @@ package org.apache.pulsar.broker.service;
 
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReferenceFieldUpdater;
 import org.apache.bookkeeper.mledger.Position;
 import org.apache.pulsar.broker.PulsarServerException;
 import org.apache.pulsar.broker.service.BrokerServiceException.NamingException;
 import org.apache.pulsar.broker.service.BrokerServiceException.TopicBusyException;
+import org.apache.pulsar.client.admin.PulsarAdmin;
+import org.apache.pulsar.client.admin.PulsarAdminException.ConflictException;
+import org.apache.pulsar.client.admin.PulsarAdminException.NotFoundException;
 import org.apache.pulsar.client.api.MessageRoutingMode;
 import org.apache.pulsar.client.api.ProducerBuilder;
 import org.apache.pulsar.client.api.Schema;
@@ -34,6 +38,7 @@ import org.apache.pulsar.client.impl.ProducerBuilderImpl;
 import org.apache.pulsar.client.impl.ProducerImpl;
 import org.apache.pulsar.client.impl.PulsarClientImpl;
 import org.apache.pulsar.common.naming.TopicName;
+import org.apache.pulsar.common.partition.PartitionedTopicMetadata;
 import org.apache.pulsar.common.util.FutureUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -45,6 +50,7 @@ public abstract class AbstractReplicator implements Replicator {
     protected final String localCluster;
     protected final String remoteCluster;
     protected final PulsarClientImpl replicationClient;
+    protected final PulsarAdmin replicationAdmin;
     protected final PulsarClientImpl client;
     protected String replicatorId;
 
@@ -69,7 +75,8 @@ public abstract class AbstractReplicator implements Replicator {
     }
 
     public AbstractReplicator(Topic localTopic, String replicatorPrefix, String localCluster, String remoteCluster,
-                              BrokerService brokerService, PulsarClientImpl replicationClient)
+                              BrokerService brokerService, PulsarClientImpl replicationClient,
+                              PulsarAdmin replicationAdmin)
             throws PulsarServerException {
         this.brokerService = brokerService;
         this.localTopic = localTopic;
@@ -78,6 +85,7 @@ public abstract class AbstractReplicator implements Replicator {
         this.localCluster = localCluster.intern();
         this.remoteCluster = remoteCluster.intern();
         this.replicationClient = replicationClient;
+        this.replicationAdmin = replicationAdmin;
         this.client = (PulsarClientImpl) brokerService.pulsar().getClient();
         this.producer = null;
         this.producerQueueSize = brokerService.pulsar().getConfiguration().getReplicationProducerQueueSize();
@@ -141,28 +149,101 @@ public abstract class AbstractReplicator implements Replicator {
         }
 
         log.info("[{}][{} -> {}] Starting replicator", topicName, localCluster, remoteCluster);
-        // Force only replicate messages to a non-partitioned topic, to avoid auto-create a partitioned topic on
-        // the remote cluster.
-        ProducerBuilderImpl builderImpl = (ProducerBuilderImpl) producerBuilder;
-        builderImpl.getConf().setNonPartitionedTopicExpected(true);
-        producerBuilder.createAsync().thenAccept(producer -> {
-            readEntries(producer);
-        }).exceptionally(ex -> {
-            if (STATE_UPDATER.compareAndSet(this, State.Starting, State.Stopped)) {
-                long waitTimeMs = backOff.next();
-                log.warn("[{}][{} -> {}] Failed to create remote producer ({}), retrying in {} s", topicName,
-                        localCluster, remoteCluster, ex.getMessage(), waitTimeMs / 1000.0);
 
-                // BackOff before retrying
-                brokerService.executor().schedule(this::checkTopicActiveAndRetryStartProducer, waitTimeMs,
-                        TimeUnit.MILLISECONDS);
-            } else {
-                log.warn("[{}][{} -> {}] Failed to create remote producer. Replicator state: {}", topicName,
-                        localCluster, remoteCluster, STATE_UPDATER.get(this), ex);
-            }
-            return null;
-        });
+        TopicName completeTopicName = TopicName.get(topicName);
+        TopicName baseTopicName = TopicName.get(completeTopicName.getPartitionedTopicName());
+        client.getLookup().getPartitionedTopicMetadata(baseTopicName, false, true)
+                .thenCompose((localMetadata) -> replicationAdmin.topics()
+                        // https://github.com/apache/pulsar/pull/4963
+                        // Use the admin API instead of the client to fetch partitioned metadata
+                        // to prevent automatic topic creation on the remote cluster.
+                        // PIP-344 introduced an option to disable auto-creation when fetching partitioned
+                        // topic metadata via the client, but this requires Pulsar 3.0.x.
+                        // This change is a workaround to support Pulsar 2.4.2.
+                        .getPartitionedTopicMetadataAsync(baseTopicName.toString())
+                        .exceptionally(ex -> {
+                            Throwable throwable = FutureUtil.unwrapCompletionException(ex);
+                            if (throwable instanceof NotFoundException) {
+                                // Topic does not exist on the remote cluster.
+                                return new PartitionedTopicMetadata(0);
+                            }
+                            throw new CompletionException("Failed to get partitioned topic metadata", throwable);
+                        })
+                        .thenCompose(remoteMetadata -> {
+                            if (log.isDebugEnabled()) {
+                                log.debug("[{}][{} -> {}] Local metadata: {} Remote metadata: {}", topicName,
+                                        localCluster, remoteCluster, localMetadata, remoteMetadata);
+                            }
+                            if (localMetadata.partitions == 0) {
+                                // Non-partitioned topic
+                                if (localMetadata.partitions == remoteMetadata.partitions) {
+                                    return replicationAdmin.topics().createNonPartitionedTopicAsync(topicName)
+                                            .exceptionally(ex -> {
+                                                Throwable throwable = FutureUtil.unwrapCompletionException(ex);
+                                                if (throwable instanceof ConflictException) {
+                                                    // Topic already exists on the remote cluster.
+                                                    return null;
+                                                } else {
+                                                    throw new CompletionException(
+                                                            "Failed to create non-partitioned topic", throwable);
+                                                }
+                                            });
+                                } else {
+                                    log.error("[{}][{} -> {}] Topic type is not matched: local partitions: {}, remote "
+                                                    + "partitions: {}",
+                                            topicName, localCluster, remoteCluster, localMetadata.partitions,
+                                            remoteMetadata.partitions);
+                                    return FutureUtil.failedFuture(new PulsarServerException(
+                                            "Topic type is not matched between local and remote cluster."));
+                                }
+                            } else {
+                                if (remoteMetadata.partitions == 0) {
+                                    // We maybe need to create a partitioned topic on remote cluster.
+                                    return replicationAdmin.topics()
+                                            .createPartitionedTopicAsync(baseTopicName.toString(),
+                                                    localMetadata.partitions)
+                                            .exceptionally(ex -> {
+                                                Throwable throwable = FutureUtil.unwrapCompletionException(ex);
+                                                if (throwable instanceof ConflictException) {
+                                                    // Topic already exists on the remote cluster.
+                                                    return null;
+                                                } else {
+                                                    throw new CompletionException(
+                                                            "Failed to create partitioned topic", throwable);
+                                                }
+                                            });
+                                }
+                                if (localMetadata.partitions > remoteMetadata.partitions) {
+                                    return replicationAdmin.topics()
+                                            .updatePartitionedTopicAsync(baseTopicName.toString(),
+                                                    localMetadata.partitions);
+                                }
+                            }
+                            return CompletableFuture.completedFuture(null);
+                        }))
+                .thenCompose((__) -> {
+                    // Force only replicate messages to a non-partitioned topic, to avoid auto-create a partitioned
+                    // topic on the remote cluster.
+                    ProducerBuilderImpl builderImpl = (ProducerBuilderImpl) producerBuilder;
+                    builderImpl.getConf().setNonPartitionedTopicExpected(true);
+                    return producerBuilder.createAsync();
+                })
+                .thenAccept(this::readEntries)
+                .exceptionally(ex -> {
+                    if (STATE_UPDATER.compareAndSet(this, State.Starting, State.Stopped)) {
+                        long waitTimeMs = backOff.next();
+                        log.warn("[{}][{} -> {}] Failed to create remote producer ({}), retrying in {} s", topicName,
+                                localCluster, remoteCluster, ex.getMessage(), waitTimeMs / 1000.0);
 
+                        // BackOff before retrying
+                        brokerService.executor().schedule(this::checkTopicActiveAndRetryStartProducer, waitTimeMs,
+                                TimeUnit.MILLISECONDS);
+                    } else {
+                        log.warn("[{}][{} -> {}] Failed to create remote producer. Replicator state: {}", topicName,
+                                localCluster, remoteCluster, STATE_UPDATER.get(this), ex);
+                    }
+                    return null;
+                });
     }
 
     protected void checkTopicActiveAndRetryStartProducer() {

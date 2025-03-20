@@ -110,9 +110,12 @@ import org.apache.pulsar.broker.service.persistent.PersistentDispatcherSingleAct
 import org.apache.pulsar.broker.service.persistent.PersistentReplicator;
 import org.apache.pulsar.broker.service.persistent.PersistentSubscription;
 import org.apache.pulsar.broker.service.persistent.PersistentTopic;
+import org.apache.pulsar.client.admin.PulsarAdmin;
+import org.apache.pulsar.client.admin.Topics;
 import org.apache.pulsar.client.api.MessageId;
 import org.apache.pulsar.client.api.PulsarClient;
 import org.apache.pulsar.client.api.Schema;
+import org.apache.pulsar.client.impl.LookupService;
 import org.apache.pulsar.client.impl.PulsarClientImpl;
 import org.apache.pulsar.client.impl.conf.ProducerConfigurationData;
 import org.apache.pulsar.common.allocator.PulsarByteBufAllocator;
@@ -127,6 +130,8 @@ import org.apache.pulsar.common.api.proto.ProducerAccessMode;
 import org.apache.pulsar.common.naming.NamespaceBundle;
 import org.apache.pulsar.common.naming.NamespaceName;
 import org.apache.pulsar.common.naming.TopicName;
+import org.apache.pulsar.common.partition.PartitionedTopicMetadata;
+import org.apache.pulsar.common.policies.data.ClusterData;
 import org.apache.pulsar.common.policies.data.Policies;
 import org.apache.pulsar.common.policies.data.TopicPolicies;
 import org.apache.pulsar.common.policies.data.stats.SubscriptionStatsImpl;
@@ -187,7 +192,12 @@ public class PersistentTopicTest extends MockedBookKeeperTestCase {
 
         mlFactoryMock = mock(ManagedLedgerFactory.class);
         doReturn(mlFactoryMock).when(pulsar).getManagedLedgerFactory();
-        doReturn(mock(PulsarClientImpl.class)).when(pulsar).getClient();
+        PulsarClientImpl pulsarClient = mock(PulsarClientImpl.class);
+        LookupService lookupService = mock(LookupService.class);
+        doReturn(CompletableFuture.completedFuture(new PartitionedTopicMetadata(0))).when(lookupService)
+                .getPartitionedTopicMetadata(any(), anyBoolean(), anyBoolean());
+        doReturn(lookupService).when(pulsarClient).getLookup();
+        doReturn(pulsarClient).when(pulsar).getClient();
 
         doAnswer(invocation -> {
             DeleteLedgerCallback deleteLedgerCallback = invocation.getArgument(1);
@@ -1799,11 +1809,15 @@ public class PersistentTopicTest extends MockedBookKeeperTestCase {
         ManagedCursor cursor = mock(ManagedCursorImpl.class);
         doReturn(remoteCluster).when(cursor).getName();
         brokerService.getReplicationClients().put(remoteCluster, client);
+        Optional<ClusterData> clusterData = brokerService.pulsar().getPulsarResources().getClusterResources()
+                .getCluster(remoteCluster);
+        @Cleanup
+        PulsarAdmin admin = spy(PulsarAdmin.builder().serviceHttpUrl(brokerUrl.toString()).build());
+        brokerService.getClusterAdmins().put(remoteCluster, admin);
         PersistentReplicator replicator = spy(
                 new PersistentReplicator(topic, cursor, localCluster, remoteCluster, brokerService,
-                        (PulsarClientImpl) brokerService.getReplicationClient(remoteCluster,
-                                brokerService.pulsar().getPulsarResources().getClusterResources()
-                                .getCluster(remoteCluster))));
+                        (PulsarClientImpl) brokerService.getReplicationClient(remoteCluster, clusterData),
+                        brokerService.getClusterPulsarAdmin(remoteCluster, clusterData)));
         replicatorMap.put(remoteReplicatorName, replicator);
 
         String cursorName = PersistentReplicator.getReplicatorName(topic.getReplicatorPrefix(), remoteReplicatorName);
@@ -1848,11 +1862,21 @@ public class PersistentTopicTest extends MockedBookKeeperTestCase {
 
         ManagedCursor cursor = mock(ManagedCursorImpl.class);
         doReturn(remoteCluster).when(cursor).getName();
+
+        @Cleanup
+        PulsarAdmin admin = mock(PulsarAdmin.class);
+        Topics topics = mock(Topics.class);
+        doReturn(topics).when(admin).topics();
+        doReturn(CompletableFuture.completedFuture(new PartitionedTopicMetadata(0))).when(topics)
+                .getPartitionedTopicMetadataAsync(anyString());
+        doReturn(CompletableFuture.completedFuture(null)).when(topics).createNonPartitionedTopicAsync(anyString());
         brokerService.getReplicationClients().put(remoteCluster, client);
+        brokerService.getClusterAdmins().put(remoteCluster, admin);
+        Optional<ClusterData> clusterData = brokerService.pulsar().getPulsarResources().getClusterResources()
+                .getCluster(remoteCluster);
         PersistentReplicator replicator = new PersistentReplicator(topic, cursor, localCluster, remoteCluster,
-                brokerService, (PulsarClientImpl) brokerService.getReplicationClient(remoteCluster,
-                brokerService.pulsar().getPulsarResources().getClusterResources()
-                        .getCluster(remoteCluster)));
+                brokerService, (PulsarClientImpl) brokerService.getReplicationClient(remoteCluster, clusterData),
+                brokerService.getClusterPulsarAdmin(remoteCluster, clusterData));
 
         // PersistentReplicator constructor calls startProducer()
         verify(clientImpl)
