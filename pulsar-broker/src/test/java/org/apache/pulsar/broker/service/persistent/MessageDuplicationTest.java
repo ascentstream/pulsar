@@ -229,6 +229,7 @@ public class MessageDuplicationTest {
 
         PulsarService pulsarService = mock(PulsarService.class);
         ServiceConfiguration serviceConfiguration = new ServiceConfiguration();
+        serviceConfiguration.setClusterName("test-cluster");
         serviceConfiguration.setBrokerDeduplicationEntriesInterval(BROKER_DEDUPLICATION_ENTRIES_INTERVAL);
         serviceConfiguration.setBrokerDeduplicationMaxNumberOfProducers(BROKER_DEDUPLICATION_MAX_NUMBER_PRODUCERS);
         serviceConfiguration.setReplicatorPrefix(REPLICATOR_PREFIX);
