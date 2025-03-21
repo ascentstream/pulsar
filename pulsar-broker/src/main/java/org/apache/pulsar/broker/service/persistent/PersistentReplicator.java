@@ -54,6 +54,7 @@ import org.apache.pulsar.broker.service.BrokerService;
 import org.apache.pulsar.broker.service.BrokerServiceException.TopicBusyException;
 import org.apache.pulsar.broker.service.Replicator;
 import org.apache.pulsar.broker.service.persistent.DispatchRateLimiter.Type;
+import org.apache.pulsar.client.admin.PulsarAdmin;
 import org.apache.pulsar.client.api.MessageId;
 import org.apache.pulsar.client.api.PulsarClientException;
 import org.apache.pulsar.client.impl.Backoff;
@@ -116,10 +117,11 @@ public class PersistentReplicator extends AbstractReplicator
     private volatile boolean fetchSchemaInProgress = false;
 
     public PersistentReplicator(PersistentTopic topic, ManagedCursor cursor, String localCluster, String remoteCluster,
-                                BrokerService brokerService, PulsarClientImpl replicationClient)
+                                BrokerService brokerService, PulsarClientImpl replicationClient,
+                                PulsarAdmin replicationAdmin)
             throws PulsarServerException {
         super(topic, topic.getReplicatorPrefix(), localCluster, remoteCluster, brokerService,
-                replicationClient);
+                replicationClient, replicationAdmin);
         this.topic = topic;
         this.cursor = cursor;
         this.expiryMonitor = new PersistentMessageExpiryMonitor((PersistentTopic) localTopic,

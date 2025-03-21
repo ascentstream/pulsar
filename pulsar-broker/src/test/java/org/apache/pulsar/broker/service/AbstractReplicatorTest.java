@@ -22,6 +22,7 @@ import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.anyBoolean;
 import static org.mockito.Mockito.anyInt;
 import static org.mockito.Mockito.anyString;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 import io.netty.channel.DefaultEventLoop;
@@ -32,17 +33,22 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import lombok.Cleanup;
 import org.apache.bookkeeper.mledger.Position;
 import org.apache.bookkeeper.mledger.impl.PositionImpl;
 import org.apache.pulsar.broker.PulsarServerException;
 import org.apache.pulsar.broker.PulsarService;
 import org.apache.pulsar.broker.ServiceConfiguration;
+import org.apache.pulsar.client.admin.PulsarAdmin;
+import org.apache.pulsar.client.admin.Topics;
 import org.apache.pulsar.client.api.Producer;
 import org.apache.pulsar.client.api.Schema;
 import org.apache.pulsar.client.impl.ConnectionPool;
+import org.apache.pulsar.client.impl.LookupService;
 import org.apache.pulsar.client.impl.ProducerBuilderImpl;
 import org.apache.pulsar.client.impl.PulsarClientImpl;
 import org.apache.pulsar.client.impl.conf.ProducerConfigurationData;
+import org.apache.pulsar.common.partition.PartitionedTopicMetadata;
 import org.apache.pulsar.common.policies.data.stats.ReplicatorStatsImpl;
 import org.apache.pulsar.common.util.collections.ConcurrentOpenHashMap;
 import org.awaitility.Awaitility;
@@ -69,6 +75,11 @@ public class AbstractReplicatorTest {
         final PulsarClientImpl localClient = mock(PulsarClientImpl.class);
         when(localClient.getCnxPool()).thenReturn(connectionPool);
         final PulsarClientImpl remoteClient = mock(PulsarClientImpl.class);
+        LookupService lookupService = mock(LookupService.class);
+        doReturn(CompletableFuture.completedFuture(new PartitionedTopicMetadata(0))).when(lookupService)
+                .getPartitionedTopicMetadata(any(), anyBoolean(), anyBoolean());
+        doReturn(lookupService).when(remoteClient).getLookup();
+        doReturn(lookupService).when(localClient).getLookup();
         when(remoteClient.getCnxPool()).thenReturn(connectionPool);
         final ProducerConfigurationData producerConf = new ProducerConfigurationData();
         final ProducerBuilderImpl producerBuilder = mock(ProducerBuilderImpl.class);
@@ -94,9 +105,19 @@ public class AbstractReplicatorTest {
             throw new RuntimeException("mocked ex");
         });
         when(producerBuilder.createAsync()).thenReturn(failedFuture);
+
+        @Cleanup
+        PulsarAdmin admin = mock(PulsarAdmin.class);
+        Topics adminTopics = mock(Topics.class);
+        doReturn(adminTopics).when(admin).topics();
+        doReturn(CompletableFuture.completedFuture(new PartitionedTopicMetadata(0))).when(adminTopics)
+                .getPartitionedTopicMetadataAsync(anyString());
+        doReturn(CompletableFuture.completedFuture(null)).when(adminTopics)
+                .createNonPartitionedTopicAsync(anyString());
+
         // Make race condition: "retry start producer" and "close replicator".
         final ReplicatorInTest replicator = new ReplicatorInTest(localCluster, localTopic, remoteCluster, topicName,
-                replicatorPrefix, broker, remoteClient);
+                replicatorPrefix, broker, remoteClient, admin);
         replicator.startProducer();
         replicator.disconnect();
 
@@ -122,9 +143,9 @@ public class AbstractReplicatorTest {
 
         public ReplicatorInTest(String localCluster, Topic localTopic, String remoteCluster, String remoteTopicName,
                                 String replicatorPrefix, BrokerService brokerService,
-                                PulsarClientImpl replicationClient) throws PulsarServerException {
+                                PulsarClientImpl replicationClient, PulsarAdmin pulsarAdmin) throws PulsarServerException {
             super(localTopic, remoteCluster, remoteTopicName, replicatorPrefix, brokerService,
-                    replicationClient);
+                    replicationClient, pulsarAdmin);
         }
 
         protected String getProducerName() {
