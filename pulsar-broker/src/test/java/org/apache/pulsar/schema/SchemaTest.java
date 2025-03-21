@@ -888,7 +888,7 @@ public class SchemaTest extends MockedPulsarServiceBaseTest {
             assertTrue(e.getMessage().startsWith("Topic has active producers/subscriptions"));
         }
         assertEquals(this.getPulsar().getSchemaRegistryService()
-                .trimDeletedSchemaAndGetList(TopicName.get(topic1).getSchemaName()).get().size(), 2);
+                .trimDeletedSchemaAndGetList(TopicName.get(topic1).getSchemaName()).get().size(), 0);
         try {
             admin.topics().deletePartitionedTopic(topic2, false, false);
             fail();

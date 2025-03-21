@@ -1142,19 +1142,16 @@ public class BrokerService implements Closeable {
         return result;
     }
 
-    public CompletableFuture<Void> deleteTopicInternal(String topic, boolean forceDelete, boolean deleteSchema) {
+    public CompletableFuture<Void> deleteTopicInternal(String topic, boolean forceDelete, boolean deleteSchema
+                                                       /** deprecated */) {
         Optional<Topic> optTopic = getTopicReference(topic);
         if (optTopic.isPresent()) {
             Topic t = optTopic.get();
             if (forceDelete) {
-                if (deleteSchema) {
-                    return t.deleteSchema().thenCompose(schemaVersion -> {
-                        log.info("Successfully delete topic {}'s schema of version {}", t.getName(), schemaVersion);
-                        return t.deleteForcefully();
-                    });
-                } else {
+                return t.deleteSchema().thenCompose(schemaVersion -> {
+                    log.info("Successfully delete topic {}'s schema of version {}", t.getName(), schemaVersion);
                     return t.deleteForcefully();
-                }
+                });
             }
 
             // v2 topics have a global name so check if the topic is replicated.
@@ -1166,14 +1163,10 @@ public class BrokerService implements Closeable {
                         new IllegalStateException("Delete forbidden topic is replicated on clusters " + clusters));
             }
 
-            if (deleteSchema) {
-                return t.deleteSchema().thenCompose(schemaVersion -> {
-                    log.info("Successfully delete topic {}'s schema of version {}", t.getName(), schemaVersion);
-                    return t.delete();
-                });
-            } else {
+            return t.deleteSchema().thenCompose(schemaVersion -> {
+                log.info("Successfully delete topic {}'s schema of version {}", t.getName(), schemaVersion);
                 return t.delete();
-            }
+            });
         }
 
         if (log.isDebugEnabled()) {

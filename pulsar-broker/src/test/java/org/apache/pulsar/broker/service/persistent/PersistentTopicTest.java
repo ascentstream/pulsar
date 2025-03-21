@@ -61,7 +61,6 @@ import org.apache.pulsar.client.api.Message;
 import org.apache.pulsar.client.api.MessageId;
 import org.apache.pulsar.client.api.MessageRoutingMode;
 import org.apache.pulsar.client.api.Producer;
-import org.apache.pulsar.client.api.PulsarClientException;
 import org.apache.pulsar.client.api.Schema;
 import org.apache.pulsar.client.api.SubscriptionType;
 import org.apache.pulsar.common.naming.NamespaceBundle;
@@ -71,7 +70,6 @@ import org.apache.pulsar.common.policies.data.Policies;
 import org.apache.pulsar.common.policies.data.TenantInfo;
 import org.apache.pulsar.common.policies.data.TopicStats;
 import org.awaitility.Awaitility;
-import org.testng.Assert;
 import org.testng.annotations.AfterMethod;
 import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.DataProvider;
@@ -321,30 +319,10 @@ public class PersistentTopicTest extends BrokerTestBase {
         // delete the topic
         admin.topics().delete(topicName);
 
-        try (Producer<Student> ignored = pulsarClient.newProducer(Schema.AVRO(Student.class))
+        @Cleanup
+        Producer<Student> ignored = pulsarClient.newProducer(Schema.AVRO(Student.class))
                 .topic(topicName)
-                .create()) {
-            Assert.fail("Should fail to create a the producer with a new schema since the schema is not deleted.");
-        } catch (PulsarClientException pce) {
-            Assert.assertTrue(pce instanceof PulsarClientException.IncompatibleSchemaException);
-        }
-
-        // delete the schema
-        admin.schemas().deleteSchema(topicName);
-
-        // after deleting the schema, try to create a topic with a different schema
-        try (Producer<Student> producer = pulsarClient.newProducer(Schema.AVRO(Student.class))
-                .topic(topicName)
-                .create()
-        ) {
-            Student student = new Student();
-            student.setName("Tom Jerry");
-            student.setAge(30);
-            student.setGpa(10);
-
-            producer.send(student);
-
-        }
+                .create();
     }
 
     @Data
