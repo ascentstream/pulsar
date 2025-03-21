@@ -1191,6 +1191,7 @@ public class TransactionTest extends TransactionTestBase {
         ServiceConfiguration serviceConfiguration = mock(ServiceConfiguration.class);
         when(serviceConfiguration.isEnableReplicatedSubscriptions()).thenReturn(false);
         when(serviceConfiguration.isTransactionCoordinatorEnabled()).thenReturn(true);
+        when(serviceConfiguration.getClusterName()).thenReturn("test-cluster");
         // Mock executorProvider.
         ExecutorProvider executorProvider = mock(ExecutorProvider.class);
         when(executorProvider.getExecutor(any(Object.class))).thenReturn(executorService_recover);
