@@ -484,4 +484,144 @@ public class OneWayReplicatorTest extends OneWayReplicatorTestBase {
         admin1.namespaces().deleteNamespace(ns, true);
         admin2.namespaces().deleteNamespace(ns, true);
     }
+
+    @DataProvider
+    public Object[] isPartitioned() {
+        return new Object[]{
+                true,
+                false
+        };
+    }
+
+    @Test(dataProvider = "isPartitioned")
+    public void testReplicatorCreateTopic(boolean isPartitioned) throws Exception {
+        String ns = defaultTenant + "/" + UUID.randomUUID().toString().replace("-", "");
+        admin1.namespaces().createNamespace(ns);
+        admin2.namespaces().createNamespace(ns);
+
+        final String tp = BrokerTestUtil.newUniqueName("persistent://" + ns + "/tp_");
+        if (isPartitioned) {
+            admin1.topics().createPartitionedTopic(tp, 4);
+        } else {
+            admin1.topics().createNonPartitionedTopic(tp);
+        }
+
+        admin1.namespaces().setNamespaceReplicationClusters(ns, new HashSet<>(Arrays.asList(cluster1, cluster2)));
+
+        Awaitility.await().untilAsserted(() -> {
+            PersistentTopic persistentTopic =
+                    (PersistentTopic) broker1.getTopic(
+                                    isPartitioned ? TopicName.get(tp).getPartition(0).toString() : tp, false).join()
+                            .get();
+            assertFalse(persistentTopic.getReplicators().isEmpty());
+        });
+
+        // Trigger the replicator.
+        Producer<String> p1 = client1.newProducer(Schema.STRING).topic(tp).create();
+        p1.send("msg-1");
+        p1.close();
+
+        Awaitility.await().untilAsserted(() -> {
+            if (isPartitioned){
+                assertThat(admin2.topics().getPartitionedTopicList(ns)).contains(tp);
+            }else {
+                assertThat(admin2.topics().getList(ns)).contains(tp);
+            }
+        });
+    }
+
+    @Test
+    public void testReplicatorCreateTopicWhenTopicExistsWithDifferentTypeAcrossClusters() throws Exception {
+        String ns = defaultTenant + "/" + UUID.randomUUID().toString().replace("-", "");
+        admin1.namespaces().createNamespace(ns);
+        admin2.namespaces().createNamespace(ns);
+
+        final String tp = BrokerTestUtil.newUniqueName("persistent://" + ns + "/tp_");
+        admin1.topics().createPartitionedTopic(tp, 4);
+        admin2.topics().createNonPartitionedTopic(tp);
+
+        admin1.namespaces().setNamespaceReplicationClusters(ns, new HashSet<>(Arrays.asList(cluster1, cluster2)));
+        admin2.namespaces().setNamespaceReplicationClusters(ns, new HashSet<>(Arrays.asList(cluster1, cluster2)));
+
+        Awaitility.await().untilAsserted(() -> {
+            PersistentTopic persistentTopic =
+                    (PersistentTopic) broker1.getTopic(TopicName.get(tp).getPartition(0).toString(), false).join()
+                            .get();
+            assertFalse(persistentTopic.getReplicators().isEmpty());
+        });
+
+        Awaitility.await().untilAsserted(() -> {
+            PersistentTopic persistentTopic = (PersistentTopic) broker2.getTopic(tp, false).join().get();
+            assertFalse(persistentTopic.getReplicators().isEmpty());
+        });
+
+        // Trigger the replicator.
+        Producer<String> p1 = client1.newProducer(Schema.STRING).topic(tp).create();
+        p1.send("msg-p1-1");
+        p1.close();
+        Producer<String> p2 = client2.newProducer(Schema.STRING).topic(tp).create();
+        p2.send("msg-p2-1");
+        p2.close();
+
+        // The topic exists, but its type differs between the local and remote clusters. The replicator should not
+        // recreate the topic.
+        Awaitility.await().untilAsserted(() -> {
+            PersistentTopic persistentTopic =
+                    (PersistentTopic) broker1.getTopic(TopicName.get(tp).getPartition(0).toString(), false).join()
+                            .get();
+            persistentTopic.getReplicators().forEach((key, value) -> {
+                assertFalse(value.isConnected());
+            });
+        });
+        assertThat(admin2.topics().getPartitionedTopicList(ns)).doesNotContain(tp);
+
+        Awaitility.await().untilAsserted(() -> {
+            PersistentTopic persistentTopic = (PersistentTopic) broker2.getTopic(tp, false).join().get();
+            persistentTopic.getReplicators().forEach((key, value) -> {
+                assertFalse(value.isConnected());
+            });
+        });
+        assertThat(admin1.topics().getList(ns)).doesNotContain(tp);
+    }
+
+    @Test
+    public void testReplicatorUpdatePartitionedTopic() throws Exception {
+        String ns = defaultTenant + "/" + UUID.randomUUID().toString().replace("-", "");
+        admin1.namespaces().createNamespace(ns);
+        admin2.namespaces().createNamespace(ns);
+
+        final String tp = BrokerTestUtil.newUniqueName("persistent://" + ns + "/tp_");
+        admin1.topics().createPartitionedTopic(tp, 4);
+        admin2.topics().createPartitionedTopic(tp, 8);
+
+        admin1.namespaces().setNamespaceReplicationClusters(ns, new HashSet<>(Arrays.asList(cluster1, cluster2)));
+        admin2.namespaces().setNamespaceReplicationClusters(ns, new HashSet<>(Arrays.asList(cluster1, cluster2)));
+
+        Awaitility.await().untilAsserted(() -> {
+            PersistentTopic persistentTopic =
+                    (PersistentTopic) broker1.getTopic(TopicName.get(tp).getPartition(0).toString(), false).join()
+                            .get();
+            assertFalse(persistentTopic.getReplicators().isEmpty());
+        });
+
+        Awaitility.await().untilAsserted(() -> {
+            PersistentTopic persistentTopic =
+                    (PersistentTopic) broker2.getTopic(TopicName.get(tp).getPartition(0).toString(), false).join()
+                            .get();
+            assertFalse(persistentTopic.getReplicators().isEmpty());
+        });
+
+        // Trigger the replicator.
+        Producer<String> p1 = client1.newProducer(Schema.STRING).topic(tp).create();
+        p1.send("msg-p1-1");
+        p1.close();
+        Producer<String> p2 = client2.newProducer(Schema.STRING).topic(tp).create();
+        p2.send("msg-p2-1");
+        p2.close();
+
+        // The topic exists, but the number of partitions differs between the local and remote clusters.
+        // The replicator can update the partitions of partitioned topic.
+        Awaitility.await().untilAsserted(() -> assertEquals(admin1.topics().getPartitionedTopicMetadata(tp).partitions,
+                admin2.topics().getPartitionedTopicMetadata(tp).partitions));
+    }
 }

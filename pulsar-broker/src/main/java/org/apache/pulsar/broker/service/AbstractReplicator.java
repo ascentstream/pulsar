@@ -171,12 +171,20 @@ public abstract class AbstractReplicator implements Replicator {
                         })
                         .thenCompose(remoteMetadata -> {
                             if (log.isDebugEnabled()) {
-                                log.debug("[{}][{} -> {}] Local metadata: {} Remote metadata: {}", topicName,
-                                        localCluster, remoteCluster, localMetadata, remoteMetadata);
+                                log.debug("[{}][{} -> {}] Local metadata partitions: {} Remote metadata partitions: {}",
+                                        topicName,
+                                        localCluster, remoteCluster, localMetadata.partitions,
+                                        remoteMetadata.partitions);
                             }
                             if (localMetadata.partitions == 0) {
                                 // Non-partitioned topic
                                 if (localMetadata.partitions == remoteMetadata.partitions) {
+                                    if (log.isDebugEnabled()) {
+                                        log.debug("[{}][{} -> {}] Creating non-partitioned topic {}",
+                                                topicName,
+                                                localCluster,
+                                                remoteCluster, baseTopicName);
+                                    }
                                     return replicationAdmin.topics().createNonPartitionedTopicAsync(topicName)
                                             .exceptionally(ex -> {
                                                 Throwable throwable = FutureUtil.unwrapCompletionException(ex);
@@ -189,16 +197,19 @@ public abstract class AbstractReplicator implements Replicator {
                                                 }
                                             });
                                 } else {
-                                    log.error("[{}][{} -> {}] Topic type is not matched: local partitions: {}, remote "
-                                                    + "partitions: {}",
-                                            topicName, localCluster, remoteCluster, localMetadata.partitions,
-                                            remoteMetadata.partitions);
                                     return FutureUtil.failedFuture(new PulsarServerException(
-                                            "Topic type is not matched between local and remote cluster."));
+                                            "Topic type is not matched between local and remote cluster: local "
+                                                    + "partitions: "
+                                                    + localMetadata.partitions + ", remote partitions: "
+                                                    + remoteMetadata.partitions));
                                 }
                             } else {
                                 if (remoteMetadata.partitions == 0) {
-                                    // We maybe need to create a partitioned topic on remote cluster.
+                                    if (log.isDebugEnabled()) {
+                                        log.debug("[{}][{} -> {}] Creating partitioned topic {} with {} partitions",
+                                                topicName,
+                                                localCluster, remoteCluster, baseTopicName, localMetadata.partitions);
+                                    }
                                     return replicationAdmin.topics()
                                             .createPartitionedTopicAsync(baseTopicName.toString(),
                                                     localMetadata.partitions)
@@ -206,17 +217,42 @@ public abstract class AbstractReplicator implements Replicator {
                                                 Throwable throwable = FutureUtil.unwrapCompletionException(ex);
                                                 if (throwable instanceof ConflictException) {
                                                     // Topic already exists on the remote cluster.
+                                                    // This can happen if the topic was created, or the topic is
+                                                    // non-partitioned.
                                                     return null;
                                                 } else {
                                                     throw new CompletionException(
                                                             "Failed to create partitioned topic", throwable);
                                                 }
-                                            });
+                                            })
+                                            .thenCompose((__) -> replicationAdmin.topics()
+                                                    .getPartitionedTopicMetadataAsync(baseTopicName.toString())
+                                                    .thenCompose(metadata -> {
+                                                        // Double check if the partitioned topic is created
+                                                        // successfully.
+                                                        // When partitions is equals to 0, it means this topic is
+                                                        // non-partitioned, we should throw an exception.
+                                                        if (completeTopicName.getPartitionIndex()
+                                                                >= metadata.partitions) {
+                                                            return FutureUtil.failedFuture(new PulsarServerException(
+                                                                    "Topic type is not matched between local and "
+                                                                            + "remote cluster: local "
+                                                                            + "partitions: "
+                                                                            + localMetadata.partitions
+                                                                            + ", remote partitions: "
+                                                                            + remoteMetadata.partitions));
+                                                        }
+                                                        return CompletableFuture.completedFuture(null);
+                                                    })
+                                            );
                                 }
-                                if (localMetadata.partitions > remoteMetadata.partitions) {
+                                if (completeTopicName.getPartitionIndex() > remoteMetadata.partitions
+                                        && localMetadata.partitions > remoteMetadata.partitions) {
+                                    log.info("[{}][{} -> {}] Updating partitioned topic {} to {} partitions", topicName,
+                                            localCluster, remoteCluster, baseTopicName, localMetadata.partitions);
                                     return replicationAdmin.topics()
                                             .updatePartitionedTopicAsync(baseTopicName.toString(),
-                                                    localMetadata.partitions);
+                                                    localMetadata.partitions, true);
                                 }
                             }
                             return CompletableFuture.completedFuture(null);
