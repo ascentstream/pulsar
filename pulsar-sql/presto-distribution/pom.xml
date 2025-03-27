@@ -199,6 +199,20 @@
       <scope>provided</scope>
     </dependency>
 
+    <dependency>
+      <groupId>${project.groupId}</groupId>
+      <artifactId>pulsar-presto-connector</artifactId>
+      <version>${project.version}</version>
+      <type>tar.gz</type>
+      <scope>provided</scope>
+      <exclusions>
+        <exclusion>
+          <groupId>*</groupId>
+          <artifactId>*</artifactId>
+        </exclusion>
+      </exclusions>
+    </dependency>
+
   </dependencies>
 
   <dependencyManagement>
@@ -362,31 +376,4 @@
       </extension>
     </extensions>
   </build>
-
-  <profiles>
-    <profile>
-      <id>skipBuildDistributionDisabled</id>
-      <activation>
-        <property>
-          <name>skipBuildDistribution</name>
-          <value>!true</value>
-        </property>
-      </activation>
-      <dependencies>
-        <dependency>
-          <groupId>${project.groupId}</groupId>
-          <artifactId>pulsar-presto-connector</artifactId>
-          <version>${project.version}</version>
-          <type>tar.gz</type>
-          <scope>provided</scope>
-          <exclusions>
-            <exclusion>
-              <groupId>*</groupId>
-              <artifactId>*</artifactId>
-            </exclusion>
-          </exclusions>
-        </dependency>
-      </dependencies>
-    </profile>
-  </profiles>
 </project>
