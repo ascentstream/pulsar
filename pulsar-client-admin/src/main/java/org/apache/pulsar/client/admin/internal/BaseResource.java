@@ -25,6 +25,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.function.Function;
 import java.util.function.Supplier;
 import javax.ws.rs.ClientErrorException;
 import javax.ws.rs.ServerErrorException;
@@ -170,6 +171,35 @@ public abstract class BaseResource {
         } catch (PulsarAdminException cae) {
             callback.failed(cae);
         }
+    }
+
+    protected <T> CompletableFuture<T> asyncGetRequest(final WebTarget target, Class<? extends T> type) {
+        return asyncGetRequest(target, response -> response.readEntity(type));
+    }
+
+    private <T> CompletableFuture<T> asyncGetRequest(final WebTarget target, Function<Response, T> readResponse) {
+        final CompletableFuture<T> future = new CompletableFuture<>();
+        asyncGetRequest(target,
+                new InvocationCallback<Response>() {
+                    @Override
+                    public void completed(Response response) {
+                        if (response.getStatus() != Response.Status.OK.getStatusCode()) {
+                            future.completeExceptionally(getApiException(response));
+                        } else {
+                            try {
+                                future.complete(readResponse.apply(response));
+                            } catch (Exception e) {
+                                future.completeExceptionally(getApiException(e));
+                            }
+                        }
+                    }
+
+                    @Override
+                    public void failed(Throwable throwable) {
+                        future.completeExceptionally(getApiException(throwable.getCause()));
+                    }
+                });
+        return future;
     }
 
     public CompletableFuture<Void> asyncDeleteRequest(final WebTarget target) {
