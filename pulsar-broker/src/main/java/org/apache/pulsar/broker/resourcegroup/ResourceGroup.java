@@ -189,7 +189,7 @@ public class ResourceGroup {
     }
 
     private ResourceGroupDispatchLimiter updateReplicatorLimiter(String key, ResourceGroupDispatchLimiter oldLimiter,
-                                                                 org.apache.pulsar.common.policies.data.ResourceGroup rgConfig) {
+                                                 org.apache.pulsar.common.policies.data.ResourceGroup rgConfig) {
         DispatchRate dispatchRate = rgConfig.getReplicatorDispatchRate().get(key);
         if (dispatchRate == null) {
             // Specific rate-limiter for this cluster is removed in the new config.
