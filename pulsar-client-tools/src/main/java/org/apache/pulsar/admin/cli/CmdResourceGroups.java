@@ -170,8 +170,7 @@ public class CmdResourceGroups extends CmdBase {
                 false)
         private long byteDispatchRate = -1;
 
-        @Parameter(names = "--cluster", description = "The remote cluster for which set the dispatch rate", required
-                = true)
+        @Parameter(names = "--cluster", description = "The remote cluster for which set the dispatch rate", required = true)
         private String cluster;
 
         @Override
@@ -190,8 +189,7 @@ public class CmdResourceGroups extends CmdBase {
         @Parameter(description = "resourcegroup-name", required = true)
         private java.util.List<String> params;
 
-        @Parameter(names = "--cluster", description = "The remote cluster for which set the dispatch rate", required
-                = true)
+        @Parameter(names = "--cluster", description = "The remote cluster for which set the dispatch rate", required = true)
         private String cluster;
 
         @Override
@@ -206,8 +204,7 @@ public class CmdResourceGroups extends CmdBase {
         @Parameter(description = "resourcegroup-name", required = true)
         private java.util.List<String> params;
 
-        @Parameter(names = "--cluster", description = "The remote cluster for which set the dispatch rate", required
-                = true)
+        @Parameter(names = "--cluster", description = "The remote cluster for which set the dispatch rate", required = true)
         private String cluster;
 
         @Override
