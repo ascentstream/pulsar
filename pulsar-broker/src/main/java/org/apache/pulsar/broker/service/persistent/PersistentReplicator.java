@@ -31,6 +31,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
 import java.util.concurrent.atomic.LongAdder;
+import java.util.function.Consumer;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import org.apache.bookkeeper.mledger.AsyncCallbacks;
@@ -78,6 +79,8 @@ public class PersistentReplicator extends AbstractReplicator
 
     private Optional<DispatchRateLimiter> dispatchRateLimiter = Optional.empty();
     protected Optional<ResourceGroupDispatchLimiter> resourceGroupDispatchRateLimiter = Optional.empty();
+    private final Consumer<ResourceGroupDispatchLimiter> resourceGroupDispatchRateLimiterConsumer = (v) ->
+            resourceGroupDispatchRateLimiter = Optional.ofNullable(v);
     private final Object dispatchRateLimiterLock = new Object();
 
     private int readBatchSize;
@@ -846,6 +849,9 @@ public class PersistentReplicator extends AbstractReplicator
         return resourceGroupDispatchRateLimiter;
     }
 
+    // This is used to unregister the resource group dispatch rate limiter
+    private String usedResourceGroupName;
+
     @Override
     public void initializeDispatchRateLimiterIfNeeded() {
         synchronized (dispatchRateLimiterLock) {
@@ -856,14 +862,22 @@ public class PersistentReplicator extends AbstractReplicator
 
             String resourceGroupName = topic.getHierarchyTopicPolicies().getResourceGroupName().get();
             if (resourceGroupName != null) {
+                usedResourceGroupName = resourceGroupName;
                 ResourceGroup resourceGroup =
                         brokerService.getPulsar().getResourceGroupServiceManager().resourceGroupGet(resourceGroupName);
                 if (resourceGroup != null) {
-                    resourceGroupDispatchRateLimiter = Optional.of(resourceGroup
-                            .getResourceGroupReplicationDispatchLimiter());
+                    resourceGroup.registerReplicatorDispatchRateLimiter(remoteCluster,
+                            resourceGroupDispatchRateLimiterConsumer);
                 }
             } else {
                 if (resourceGroupDispatchRateLimiter.isPresent()) {
+                    ResourceGroup resourceGroup =
+                            brokerService.getPulsar().getResourceGroupServiceManager()
+                                    .resourceGroupGet(usedResourceGroupName);
+                    if (resourceGroup != null) {
+                        resourceGroup.unregisterReplicatorDispatchRateLimiter(remoteCluster,
+                                resourceGroupDispatchRateLimiterConsumer);
+                    }
                     resourceGroupDispatchRateLimiter = Optional.empty();
                 }
             }
