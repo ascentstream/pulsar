@@ -37,6 +37,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
+import lombok.Cleanup;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.pulsar.broker.BrokerTestUtil;
 import org.apache.pulsar.broker.resources.ClusterResources;
@@ -401,8 +402,8 @@ public class OneWayReplicatorTest extends OneWayReplicatorTestBase {
     @DataProvider(name = "replicationModes")
     public Object[][] replicationModes() {
         return new Object[][]{
-            {ReplicationMode.OneWay},
-            {ReplicationMode.DoubleWay}
+                {ReplicationMode.OneWay},
+                {ReplicationMode.DoubleWay}
         };
     }
 
@@ -517,14 +518,14 @@ public class OneWayReplicatorTest extends OneWayReplicatorTestBase {
         });
 
         // Trigger the replicator.
+        @Cleanup
         Producer<String> p1 = client1.newProducer(Schema.STRING).topic(tp).create();
         p1.send("msg-1");
-        p1.close();
 
         Awaitility.await().untilAsserted(() -> {
-            if (isPartitioned){
+            if (isPartitioned) {
                 assertThat(admin2.topics().getPartitionedTopicList(ns)).contains(tp);
-            }else {
+            } else {
                 assertThat(admin2.topics().getList(ns)).contains(tp);
             }
         });
@@ -585,7 +586,7 @@ public class OneWayReplicatorTest extends OneWayReplicatorTestBase {
     }
 
     @Test
-    public void testReplicatorUpdatePartitionedTopic() throws Exception {
+    public void testReplicatorWhenPartitionCountsDiffer() throws Exception {
         String ns = defaultTenant + "/" + UUID.randomUUID().toString().replace("-", "");
         admin1.namespaces().createNamespace(ns);
         admin2.namespaces().createNamespace(ns);
@@ -612,16 +613,34 @@ public class OneWayReplicatorTest extends OneWayReplicatorTestBase {
         });
 
         // Trigger the replicator.
+        @Cleanup
         Producer<String> p1 = client1.newProducer(Schema.STRING).topic(tp).create();
         p1.send("msg-p1-1");
-        p1.close();
+        @Cleanup
         Producer<String> p2 = client2.newProducer(Schema.STRING).topic(tp).create();
         p2.send("msg-p2-1");
-        p2.close();
 
-        // The topic exists, but the number of partitions differs between the local and remote clusters.
-        // The replicator can update the partitions of partitioned topic.
-        Awaitility.await().untilAsserted(() -> assertEquals(admin1.topics().getPartitionedTopicMetadata(tp).partitions,
-                admin2.topics().getPartitionedTopicMetadata(tp).partitions));
+        // Topic partition counts differ between the local and remote clusters.
+        // The replicator should not replicate the messages.
+        Awaitility.await().untilAsserted(() -> {
+            PersistentTopic persistentTopic =
+                    (PersistentTopic) broker1.getTopic(TopicName.get(tp).getPartition(0).toString(), false).join()
+                            .get();
+            persistentTopic.getReplicators().forEach((key, value) -> {
+                assertFalse(value.isConnected());
+            });
+        });
+
+        @Cleanup
+        Consumer<String> c2 = client2.newConsumer(Schema.STRING).topic(tp).subscriptionName("test-sub")
+                .subscriptionInitialPosition(SubscriptionInitialPosition.Earliest).subscribe();
+
+        while (true) {
+            Message<String> receive = c2.receive(3, TimeUnit.SECONDS);
+            if (receive == null) {
+                break;
+            }
+            assertEquals(receive.getValue(), "msg-p2-1");
+        }
     }
 }

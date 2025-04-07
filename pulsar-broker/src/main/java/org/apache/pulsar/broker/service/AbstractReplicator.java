@@ -246,13 +246,11 @@ public abstract class AbstractReplicator implements Replicator {
                                                     })
                                             );
                                 }
-                                if (completeTopicName.getPartitionIndex() > remoteMetadata.partitions
-                                        && localMetadata.partitions > remoteMetadata.partitions) {
-                                    log.info("[{}][{} -> {}] Updating partitioned topic {} to {} partitions", topicName,
-                                            localCluster, remoteCluster, baseTopicName, localMetadata.partitions);
-                                    return replicationAdmin.topics()
-                                            .updatePartitionedTopicAsync(baseTopicName.toString(),
-                                                    localMetadata.partitions, true);
+                                if (localMetadata.partitions != remoteMetadata.partitions) {
+                                    return FutureUtil.failedFuture(new PulsarServerException(
+                                            "The number of topic partitions is inconsistent between local and remote "
+                                                    + "clusters: local partitions: " + localMetadata.partitions
+                                                    + ", remote partitions: " + remoteMetadata.partitions));
                                 }
                             }
                             return CompletableFuture.completedFuture(null);
