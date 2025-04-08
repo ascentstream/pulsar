@@ -93,4 +93,35 @@ public class ConsumerCreationTest extends ProducerConsumerBase {
                             .subscriptionName("my-sub").subscribe();
         });
     }
+
+    @Test(dataProvider = "topicDomainProvider")
+    public void testCreateConsumerWhenSinglePartitionIsDeleted(TopicDomain domain)
+            throws PulsarAdminException, PulsarClientException {
+        testCreateConsumerWhenSinglePartitionIsDeleted(domain, false);
+        testCreateConsumerWhenSinglePartitionIsDeleted(domain, true);
+    }
+
+    private void testCreateConsumerWhenSinglePartitionIsDeleted(TopicDomain domain, boolean allowAutoTopicCreation)
+            throws PulsarAdminException, PulsarClientException {
+        conf.setAllowAutoTopicCreation(allowAutoTopicCreation);
+
+        String partitionedTopic = TopicName.get(domain.value(), "public", "default",
+                        "testCreateConsumerWhenSinglePartitionIsDeleted-" + allowAutoTopicCreation)
+                .toString();
+        admin.topics().createPartitionedTopic(partitionedTopic, 3);
+        admin.topics().delete(TopicName.get(partitionedTopic).getPartition(1).toString());
+
+        // Non-persistent topic only have the metadata, and no partition, so it works fine.
+        if (allowAutoTopicCreation || domain.equals(TopicDomain.non_persistent)) {
+            @Cleanup
+            Consumer<byte[]> ignored =
+                    pulsarClient.newConsumer().topic(partitionedTopic).subscriptionName("my-sub").subscribe();
+        } else {
+            assertThrows(PulsarClientException.NotFoundException.class, () -> {
+                @Cleanup
+                Consumer<byte[]> ignored =
+                        pulsarClient.newConsumer().topic(partitionedTopic).subscriptionName("my-sub").subscribe();
+            });
+        }
+    }
 }
