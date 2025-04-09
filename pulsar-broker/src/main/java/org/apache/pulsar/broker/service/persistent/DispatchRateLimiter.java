@@ -51,12 +51,18 @@ public class DispatchRateLimiter {
     private final BrokerService brokerService;
     private RateLimiter dispatchRateLimiterOnMessage;
     private RateLimiter dispatchRateLimiterOnByte;
+    private String remoteCluster;
 
     public DispatchRateLimiter(PersistentTopic topic, Type type) {
+        this(topic, null, type);
+    }
+
+    public DispatchRateLimiter(PersistentTopic topic, String remoteCluster, Type type) {
         this.topic = topic;
         this.topicName = topic.getName();
         this.brokerService = topic.getBrokerService();
         this.type = type;
+        this.remoteCluster = remoteCluster;
         updateDispatchRate();
     }
 
@@ -163,16 +169,12 @@ public class DispatchRateLimiter {
                 .build();
     }
 
-    public void updateDispatchRate(){
-        updateDispatchRate((String) null);
-    }
-
     /**
      * Update dispatch-throttling-rate.
      * Topic-level has the highest priority, then namespace-level, and finally use dispatch-throttling-rate in
      * broker-level
      */
-    public void updateDispatchRate(String remoteCluster) {
+    public void updateDispatchRate() {
         switch (type) {
             case TOPIC:
                 updateDispatchRate(topic.getDispatchRate());

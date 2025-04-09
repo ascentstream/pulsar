@@ -856,8 +856,8 @@ public class PersistentReplicator extends AbstractReplicator
     public void initializeDispatchRateLimiterIfNeeded() {
         synchronized (dispatchRateLimiterLock) {
             if (!dispatchRateLimiter.isPresent()
-                && DispatchRateLimiter.isDispatchRateEnabled(topic.getReplicatorDispatchRate(remoteCluster))) {
-                this.dispatchRateLimiter = Optional.of(new DispatchRateLimiter(topic, Type.REPLICATOR));
+                    && DispatchRateLimiter.isDispatchRateEnabled(topic.getReplicatorDispatchRate(remoteCluster))) {
+                this.dispatchRateLimiter = Optional.of(new DispatchRateLimiter(topic, remoteCluster, Type.REPLICATOR));
             }
 
             String resourceGroupName = topic.getHierarchyTopicPolicies().getResourceGroupName().get();
@@ -887,7 +887,7 @@ public class PersistentReplicator extends AbstractReplicator
     @Override
     public void updateRateLimiter() {
         initializeDispatchRateLimiterIfNeeded();
-        dispatchRateLimiter.ifPresent(n -> n.updateDispatchRate(remoteCluster));
+        dispatchRateLimiter.ifPresent(DispatchRateLimiter::updateDispatchRate);
     }
 
     private void checkReplicatedSubscriptionMarker(Position position, MessageImpl<?> msg, ByteBuf payload) {
