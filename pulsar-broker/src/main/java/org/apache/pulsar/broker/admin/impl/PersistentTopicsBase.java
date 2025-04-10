@@ -1538,6 +1538,7 @@ public class PersistentTopicsBase extends AdminResource {
 
     }
 
+    @SuppressWarnings("unchecked")
     protected void internalGetPartitionedStats(AsyncResponse asyncResponse, boolean authoritative, boolean perPartition,
                                                boolean getPreciseBacklog, boolean subscriptionBacklogSize,
                                                boolean getEarliestTimeInBacklog) {
@@ -1564,9 +1565,9 @@ public class PersistentTopicsBase extends AdminResource {
                         .thenCompose(owned -> {
                             if (owned) {
                                 return getTopicReferenceAsync(partition)
-                                    .thenApply(ref ->
-                                        ref.getStats(getPreciseBacklog, subscriptionBacklogSize,
-                                            getEarliestTimeInBacklog));
+                                    .thenCompose(ref ->
+                                            (CompletableFuture<TopicStats>) ref.asyncGetStats(getPreciseBacklog,
+                                                    subscriptionBacklogSize, getEarliestTimeInBacklog));
                             } else {
                                 try {
                                     return pulsar().getAdminClient().topics().getStatsAsync(
