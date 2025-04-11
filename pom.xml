@@ -97,6 +97,7 @@ flexible messaging model and an intuitive client API.</description>
     -->
     <docker.platforms></docker.platforms>
     <docker.skip.push>true</docker.skip.push>
+    <docker.skip.tag>false</docker.skip.tag>
 
     <test.additional.args></test.additional.args>
     <testReuseFork>true</testReuseFork>
