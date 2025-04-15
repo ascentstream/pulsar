@@ -19,6 +19,7 @@
 package org.apache.pulsar.broker.web;
 
 import java.net.InetSocketAddress;
+import java.util.Objects;
 import java.util.TimeZone;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -192,15 +193,27 @@ public class JettyRequestLogFactory {
         private final ConcurrentHashMap<AddressKey, AddressEntry> proxyProtocolRealAddressMapping =
                 new ConcurrentHashMap<>();
 
-        // Use a record as key since InetSocketAddress hash code changes if the address gets resolved
         @AllArgsConstructor
         private class AddressKey {
             private String hostString;
             private int port;
+
+            @Override
+            public boolean equals(Object o) {
+                if (this == o) return true;
+                if (!(o instanceof AddressKey)) return false;
+                AddressKey that = (AddressKey) o;
+                return port == that.port && Objects.equals(hostString, that.hostString);
+            }
+
+            @Override
+            public int hashCode() {
+                return Objects.hash(hostString, port);
+            }
         }
 
         @AllArgsConstructor
-        private class AddressEntry {
+        class AddressEntry {
             private InetSocketAddress realAddress;
             private AtomicInteger referenceCount;
         }
