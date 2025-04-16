@@ -200,8 +200,12 @@ public class JettyRequestLogFactory {
 
             @Override
             public boolean equals(Object o) {
-                if (this == o) return true;
-                if (!(o instanceof AddressKey)) return false;
+                if (this == o) {
+                    return true;
+                }
+                if (!(o instanceof AddressKey)) {
+                    return false;
+                }
                 AddressKey that = (AddressKey) o;
                 return port == that.port && Objects.equals(hostString, that.hostString);
             }
