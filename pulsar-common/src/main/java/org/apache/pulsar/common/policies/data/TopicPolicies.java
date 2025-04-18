@@ -74,7 +74,8 @@ public class TopicPolicies {
      */
     @Deprecated
     private DispatchRateImpl replicatorDispatchRate;
-    private Map<String, DispatchRateImpl> replicatorDispatchRateMap;
+    @Builder.Default
+    private Map<String, DispatchRateImpl> replicatorDispatchRateMap = new HashMap<>();
     private SchemaCompatibilityStrategy schemaCompatibilityStrategy;
     private String resourceGroupName;
     private Boolean replicateSubscriptionState;
