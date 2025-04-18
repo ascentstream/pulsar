@@ -178,4 +178,8 @@ public class TopicPolicies {
     public Set<String> getReplicationClustersSet() {
         return replicationClusters != null ? Sets.newTreeSet(this.replicationClusters) : null;
     }
+
+    public Map<String, DispatchRateImpl> getReplicatorDispatchRateMap() {
+        return replicatorDispatchRateMap != null ? replicatorDispatchRateMap : new HashMap<>();
+    }
 }

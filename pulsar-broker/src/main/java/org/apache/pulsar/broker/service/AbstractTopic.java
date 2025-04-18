@@ -47,7 +47,6 @@ import lombok.Getter;
 import org.apache.bookkeeper.mledger.util.StatsBuckets;
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.collections4.MapUtils;
-import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.pulsar.broker.ServiceConfiguration;
 import org.apache.pulsar.broker.resourcegroup.ResourceGroup;
@@ -58,6 +57,7 @@ import org.apache.pulsar.broker.service.BrokerServiceException.ConsumerBusyExcep
 import org.apache.pulsar.broker.service.BrokerServiceException.ProducerBusyException;
 import org.apache.pulsar.broker.service.BrokerServiceException.ProducerFencedException;
 import org.apache.pulsar.broker.service.BrokerServiceException.TopicTerminatedException;
+import org.apache.pulsar.broker.service.persistent.DispatchRateLimiter;
 import org.apache.pulsar.broker.service.schema.SchemaRegistryService;
 import org.apache.pulsar.broker.service.schema.exceptions.IncompatibleSchemaException;
 import org.apache.pulsar.broker.stats.prometheus.metrics.Summary;
@@ -189,7 +189,7 @@ public abstract class AbstractTopic implements Topic, TopicPolicyListener<TopicP
         String localCluster = brokerService.pulsar().getConfiguration().getClusterName();
         PolicyHierarchyValue<DispatchRateImpl> dispatchRatePolicyHierarchyValue =
                 topicPolicies.getReplicatorDispatchRate()
-                        .get(getReplicatorDispatchRateKey(localCluster, remoteCluster));
+                        .get(DispatchRateLimiter.getReplicatorDispatchRateKey(localCluster, remoteCluster));
         DispatchRateImpl dispatchRate;
         if (dispatchRatePolicyHierarchyValue != null) {
             // Topic
@@ -1395,12 +1395,5 @@ public abstract class AbstractTopic implements Topic, TopicPolicyListener<TopicP
     public void updateBrokerSubscribeRate() {
         topicPolicies.getSubscribeRate().updateBrokerValue(
             subscribeRateInBroker(brokerService.pulsar().getConfiguration()));
-    }
-
-    public static String getReplicatorDispatchRateKey(String localCluster, String remoteCluster) {
-        if (StringUtils.isNotEmpty(remoteCluster)) {
-            return String.format("%s->%s", remoteCluster, localCluster);
-        }
-        return localCluster;
     }
 }
