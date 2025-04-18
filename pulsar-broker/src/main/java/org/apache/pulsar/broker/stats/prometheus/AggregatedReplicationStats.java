@@ -44,4 +44,6 @@ public class AggregatedReplicationStats {
     /** Time in seconds from the time a message was produced to the time when it is about to be replicated. */
     public long replicationDelayInSeconds;
 
+    /** Number of messages pending to be replicated to remote cluster. */
+    public long replicationPendingMessages;
 }

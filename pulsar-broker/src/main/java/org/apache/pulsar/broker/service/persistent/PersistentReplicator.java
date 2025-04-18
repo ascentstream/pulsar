@@ -800,6 +800,7 @@ public class PersistentReplicator extends AbstractReplicator
         stats.replicationDelayInSeconds = getReplicationDelayInSeconds();
         stats.msgOutCounter = msgOutCounter.longValue();
         stats.bytesOutCounter = bytesOutCounter.longValue();
+        stats.replicationPendingMessages = PENDING_MESSAGES_UPDATER.get(this);
 
         ProducerImpl producer = this.producer;
         if (producer != null) {

@@ -266,6 +266,7 @@ public class NamespaceStatsAggregator {
             aggReplStats.msgRateExpired += replStats.msgRateExpired;
             aggReplStats.connectedCount += replStats.connected ? 1 : 0;
             aggReplStats.replicationDelayInSeconds += replStats.replicationDelayInSeconds;
+            aggReplStats.replicationPendingMessages += replStats.replicationPendingMessages;
         });
 
         compactorMXBean
@@ -432,6 +433,8 @@ public class NamespaceStatsAggregator {
                 replStats -> replStats.msgRateExpired, cluster, namespace);
         writeReplicationStat(stream, "pulsar_replication_delay_in_seconds", stats,
                 replStats -> replStats.replicationDelayInSeconds, cluster, namespace);
+        writeReplicationStat(stream, "pulsar_replication_pending_messages_total", stats,
+                replStats -> replStats.replicationPendingMessages, cluster, namespace);
     }
 
     private static void writePulsarMsgBacklog(PrometheusMetricStreams stream, Number value,

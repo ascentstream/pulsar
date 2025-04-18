@@ -74,6 +74,9 @@ public class ReplicatorStatsImpl implements ReplicatorStats {
     /** Timestamp of outbound connection establishment time. */
     public String outboundConnectedSince;
 
+    /** Number of pending messages sent to the remote cluster awaiting response. */
+    public long replicationPendingMessages;
+
     public ReplicatorStatsImpl add(ReplicatorStatsImpl stats) {
         Objects.requireNonNull(stats);
         this.msgRateIn += stats.msgRateIn;
@@ -86,6 +89,7 @@ public class ReplicatorStatsImpl implements ReplicatorStats {
             this.connected &= stats.connected;
         }
         this.replicationDelayInSeconds = Math.max(this.replicationDelayInSeconds, stats.replicationDelayInSeconds);
+        this.replicationPendingMessages += stats.replicationPendingMessages;
         return this;
     }
 }
