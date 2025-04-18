@@ -317,6 +317,8 @@ class TopicStats {
                         cluster, namespace, topic, remoteCluster, splitTopicAndPartitionIndexLabel);
                 writeMetric(stream, "pulsar_replication_delay_in_seconds", replStats.replicationDelayInSeconds,
                         cluster, namespace, topic, remoteCluster, splitTopicAndPartitionIndexLabel);
+                writeMetric(stream, "pulsar_replication_pending_messages_total", replStats.replicationPendingMessages,
+                        cluster, namespace, topic, remoteCluster, splitTopicAndPartitionIndexLabel);
             });
         }
 

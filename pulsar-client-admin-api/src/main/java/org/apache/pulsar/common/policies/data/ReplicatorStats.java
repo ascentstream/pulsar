@@ -68,4 +68,6 @@ public interface ReplicatorStats {
 
     /** Timestamp of outbound connection establishment time. */
     String getOutboundConnectedSince();
+
+    long getReplicationPendingMessages();
 }
