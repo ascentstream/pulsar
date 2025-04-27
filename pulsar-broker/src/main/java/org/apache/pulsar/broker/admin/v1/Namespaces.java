@@ -961,11 +961,13 @@ public class Namespaces extends NamespacesBase {
             @ApiResponse(code = 307, message = "Current broker doesn't serve the namespace"),
             @ApiResponse(code = 403, message = "Don't have admin permission"),
             @ApiResponse(code = 404, message = "Namespace does not exist"),
-            @ApiResponse(code = 409, message = "Concurrent modification") })
-    public void setBookieAffinityGroup(@PathParam("property") String property, @PathParam("cluster") String cluster,
-            @PathParam("namespace") String namespace, BookieAffinityGroupData bookieAffinityGroup) {
+            @ApiResponse(code = 409, message = "Concurrent modification")})
+    public void setBookieAffinityGroup(@Suspended AsyncResponse asyncResponse,
+                                       @PathParam("property") String property, @PathParam("cluster") String cluster,
+                                       @PathParam("namespace") String namespace,
+                                       BookieAffinityGroupData bookieAffinityGroup) {
         validateNamespaceName(property, cluster, namespace);
-        internalSetBookieAffinityGroup(bookieAffinityGroup);
+        internalSetBookieAffinityGroup(asyncResponse, bookieAffinityGroup);
     }
 
     @GET
@@ -975,11 +977,13 @@ public class Namespaces extends NamespacesBase {
             @ApiResponse(code = 307, message = "Current broker doesn't serve the namespace"),
             @ApiResponse(code = 403, message = "Don't have admin permission"),
             @ApiResponse(code = 404, message = "Namespace does not exist"),
-            @ApiResponse(code = 409, message = "Concurrent modification") })
-    public BookieAffinityGroupData getBookieAffinityGroup(@PathParam("property") String property,
-            @PathParam("cluster") String cluster, @PathParam("namespace") String namespace) {
+            @ApiResponse(code = 409, message = "Concurrent modification")})
+    public void getBookieAffinityGroup(@Suspended AsyncResponse asyncResponse,
+                                       @PathParam("property") String property,
+                                       @PathParam("cluster") String cluster,
+                                       @PathParam("namespace") String namespace) {
         validateNamespaceName(property, cluster, namespace);
-        return internalGetBookieAffinityGroup();
+        internalGetBookieAffinityGroup(asyncResponse);
     }
 
     @DELETE
@@ -989,11 +993,12 @@ public class Namespaces extends NamespacesBase {
             @ApiResponse(code = 307, message = "Current broker doesn't serve the namespace"),
             @ApiResponse(code = 403, message = "Don't have admin permission"),
             @ApiResponse(code = 404, message = "Namespace does not exist"),
-            @ApiResponse(code = 409, message = "Concurrent modification") })
-    public void deleteBookieAffinityGroup(@PathParam("property") String property, @PathParam("cluster") String cluster,
-            @PathParam("namespace") String namespace) {
+            @ApiResponse(code = 409, message = "Concurrent modification")})
+    public void deleteBookieAffinityGroup(@Suspended AsyncResponse asyncResponse,
+                                          @PathParam("property") String property, @PathParam("cluster") String cluster,
+                                          @PathParam("namespace") String namespace) {
         validateNamespaceName(property, cluster, namespace);
-        internalDeleteBookieAffinityGroup();
+        internalDeleteBookieAffinityGroup(asyncResponse);
     }
 
     @GET

@@ -877,74 +877,90 @@ public abstract class NamespacesBase extends AdminResource {
                 });
     }
 
-
-    protected void internalSetBookieAffinityGroup(BookieAffinityGroupData bookieAffinityGroup) {
-        validateSuperUserAccess();
+    protected void internalSetBookieAffinityGroup(AsyncResponse asyncResponse,
+                                                  BookieAffinityGroupData bookieAffinityGroup) {
         log.info("[{}] Setting bookie-affinity-group {} for namespace {}", clientAppId(), bookieAffinityGroup,
                 this.namespaceName);
-
-        if (namespaceName.isGlobal()) {
-            // check cluster ownership for a given global namespace: redirect if peer-cluster owns it
-            validateGlobalNamespaceOwnership(namespaceName);
-        } else {
-            validateClusterOwnership(namespaceName.getCluster());
-            validateClusterForTenant(namespaceName.getTenant(), namespaceName.getCluster());
-        }
-
-        try {
-            getLocalPolicies().setLocalPoliciesWithCreate(namespaceName, oldPolicies -> {
-                LocalPolicies localPolicies = oldPolicies.map(
-                        policies -> new LocalPolicies(policies.bundles,
-                                bookieAffinityGroup,
-                                policies.namespaceAntiAffinityGroup))
-                        .orElseGet(() -> new LocalPolicies(getBundles(config().getDefaultNumberOfNamespaceBundles()),
-                                bookieAffinityGroup,
-                                null));
-                log.info("[{}] Successfully updated local-policies configuration: namespace={}, map={}", clientAppId(),
-                        namespaceName, localPolicies);
-                return localPolicies;
-            });
-        } catch (NotFoundException e) {
-            log.warn("[{}] Failed to update local-policy configuration for namespace {}: does not exist", clientAppId(),
-                    namespaceName);
-            throw new RestException(Status.NOT_FOUND, "Namespace does not exist");
-        } catch (Exception e) {
-            log.error("[{}] Failed to update local-policy configuration for namespace {}", clientAppId(), namespaceName,
-                    e);
-            throw new RestException(e);
-        }
+        validateSuperUserAccessAsync()
+                .thenCompose(__ -> {
+                    if (namespaceName.isGlobal()) {
+                        // check cluster ownership for a given global namespace: redirect if peer-cluster owns it
+                        return validateGlobalNamespaceOwnershipAsync(namespaceName);
+                    } else {
+                        return validateClusterOwnershipAsync(namespaceName.getCluster())
+                                .thenCompose((___) -> validateClusterForTenantAsync(namespaceName.getTenant(),
+                                        namespaceName.getCluster()));
+                    }
+                })
+                .thenCompose((__) -> getLocalPolicies().setLocalPoliciesWithCreateAsync(namespaceName,
+                        oldPolicies -> {
+                            LocalPolicies localPolicies = oldPolicies.map(
+                                            policies -> new LocalPolicies(policies.bundles,
+                                                    bookieAffinityGroup,
+                                                    policies.namespaceAntiAffinityGroup))
+                                    .orElseGet(
+                                            () -> new LocalPolicies(
+                                                    getBundles(config().getDefaultNumberOfNamespaceBundles()),
+                                                    bookieAffinityGroup, null));
+                            log.info("[{}] Successfully updated local-policies configuration: namespace={}, map={}",
+                                    clientAppId(),
+                                    namespaceName, localPolicies);
+                            return localPolicies;
+                        }))
+                .thenAccept(__ -> asyncResponse.resume(Response.noContent().build()))
+                .exceptionally(ex -> {
+                    Throwable throwable = FutureUtil.unwrapCompletionException(ex);
+                    if (throwable instanceof NotFoundException) {
+                        log.warn("[{}] Failed to update local-policy configuration for namespace {}: does not exist",
+                                clientAppId(),
+                                namespaceName);
+                        asyncResponse.resume(new RestException(Status.NOT_FOUND, "Namespace does not exist"));
+                    } else {
+                        log.error("[{}] Failed to update local-policy configuration for namespace {}", clientAppId(),
+                                namespaceName, ex);
+                        resumeAsyncResponseExceptionally(asyncResponse, throwable);
+                    }
+                    return null;
+                });
     }
 
-    protected void internalDeleteBookieAffinityGroup() {
-        internalSetBookieAffinityGroup(null);
+    protected void internalDeleteBookieAffinityGroup(AsyncResponse asyncResponse) {
+        internalSetBookieAffinityGroup(asyncResponse, null);
     }
 
-    protected BookieAffinityGroupData internalGetBookieAffinityGroup() {
-        validateSuperUserAccess();
-
-        if (namespaceName.isGlobal()) {
-            // check cluster ownership for a given global namespace: redirect if peer-cluster owns it
-            validateGlobalNamespaceOwnership(namespaceName);
-        } else {
-            validateClusterOwnership(namespaceName.getCluster());
-            validateClusterForTenant(namespaceName.getTenant(), namespaceName.getCluster());
-        }
-        try {
-            final BookieAffinityGroupData bookkeeperAffinityGroup = getLocalPolicies().getLocalPolicies(namespaceName)
-                    .orElseThrow(() -> new RestException(Status.NOT_FOUND,
-                            "Namespace local-policies does not exist")).bookieAffinityGroup;
-            return bookkeeperAffinityGroup;
-        } catch (NotFoundException e) {
-            log.warn("[{}] Failed to get local-policy configuration for namespace {}: does not exist",
-                    clientAppId(), namespaceName);
-            throw new RestException(Status.NOT_FOUND, "Namespace policies does not exist");
-        } catch (RestException re) {
-            throw re;
-        } catch (Exception e) {
-            log.error("[{}] Failed to get local-policy configuration for namespace {}", clientAppId(),
-                    namespaceName, e);
-            throw new RestException(e);
-        }
+    protected void internalGetBookieAffinityGroup(AsyncResponse asyncResponse) {
+        validateSuperUserAccessAsync()
+                .thenCompose(__ -> {
+                    if (namespaceName.isGlobal()) {
+                        // check cluster ownership for a given global namespace: redirect if peer-cluster owns it
+                        return validateGlobalNamespaceOwnershipAsync(namespaceName);
+                    } else {
+                        return validateClusterOwnershipAsync(namespaceName.getCluster())
+                                .thenCompose((___) -> validateClusterForTenantAsync(namespaceName.getTenant(),
+                                        namespaceName.getCluster()));
+                    }
+                })
+                .thenCompose(__ -> getLocalPolicies().getLocalPoliciesAsync(namespaceName))
+                .thenAccept((localPolicies) -> {
+                    if (!localPolicies.isPresent()) {
+                        throw new RestException(Status.NOT_FOUND,
+                                "Namespace local-policies does not exist");
+                    }
+                    asyncResponse.resume(localPolicies.get().bookieAffinityGroup);
+                })
+                .exceptionally((ex) -> {
+                    Throwable throwable = FutureUtil.unwrapCompletionException(ex);
+                    if (throwable instanceof NotFoundException) {
+                        log.warn("[{}] Failed to get local-policy configuration for namespace {}: does not exist",
+                                clientAppId(), namespaceName);
+                        asyncResponse.resume(new RestException(Status.NOT_FOUND, "Namespace policies does not exist"));
+                    } else {
+                        log.error("[{}] Failed to get local-policy configuration for namespace {}", clientAppId(),
+                                namespaceName, ex);
+                        resumeAsyncResponseExceptionally(asyncResponse, throwable);
+                    }
+                    return null;
+                });
     }
 
     public CompletableFuture<Void> internalUnloadNamespaceBundleAsync(String bundleRange, boolean authoritative) {

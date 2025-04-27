@@ -953,11 +953,12 @@ public class Namespaces extends NamespacesBase {
             @ApiResponse(code = 403, message = "Don't have admin permission"),
             @ApiResponse(code = 404, message = "Namespace does not exist"),
             @ApiResponse(code = 409, message = "Concurrent modification")})
-    public void setBookieAffinityGroup(@PathParam("tenant") String tenant, @PathParam("namespace") String namespace,
+    public void setBookieAffinityGroup(@Suspended AsyncResponse asyncResponse,
+                                       @PathParam("tenant") String tenant, @PathParam("namespace") String namespace,
                                        @ApiParam(value = "Bookie affinity group for the specified namespace")
-                                               BookieAffinityGroupData bookieAffinityGroup) {
+                                       BookieAffinityGroupData bookieAffinityGroup) {
         validateNamespaceName(tenant, namespace);
-        internalSetBookieAffinityGroup(bookieAffinityGroup);
+        internalSetBookieAffinityGroup(asyncResponse, bookieAffinityGroup);
     }
 
     @GET
@@ -967,33 +968,35 @@ public class Namespaces extends NamespacesBase {
             @ApiResponse(code = 307, message = "Current broker doesn't serve the namespace"),
             @ApiResponse(code = 403, message = "Don't have admin permission"),
             @ApiResponse(code = 404, message = "Namespace does not exist"),
-            @ApiResponse(code = 409, message = "Concurrent modification") })
-    public BookieAffinityGroupData getBookieAffinityGroup(@PathParam("property") String property,
-            @PathParam("namespace") String namespace) {
+            @ApiResponse(code = 409, message = "Concurrent modification")})
+    public void getBookieAffinityGroup(@Suspended AsyncResponse asyncResponse,
+                                       @PathParam("property") String property,
+                                       @PathParam("namespace") String namespace) {
         validateNamespaceName(property, namespace);
-        return internalGetBookieAffinityGroup();
+        internalGetBookieAffinityGroup(asyncResponse);
     }
 
     @DELETE
     @Path("/{property}/{namespace}/persistence/bookieAffinity")
     @ApiOperation(value = "Delete the bookie-affinity-group from namespace-local policy.")
-    @ApiResponses(value = { @ApiResponse(code = 403, message = "Don't have admin permission"),
+    @ApiResponses(value = {@ApiResponse(code = 403, message = "Don't have admin permission"),
             @ApiResponse(code = 404, message = "Namespace does not exist"),
-            @ApiResponse(code = 409, message = "Concurrent modification") })
-    public void deleteBookieAffinityGroup(@PathParam("property") String property,
-            @PathParam("namespace") String namespace) {
+            @ApiResponse(code = 409, message = "Concurrent modification")})
+    public void deleteBookieAffinityGroup(@Suspended AsyncResponse asyncResponse,
+                                          @PathParam("property") String property,
+                                          @PathParam("namespace") String namespace) {
         validateNamespaceName(property, namespace);
-        internalDeleteBookieAffinityGroup();
+        internalDeleteBookieAffinityGroup(asyncResponse);
     }
 
     @GET
     @Path("/{tenant}/{namespace}/persistence")
     @ApiOperation(value = "Get the persistence configuration for a namespace.")
-    @ApiResponses(value = { @ApiResponse(code = 403, message = "Don't have admin permission"),
+    @ApiResponses(value = {@ApiResponse(code = 403, message = "Don't have admin permission"),
             @ApiResponse(code = 404, message = "Namespace does not exist"),
-            @ApiResponse(code = 409, message = "Concurrent modification") })
+            @ApiResponse(code = 409, message = "Concurrent modification")})
     public PersistencePolicies getPersistence(@PathParam("tenant") String tenant,
-            @PathParam("namespace") String namespace) {
+                                              @PathParam("namespace") String namespace) {
         validateNamespaceName(tenant, namespace);
         return internalGetPersistence();
     }
