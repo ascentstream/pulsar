@@ -34,6 +34,10 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import lombok.Cleanup;
 import org.apache.bookkeeper.bookie.BookieImpl;
+import org.apache.bookkeeper.bookie.GarbageCollectorThread;
+import org.apache.bookkeeper.bookie.ScanAndCompareGarbageCollector;
+import org.apache.bookkeeper.bookie.storage.ldb.DbLedgerStorage;
+import org.apache.bookkeeper.bookie.storage.ldb.SingleDirectoryDbLedgerStorage;
 import org.apache.bookkeeper.client.BookKeeper;
 import org.apache.bookkeeper.client.api.LedgerMetadata;
 import org.apache.bookkeeper.conf.ClientConfiguration;
@@ -43,6 +47,7 @@ import org.apache.bookkeeper.mledger.proto.MLDataFormats.ManagedLedgerInfo.Ledge
 import org.apache.bookkeeper.net.BookieId;
 import org.apache.bookkeeper.proto.BookieServer;
 import org.apache.bookkeeper.versioning.Versioned;
+import org.apache.commons.lang.reflect.FieldUtils;
 import org.apache.pulsar.bookie.rackawareness.BookieRackAffinityMapping;
 import org.apache.pulsar.broker.ManagedLedgerClientFactory;
 import org.apache.pulsar.broker.PulsarService;
@@ -259,6 +264,21 @@ public class BrokerBookieIsolationTest {
         getConf.setAccessible(true);
         ClientConfiguration clientConf = (ClientConfiguration) getConf.invoke(bk);
         assertEquals(clientConf.getProperty(REPP_DNS_RESOLVER_CLASS), BookieRackAffinityMapping.class.getName());
+    }
+
+    private LedgerManager getLedgerManager(BookieImpl bookie1) throws IllegalAccessException {
+        DbLedgerStorage ledgerStorage =
+                (DbLedgerStorage) FieldUtils.readDeclaredField(bookie1, "ledgerStorage", true);
+        SingleDirectoryDbLedgerStorage singleDirectoryDbLedgerStorage =
+                ((List<SingleDirectoryDbLedgerStorage>)FieldUtils
+                        .readDeclaredField(ledgerStorage, "ledgerStorageList", true)).get(0);
+        GarbageCollectorThread gcThread =
+                (GarbageCollectorThread)FieldUtils.readDeclaredField(singleDirectoryDbLedgerStorage, "gcThread", true);
+        ScanAndCompareGarbageCollector garbageCollector =
+                (ScanAndCompareGarbageCollector)FieldUtils.readDeclaredField(gcThread, "garbageCollector", true);
+        LedgerManager ledgerManager =
+                (LedgerManager)FieldUtils.readDeclaredField(garbageCollector, "ledgerManager", true);
+        return ledgerManager;
     }
 
     /**
