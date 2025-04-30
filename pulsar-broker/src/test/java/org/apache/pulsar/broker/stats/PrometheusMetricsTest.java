@@ -1186,22 +1186,6 @@ public class PrometheusMetricsTest extends BrokerTestBase {
         return null;
     }
 
-    private static String keyNameBySubstrings(Multimap<String, Metric> metrics, String... substrings) {
-        for (String key: metrics.keys()) {
-            boolean found = true;
-            for (String s: substrings) {
-                if (!key.contains(s)) {
-                    found = false;
-                    break;
-                }
-            }
-            if (found) {
-                return key;
-            }
-        }
-        return null;
-    }
-
     @Test
     public void testAuthMetrics() throws IOException, AuthenticationException {
         SecretKey secretKey = AuthTokenUtils.createSecretKey(SignatureAlgorithm.HS256);
