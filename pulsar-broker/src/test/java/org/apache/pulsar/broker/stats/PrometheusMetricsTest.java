@@ -1145,7 +1145,7 @@ public class PrometheusMetricsTest extends BrokerTestBase {
 
         cm = (List<Metric>) metrics.get(
                 keyNameBySubstrings(metrics,
-                        "pulsar_managedLedger_client", "bookkeeper_ml_scheduler_queue"));
+                        "pulsar_managedLedger_client", "bookkeeper_ml_scheduler_max_queue_size"));
         assertEquals(cm.size(), 1);
         assertEquals(cm.get(0).tags.get("cluster"), "test");
     }
