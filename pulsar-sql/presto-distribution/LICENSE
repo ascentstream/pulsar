@@ -349,6 +349,9 @@ The Apache Software License, Version 2.0
     - leveldb-0.10.jar
     - leveldb-api-0.10.jar
   * Log4j implemented over SLF4J
+    - log4j-api-2.18.0.jar
+    - log4j-core-2.18.0.jar
+    - log4j-slf4j-impl-2.18.0.jar
     - log4j-over-slf4j-1.7.32.jar
   * Lucene Common Analyzers
     - lucene-analyzers-common-8.4.1.jar
@@ -423,6 +426,7 @@ The Apache Software License, Version 2.0
     - metrics-core-4.1.12.1.jar
     - metrics-graphite-4.1.12.1.jar
     - metrics-jvm-4.1.12.1.jar
+    - metrics-jmx-4.1.12.1.jar
   * Prometheus
     - simpleclient-0.5.0.jar
     - simpleclient_common-0.5.0.jar
@@ -449,7 +453,7 @@ The Apache Software License, Version 2.0
     - codahale-metrics-provider-4.16.6.jar
     - bookkeeper-slogger-api-4.16.6.jar
     - bookkeeper-slogger-slf4j-4.16.6.jar
-    - native-io-4.16.5.jar
+    - native-io-4.16.6.jar
   * Apache Commons
     - commons-cli-1.5.0.jar
     - commons-codec-1.15.jar
@@ -467,7 +471,7 @@ The Apache Software License, Version 2.0
   * Java Assist
     - javassist-3.25.0-GA.jar
   * Java Native Access
-    - jna-4.2.0.jar
+    - jna-5.12.1.jar
   * Java Object Layout: Core
     - jol-core-0.2.jar
   * Yahoo Datasketches
@@ -484,10 +488,8 @@ The Apache Software License, Version 2.0
     - perfmark-api-0.19.0.jar
   * Annotations
     - auto-service-annotations-1.0.jar
-  * Stream Lib
-    - stream-2.9.5.jar
-
-
+  * RxJava
+    - rxjava-3.0.1.jar
 Protocol Buffers License
  * Protocol Buffers
    - protobuf-java-3.19.6.jar
