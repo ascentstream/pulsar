@@ -377,6 +377,9 @@ The Apache Software License, Version 2.0
     - io.netty-netty-tcnative-boringssl-static-2.0.61.Final-osx-x86_64.jar
     - io.netty-netty-tcnative-boringssl-static-2.0.61.Final-windows-x86_64.jar
     - io.netty-netty-tcnative-classes-2.0.61.Final.jar
+    - io.netty.incubator-netty-incubator-transport-classes-io_uring-0.0.25.Final.jar
+    - io.netty.incubator-netty-incubator-transport-native-io_uring-0.0.25.Final-linux-x86_64.jar
+    - io.netty.incubator-netty-incubator-transport-native-io_uring-0.0.25.Final-linux-aarch_64.jar
  * Prometheus client
     - io.prometheus-simpleclient-0.5.0.jar
     - io.prometheus-simpleclient_common-0.5.0.jar
@@ -394,33 +397,38 @@ The Apache Software License, Version 2.0
     - org.apache.logging.log4j-log4j-core-2.18.0.jar
     - org.apache.logging.log4j-log4j-slf4j-impl-2.18.0.jar
     - org.apache.logging.log4j-log4j-web-2.18.0.jar
- * Java Native Access JNA -- net.java.dev.jna-jna-4.2.0.jar
+ * Java Native Access JNA
+    - net.java.dev.jna-jna-jpms-5.12.1.jar
+    - net.java.dev.jna-jna-platform-jpms-5.12.1.jar
  * BookKeeper
-    - org.apache.bookkeeper-bookkeeper-common-4.14.8.jar
-    - org.apache.bookkeeper-bookkeeper-common-allocator-4.14.8.jar
-    - org.apache.bookkeeper-bookkeeper-proto-4.14.8.jar
-    - org.apache.bookkeeper-bookkeeper-server-4.14.8.jar
-    - org.apache.bookkeeper-bookkeeper-tools-framework-4.14.8.jar
-    - org.apache.bookkeeper-circe-checksum-4.14.8.jar
-    - org.apache.bookkeeper-cpu-affinity-4.14.8.jar
-    - org.apache.bookkeeper-statelib-4.14.8.jar
-    - org.apache.bookkeeper-stream-storage-api-4.14.8.jar
-    - org.apache.bookkeeper-stream-storage-common-4.14.8.jar
-    - org.apache.bookkeeper-stream-storage-java-client-4.14.8.jar
-    - org.apache.bookkeeper-stream-storage-java-client-base-4.14.8.jar
-    - org.apache.bookkeeper-stream-storage-proto-4.14.8.jar
-    - org.apache.bookkeeper-stream-storage-server-4.14.8.jar
-    - org.apache.bookkeeper-stream-storage-service-api-4.14.8.jar
-    - org.apache.bookkeeper-stream-storage-service-impl-4.14.8.jar
-    - org.apache.bookkeeper.http-http-server-4.14.8.jar
-    - org.apache.bookkeeper.http-vertx-http-server-4.14.8.jar
-    - org.apache.bookkeeper.stats-bookkeeper-stats-api-4.14.8.jar
-    - org.apache.bookkeeper.stats-prometheus-metrics-provider-4.14.8.jar
-    - org.apache.distributedlog-distributedlog-common-4.14.8.jar
-    - org.apache.distributedlog-distributedlog-core-4.14.8-tests.jar
-    - org.apache.distributedlog-distributedlog-core-4.14.8.jar
-    - org.apache.distributedlog-distributedlog-protocol-4.14.8.jar
-    - org.apache.bookkeeper.stats-codahale-metrics-provider-4.14.8.jar
+    - org.apache.bookkeeper-bookkeeper-common-4.16.6.jar
+    - org.apache.bookkeeper-bookkeeper-common-allocator-4.16.6.jar
+    - org.apache.bookkeeper-bookkeeper-proto-4.16.6.jar
+    - org.apache.bookkeeper-bookkeeper-server-4.16.6.jar
+    - org.apache.bookkeeper-bookkeeper-tools-framework-4.16.6.jar
+    - org.apache.bookkeeper-circe-checksum-4.16.6.jar
+    - org.apache.bookkeeper-cpu-affinity-4.16.6.jar
+    - org.apache.bookkeeper-statelib-4.16.6.jar
+    - org.apache.bookkeeper-stream-storage-api-4.16.6.jar
+    - org.apache.bookkeeper-stream-storage-common-4.16.6.jar
+    - org.apache.bookkeeper-stream-storage-java-client-4.16.6.jar
+    - org.apache.bookkeeper-stream-storage-java-client-base-4.16.6.jar
+    - org.apache.bookkeeper-stream-storage-proto-4.16.6.jar
+    - org.apache.bookkeeper-stream-storage-server-4.16.6.jar
+    - org.apache.bookkeeper-stream-storage-service-api-4.16.6.jar
+    - org.apache.bookkeeper-stream-storage-service-impl-4.16.6.jar
+    - org.apache.bookkeeper.http-http-server-4.16.6.jar
+    - org.apache.bookkeeper.http-vertx-http-server-4.16.6.jar
+    - org.apache.bookkeeper.stats-bookkeeper-stats-api-4.16.6.jar
+    - org.apache.bookkeeper.stats-prometheus-metrics-provider-4.16.6.jar
+    - org.apache.distributedlog-distributedlog-common-4.16.6.jar
+    - org.apache.distributedlog-distributedlog-core-4.16.6-tests.jar
+    - org.apache.distributedlog-distributedlog-core-4.16.6.jar
+    - org.apache.distributedlog-distributedlog-protocol-4.16.6.jar
+    - org.apache.bookkeeper.stats-codahale-metrics-provider-4.16.6.jar
+    - org.apache.bookkeeper-bookkeeper-slogger-api-4.16.6.jar
+    - org.apache.bookkeeper-bookkeeper-slogger-slf4j-4.16.6.jar
+    - org.apache.bookkeeper-native-io-4.16.6.jar
   * Apache HTTP Client
     - org.apache.httpcomponents-httpclient-4.5.13.jar
     - org.apache.httpcomponents-httpcore-4.4.13.jar
@@ -508,9 +516,10 @@ The Apache Software License, Version 2.0
     - io.kubernetes-client-java-api-18.0.0.jar
     - io.kubernetes-client-java-proto-18.0.0.jar
   * Dropwizard
-    - io.dropwizard.metrics-metrics-core-3.2.5.jar
-    - io.dropwizard.metrics-metrics-graphite-3.2.5.jar
-    - io.dropwizard.metrics-metrics-jvm-3.2.5.jar
+    - io.dropwizard.metrics-metrics-core-4.1.12.1.jar
+    - io.dropwizard.metrics-metrics-graphite-4.1.12.1.jar
+    - io.dropwizard.metrics-metrics-jvm-4.1.12.1.jar
+    - io.dropwizard.metrics-metrics-jmx-4.1.12.1.jar
   * Prometheus
     - io.prometheus-simpleclient_httpserver-0.5.0.jar
   * Java JSON WebTokens
@@ -532,7 +541,6 @@ The Apache Software License, Version 2.0
   * Snappy Java
     - org.xerial.snappy-snappy-java-1.1.10.5.jar
   * Google HTTP Client
-    - com.google.http-client-google-http-client-jackson2-1.41.0.jar
     - com.google.http-client-google-http-client-gson-1.41.0.jar
     - com.google.http-client-google-http-client-1.41.0.jar
     - com.google.auto.value-auto-value-annotations-1.9.jar
@@ -544,6 +552,8 @@ The Apache Software License, Version 2.0
     - com.github.seancfoley-ipaddress-5.3.3.jar
   * RoaringBitmap
     - org.roaringbitmap-RoaringBitmap-0.9.44.jar
+  * RxJava
+    - io.reactivex.rxjava3-rxjava-3.0.1.jar
 
 BSD 3-clause "New" or "Revised" License
  * Google auth library
@@ -564,7 +574,8 @@ MIT License
     - org.slf4j-jcl-over-slf4j-1.7.32.jar
  * The Checker Framework
     - org.checkerframework-checker-qual-3.33.0.jar
-
+ * oshi
+    - com.github.oshi-oshi-core-java11-6.4.0.jar
 Protocol Buffers License
  * Protocol Buffers
    - com.google.protobuf-protobuf-java-3.19.6.jar -- licenses/LICENSE-protobuf.txt

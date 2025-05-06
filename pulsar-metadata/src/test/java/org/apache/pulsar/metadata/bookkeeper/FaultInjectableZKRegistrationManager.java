@@ -619,6 +619,11 @@ public class FaultInjectableZKRegistrationManager implements RegistrationManager
         }
     }
 
+    @Override
+    public void addRegistrationListener(RegistrationListener listener) {
+        listeners.add(listener);
+    }
+
     public void betweenRegisterReadOnlyBookie(Function<Void, Void> fn) {
         hookOnRegisterReadOnly = fn;
     }
