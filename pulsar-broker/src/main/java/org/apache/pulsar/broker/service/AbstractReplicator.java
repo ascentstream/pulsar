@@ -266,9 +266,8 @@ public abstract class AbstractReplicator implements Replicator {
                 .exceptionally(ex -> {
                     if (STATE_UPDATER.compareAndSet(this, State.Starting, State.Stopped)) {
                         long waitTimeMs = backOff.next();
-                        log.warn("[{}][{} -> {}] Failed to create remote producer ({}), retrying in {} s", topicName,
-                                localCluster, remoteCluster, ex.getMessage(), waitTimeMs / 1000.0);
-
+                        log.warn("[{}][{} -> {}] Failed to create remote producer, retrying in {} s", topicName,
+                                localCluster, remoteCluster, waitTimeMs / 1000.0, ex);
                         // BackOff before retrying
                         brokerService.executor().schedule(this::checkTopicActiveAndRetryStartProducer, waitTimeMs,
                                 TimeUnit.MILLISECONDS);
