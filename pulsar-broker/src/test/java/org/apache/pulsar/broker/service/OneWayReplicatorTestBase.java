@@ -163,6 +163,10 @@ public abstract class OneWayReplicatorTestBase extends TestRetrySupport {
         admin1.tenants().createTenant(defaultTenant, new TenantInfoImpl(Collections.emptySet(),
                 Sets.newHashSet(cluster1, cluster2)));
         admin1.namespaces().createNamespace(replicatedNamespace, Sets.newHashSet(cluster1, cluster2));
+        admin1.namespaces().createNamespace(
+                sourceClusterAlwaysSchemaCompatibleNamespace, Sets.newHashSet(cluster1, cluster2));
+        admin1.namespaces().setSchemaCompatibilityStrategy(sourceClusterAlwaysSchemaCompatibleNamespace,
+                SchemaCompatibilityStrategy.ALWAYS_COMPATIBLE);
         admin1.namespaces().createNamespace(nonReplicatedNamespace);
         admin1.namespaces().createNamespace(
                 sourceClusterAlwaysSchemaCompatibleNamespace, Sets.newHashSet(cluster1, cluster2));
@@ -187,6 +191,9 @@ public abstract class OneWayReplicatorTestBase extends TestRetrySupport {
             admin2.tenants().createTenant(defaultTenant, new TenantInfoImpl(Collections.emptySet(),
                     Sets.newHashSet(cluster1, cluster2)));
             admin2.namespaces().createNamespace(replicatedNamespace);
+            admin2.namespaces().createNamespace(sourceClusterAlwaysSchemaCompatibleNamespace);
+            admin2.namespaces().setSchemaCompatibilityStrategy(sourceClusterAlwaysSchemaCompatibleNamespace,
+                    SchemaCompatibilityStrategy.FORWARD);
             admin2.namespaces().createNamespace(nonReplicatedNamespace);
             admin2.namespaces().createNamespace(sourceClusterAlwaysSchemaCompatibleNamespace);
             admin2.namespaces().setSchemaCompatibilityStrategy(sourceClusterAlwaysSchemaCompatibleNamespace,

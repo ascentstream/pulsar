@@ -244,4 +244,10 @@ public class OneWayReplicatorUsingGlobalZKTest extends OneWayReplicatorTest {
     public void testTopicPoliciesReplicationRule() throws Exception {
         super.testTopicPoliciesReplicationRule();
     }
+
+    @Override
+    @Test(dataProvider = "enableDeduplication", enabled = false)
+    public void testIncompatibleMultiVersionSchema(boolean enableDeduplication) throws Exception {
+        super.testIncompatibleMultiVersionSchema(enableDeduplication);
+    }
 }
