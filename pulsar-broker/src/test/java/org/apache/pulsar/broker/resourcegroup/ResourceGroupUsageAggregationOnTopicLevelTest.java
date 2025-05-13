@@ -41,13 +41,11 @@ import org.apache.pulsar.common.policies.data.TenantInfoImpl;
 import org.apache.pulsar.common.policies.data.stats.TopicStatsImpl;
 import org.awaitility.Awaitility;
 import org.testng.Assert;
-import org.testng.annotations.AfterClass;
-import org.testng.annotations.BeforeClass;
-import org.testng.annotations.Ignore;
+import org.testng.annotations.AfterMethod;
+import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.Test;
 
 @Slf4j
-@Ignore
 public class ResourceGroupUsageAggregationOnTopicLevelTest extends ProducerConsumerBase {
 
     private final String TenantName = "pulsar-test";
@@ -58,7 +56,7 @@ public class ResourceGroupUsageAggregationOnTopicLevelTest extends ProducerConsu
     private final String PRODUCE_CONSUME_NON_PERSISTENT_TOPIC =
             "non-persistent://" + TenantAndNsName + TestProduceConsumeTopicName;
 
-    @BeforeClass
+    @BeforeMethod
     @Override
     protected void setup() throws Exception {
         super.internalSetup();
@@ -72,18 +70,18 @@ public class ResourceGroupUsageAggregationOnTopicLevelTest extends ProducerConsu
         admin.namespaces().setNamespaceReplicationClusters(TenantAndNsName, Sets.newHashSet(clusterName));
     }
 
-    @AfterClass(alwaysRun = true)
+    @AfterMethod(alwaysRun = true)
     @Override
     protected void cleanup() throws Exception {
         super.internalCleanup();
     }
 
-    @Test(enabled = false)
+    @Test
     public void testPersistentTopicProduceConsumeUsageOnRG() throws Exception {
         testProduceConsumeUsageOnRG(PRODUCE_CONSUME_PERSISTENT_TOPIC);
     }
 
-    @Test(enabled = false)
+    @Test
     public void testNonPersistentTopicProduceConsumeUsageOnRG() throws Exception {
         testProduceConsumeUsageOnRG(PRODUCE_CONSUME_NON_PERSISTENT_TOPIC);
     }
@@ -213,9 +211,9 @@ public class ResourceGroupUsageAggregationOnTopicLevelTest extends ProducerConsu
         if (sentNumMsgs > 0 || recvdNumMsgs > 0) {
             rgs.aggregateResourceGroupLocalUsages();
             BytesAndMessagesCount prodCounts = rgs.getRGUsage(rgName, ResourceGroupMonitoringClass.Publish,
-                    ResourceGroupUsageStatsType.Cumulative);
+                    ResourceGroupUsageStatsType.Cumulative).entrySet().iterator().next().getValue();
             BytesAndMessagesCount consCounts = rgs.getRGUsage(rgName, ResourceGroupMonitoringClass.Dispatch,
-                    ResourceGroupUsageStatsType.Cumulative);
+                    ResourceGroupUsageStatsType.Cumulative).entrySet().iterator().next().getValue();
 
             if (checkProduce) {
                 Assert.assertTrue(prodCounts.bytes >= sentNumBytes);

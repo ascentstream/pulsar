@@ -19,11 +19,11 @@
 package org.apache.pulsar.broker.resourcegroup;
 
 import com.google.common.collect.Sets;
+import java.util.concurrent.TimeUnit;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.pulsar.broker.resourcegroup.ResourceGroup.BytesAndMessagesCount;
 import org.apache.pulsar.broker.resourcegroup.ResourceGroup.ResourceGroupMonitoringClass;
 import org.apache.pulsar.broker.resourcegroup.ResourceGroupService.ResourceGroupUsageStatsType;
-import org.apache.pulsar.broker.service.BrokerService;
 import org.apache.pulsar.broker.service.resource.usage.ResourceUsage;
 import org.apache.pulsar.client.admin.PulsarAdminException;
 import org.apache.pulsar.client.api.Consumer;
@@ -36,20 +36,15 @@ import org.apache.pulsar.common.naming.NamespaceName;
 import org.apache.pulsar.common.naming.TopicName;
 import org.apache.pulsar.common.policies.data.ClusterData;
 import org.apache.pulsar.common.policies.data.TenantInfoImpl;
-import org.apache.pulsar.common.policies.data.stats.TopicStatsImpl;
+import org.apache.pulsar.common.policies.data.TopicStats;
 import org.testng.Assert;
-import org.testng.annotations.AfterClass;
-import org.testng.annotations.BeforeClass;
-import org.testng.annotations.Ignore;
+import org.testng.annotations.AfterMethod;
+import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.Test;
 
-import java.util.Map;
-import java.util.concurrent.TimeUnit;
-
 @Slf4j
-@Ignore
 public class ResourceGroupUsageAggregationTest extends ProducerConsumerBase {
-    @BeforeClass
+    @BeforeMethod
     @Override
     protected void setup() throws Exception {
         super.internalSetup();
@@ -73,19 +68,23 @@ public class ResourceGroupUsageAggregationTest extends ProducerConsumerBase {
         this.rgs = new ResourceGroupService(pulsar, TimeUnit.MILLISECONDS, transportMgr, dummyQuotaCalc);
     }
 
-    @AfterClass(alwaysRun = true)
+    @AfterMethod(alwaysRun = true)
     @Override
     protected void cleanup() throws Exception {
         super.internalCleanup();
     }
 
-    @Test(enabled = false)
-    public void testProduceConsumeUsageOnRG() throws Exception {
-        testProduceConsumeUsageOnRG(PRODUCE_CONSUME_PERSISTENT_TOPIC);
-        testProduceConsumeUsageOnRG(PRODUCE_CONSUME_NON_PERSISTENT_TOPIC);
+    @Test
+    public void testProduceConsumeUsageOnRGWithPersistentTopic() throws Exception {
+        testProduceConsumeUsageOnRG(PRODUCE_CONSUME_PERSISTENT_TOPIC, "rg-" + System.currentTimeMillis());
     }
 
-    private void testProduceConsumeUsageOnRG(String topicString) throws Exception {
+    @Test
+    public void testProduceConsumeUsageOnRGWithNonPersistentTopic() throws Exception {
+        testProduceConsumeUsageOnRG(PRODUCE_CONSUME_NON_PERSISTENT_TOPIC, "rg-" + System.currentTimeMillis());
+    }
+
+    private void testProduceConsumeUsageOnRG(String topicString, String activeRgName) throws Exception {
         ResourceUsagePublisher ruP = new ResourceUsagePublisher() {
             @Override
             public String getID() { return activeRG.getID(); }
@@ -117,6 +116,7 @@ public class ResourceGroupUsageAggregationTest extends ProducerConsumerBase {
 
 
         Producer<byte[]> producer = pulsarClient.newProducer()
+                .enableBatching(false)
                 .topic(topicString)
                 .create();
 
@@ -192,49 +192,42 @@ public class ResourceGroupUsageAggregationTest extends ProducerConsumerBase {
                              int recvdNumBytes, int recvdNumMsgs,
                              boolean checkProduce, boolean checkConsume)
                                                                 throws InterruptedException, PulsarAdminException {
-        BrokerService bs = pulsar.getBrokerService();
-        Map<String, TopicStatsImpl> topicStatsMap = bs.getTopicStats();
-        for (Map.Entry<String, TopicStatsImpl> entry : topicStatsMap.entrySet()) {
-            String mapTopicName = entry.getKey();
-            if (mapTopicName.equals(topicString)) {
-                TopicStatsImpl stats = entry.getValue();
-                if (checkProduce) {
-                    Assert.assertTrue(stats.bytesInCounter >= sentNumBytes);
-                    Assert.assertEquals(sentNumMsgs, stats.msgInCounter);
-                }
-                if (checkConsume) {
-                    Assert.assertTrue(stats.bytesOutCounter >= recvdNumBytes);
-                    Assert.assertEquals(recvdNumMsgs, stats.msgOutCounter);
-                }
+        TopicStats stats = admin.topics().getStats(topicString);
+        if (checkProduce) {
+            Assert.assertTrue(stats.getBytesInCounter() >= sentNumBytes);
+            Assert.assertEquals(sentNumMsgs, stats.getMsgInCounter());
+        }
+        if (checkConsume) {
+            Assert.assertTrue(stats.getBytesOutCounter() >= recvdNumBytes);
+            Assert.assertEquals(recvdNumMsgs, stats.getMsgOutCounter());
+        }
 
-                if (sentNumMsgs > 0 || recvdNumMsgs > 0) {
-                    rgs.aggregateResourceGroupLocalUsages();  // hack to ensure aggregator calculation without waiting
-                    BytesAndMessagesCount prodCounts = rgs.getRGUsage(rgName, ResourceGroupMonitoringClass.Publish,
-                            ResourceGroupUsageStatsType.Cumulative);
-                    BytesAndMessagesCount consCounts = rgs.getRGUsage(rgName, ResourceGroupMonitoringClass.Dispatch,
-                            ResourceGroupUsageStatsType.Cumulative);
+        if (sentNumMsgs > 0 || recvdNumMsgs > 0) {
+            rgs.aggregateResourceGroupLocalUsages();  // hack to ensure aggregator calculation without waiting
+            BytesAndMessagesCount prodCounts = rgs.getRGUsage(rgName, ResourceGroupMonitoringClass.Publish,
+                    ResourceGroupUsageStatsType.Cumulative).entrySet().iterator().next().getValue();
+            BytesAndMessagesCount consCounts = rgs.getRGUsage(rgName, ResourceGroupMonitoringClass.Dispatch,
+                    ResourceGroupUsageStatsType.Cumulative).entrySet().iterator().next().getValue();
 
-                    // Re-do the getRGUsage.
-                    // The counts should be equal, since there wasn't any intervening traffic on TEST_PRODUCE_CONSUME_TOPIC.
-                    BytesAndMessagesCount prodCounts1 = rgs.getRGUsage(rgName, ResourceGroupMonitoringClass.Publish,
-                            ResourceGroupUsageStatsType.Cumulative);
-                    BytesAndMessagesCount consCounts1 = rgs.getRGUsage(rgName, ResourceGroupMonitoringClass.Dispatch,
-                            ResourceGroupUsageStatsType.Cumulative);
+            // Re-do the getRGUsage.
+            // The counts should be equal, since there wasn't any intervening traffic on TEST_PRODUCE_CONSUME_TOPIC.
+            BytesAndMessagesCount prodCounts1 = rgs.getRGUsage(rgName, ResourceGroupMonitoringClass.Publish,
+                    ResourceGroupUsageStatsType.Cumulative).entrySet().iterator().next().getValue();
+            BytesAndMessagesCount consCounts1 = rgs.getRGUsage(rgName, ResourceGroupMonitoringClass.Dispatch,
+                    ResourceGroupUsageStatsType.Cumulative).entrySet().iterator().next().getValue();
 
-                    Assert.assertEquals(prodCounts1.bytes, prodCounts.bytes);
-                    Assert.assertEquals(prodCounts1.messages, prodCounts.messages);
-                    Assert.assertEquals(consCounts1.bytes, consCounts.bytes);
-                    Assert.assertEquals(consCounts1.messages, consCounts.messages);
+            Assert.assertEquals(prodCounts1.bytes, prodCounts.bytes);
+            Assert.assertEquals(prodCounts1.messages, prodCounts.messages);
+            Assert.assertEquals(consCounts1.bytes, consCounts.bytes);
+            Assert.assertEquals(consCounts1.messages, consCounts.messages);
 
-                    if (checkProduce) {
-                        Assert.assertTrue(prodCounts.bytes >= sentNumBytes);
-                        Assert.assertEquals(sentNumMsgs, prodCounts.messages);
-                    }
-                    if (checkConsume) {
-                        Assert.assertTrue(consCounts.bytes >= recvdNumBytes);
-                        Assert.assertEquals(recvdNumMsgs, consCounts.messages);
-                    }
-                }
+            if (checkProduce) {
+                Assert.assertTrue(prodCounts.bytes >= sentNumBytes);
+                Assert.assertEquals(sentNumMsgs, prodCounts.messages);
+            }
+            if (checkConsume) {
+                Assert.assertTrue(consCounts.bytes >= recvdNumBytes);
+                Assert.assertEquals(recvdNumMsgs, consCounts.messages);
             }
         }
     }
@@ -243,7 +236,6 @@ public class ResourceGroupUsageAggregationTest extends ProducerConsumerBase {
     ResourceGroup activeRG;
     final org.apache.pulsar.common.policies.data.ResourceGroup rgConfig =
             new org.apache.pulsar.common.policies.data.ResourceGroup();
-    final String activeRgName = "runProduceConsume";
     int numRgUsageListenerCallbacks = 0;
     int numRgFillUsageCallbacks = 0;
 
