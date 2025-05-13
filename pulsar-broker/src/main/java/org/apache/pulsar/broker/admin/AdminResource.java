@@ -27,6 +27,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.stream.Collectors;
 import javax.servlet.ServletContext;
 import javax.ws.rs.WebApplicationException;
@@ -38,6 +39,7 @@ import org.apache.bookkeeper.client.BookKeeper;
 import org.apache.bookkeeper.mledger.ManagedLedgerException;
 import org.apache.pulsar.broker.PulsarService;
 import org.apache.pulsar.broker.ServiceConfiguration;
+import org.apache.pulsar.broker.namespace.TopicExistsInfo;
 import org.apache.pulsar.broker.resources.ClusterResources;
 import org.apache.pulsar.broker.service.persistent.DispatchRateLimiter;
 import org.apache.pulsar.broker.web.PulsarWebResource;
@@ -45,7 +47,6 @@ import org.apache.pulsar.broker.web.RestException;
 import org.apache.pulsar.client.admin.PulsarAdmin;
 import org.apache.pulsar.client.admin.PulsarAdminException;
 import org.apache.pulsar.client.admin.internal.TopicsImpl;
-import org.apache.pulsar.common.api.proto.CommandGetTopicsOfNamespace;
 import org.apache.pulsar.common.naming.Constants;
 import org.apache.pulsar.common.naming.NamespaceBundle;
 import org.apache.pulsar.common.naming.NamespaceName;
@@ -62,6 +63,7 @@ import org.apache.pulsar.common.policies.data.SchemaCompatibilityStrategy;
 import org.apache.pulsar.common.policies.data.SubscribeRate;
 import org.apache.pulsar.common.policies.data.TopicOperation;
 import org.apache.pulsar.common.policies.data.TopicPolicies;
+import org.apache.pulsar.common.policies.data.TopicType;
 import org.apache.pulsar.common.policies.data.impl.DispatchRateImpl;
 import org.apache.pulsar.common.util.Codec;
 import org.apache.pulsar.common.util.FutureUtil;
@@ -514,115 +516,6 @@ public abstract class AdminResource extends PulsarWebResource {
         }
     }
 
-    protected List<String> getPartitionedTopicList(TopicDomain topicDomain) {
-        return sync(() -> namespaceResources().getPartitionedTopicResources()
-                .listPartitionedTopicsAsync(namespaceName, topicDomain));
-    }
-
-    protected List<String> getTopicPartitionList() {
-        return sync(()-> getPulsarResources().getTopicResources().getExistingPartitions(topicName));
-    }
-
-    protected void internalCreatePartitionedTopic(AsyncResponse asyncResponse, int numPartitions,
-                                                  boolean createLocalTopicOnly) {
-        internalCreatePartitionedTopic(asyncResponse, numPartitions, createLocalTopicOnly, null);
-    }
-
-    protected void internalCreatePartitionedTopic(AsyncResponse asyncResponse, int numPartitions,
-                                                  boolean createLocalTopicOnly, Map<String, String> properties) {
-        Integer maxTopicsPerNamespace = null;
-
-        try {
-            Policies policies = getNamespacePolicies(namespaceName);
-            maxTopicsPerNamespace = policies.max_topics_per_namespace;
-        } catch (RestException e) {
-            if (e.getResponse().getStatus() != Status.NOT_FOUND.getStatusCode()) {
-                log.error("[{}] Failed to create partitioned topic {}", clientAppId(), namespaceName, e);
-                resumeAsyncResponseExceptionally(asyncResponse, e);
-                return;
-            }
-        }
-
-        try {
-            if (maxTopicsPerNamespace == null) {
-                maxTopicsPerNamespace = pulsar().getConfig().getMaxTopicsPerNamespace();
-            }
-
-            // new create check
-            if (maxTopicsPerNamespace > 0 && !pulsar().getBrokerService().isSystemTopic(topicName)) {
-                List<String> partitionedTopics = getTopicPartitionList();
-                // exclude created system topic
-                long topicsCount =
-                        partitionedTopics.stream().filter(t ->
-                                        !pulsar().getBrokerService().isSystemTopic(TopicName.get(t))).count();
-                if (topicsCount + numPartitions > maxTopicsPerNamespace) {
-                    log.error("[{}] Failed to create partitioned topic {}, "
-                            + "exceed maximum number of topics in namespace", clientAppId(), topicName);
-                    resumeAsyncResponseExceptionally(asyncResponse, new RestException(Status.PRECONDITION_FAILED,
-                            "Exceed maximum number of topics in namespace."));
-                    return;
-                }
-            }
-        } catch (Exception e) {
-            log.error("[{}] Failed to create partitioned topic {}", clientAppId(), namespaceName, e);
-            resumeAsyncResponseExceptionally(asyncResponse, e);
-            return;
-        }
-
-        final int maxPartitions = pulsar().getConfig().getMaxNumPartitionsPerPartitionedTopic();
-        try {
-            validateNamespaceOperation(topicName.getNamespaceObject(), NamespaceOperation.CREATE_TOPIC);
-        } catch (Exception e) {
-            log.error("[{}] Failed to create partitioned topic {}", clientAppId(), topicName, e);
-            resumeAsyncResponseExceptionally(asyncResponse, e);
-            return;
-        }
-        if (numPartitions <= 0) {
-            asyncResponse.resume(new RestException(Status.NOT_ACCEPTABLE,
-                    "Number of partitions should be more than 0"));
-            return;
-        }
-        if (maxPartitions > 0 && numPartitions > maxPartitions) {
-            asyncResponse.resume(new RestException(Status.NOT_ACCEPTABLE,
-                    "Number of partitions should be less than or equal to " + maxPartitions));
-            return;
-        }
-
-        CompletableFuture<Void> createLocalFuture = new CompletableFuture<>();
-        checkTopicExistsAsync(topicName).thenAccept(exists -> {
-            if (exists) {
-                log.warn("[{}] Failed to create already existing topic {}", clientAppId(), topicName);
-                asyncResponse.resume(new RestException(Status.CONFLICT, "This topic already exists"));
-                return;
-            }
-
-            provisionPartitionedTopicPath(asyncResponse, numPartitions, createLocalTopicOnly, properties)
-                    .thenCompose(ignored -> tryCreatePartitionsAsync(numPartitions))
-                    .thenRun(() -> {
-                        if (!createLocalTopicOnly && topicName.isGlobal()) {
-                            internalCreatePartitionedTopicToReplicatedClustersInBackground(numPartitions);
-                            log.info("[{}] Successfully created partitioned for topic {} for the remote clusters",
-                                    clientAppId());
-                        } else {
-                            log.info("[{}] Skip creating partitioned for topic {} for the remote clusters",
-                                    clientAppId(), topicName);
-                        }
-                        asyncResponse.resume(Response.noContent().build());
-                    })
-                    .whenComplete((ignored, ex) -> {
-                        if (ex != null) {
-                            createLocalFuture.completeExceptionally(ex);
-                            return;
-                        }
-                        createLocalFuture.complete(null);
-                    });
-        }).exceptionally(ex -> {
-            log.error("[{}] Failed to create partitioned topic {}", clientAppId(), topicName, ex);
-            resumeAsyncResponseExceptionally(asyncResponse, ex);
-            return null;
-        });
-    }
-
     protected CompletableFuture<Set<String>> getNamespaceReplicatedClustersAsync(NamespaceName namespaceName) {
         return namespaceResources().getPoliciesAsync(namespaceName)
                 .thenApply(policies -> {
@@ -632,6 +525,142 @@ public abstract class AdminResource extends PulsarWebResource {
                         throw new RestException(Status.NOT_FOUND, "Namespace does not exist");
                     }
                 });
+    }
+
+    protected List<String> getPartitionedTopicList(TopicDomain topicDomain) {
+        return sync(() -> namespaceResources().getPartitionedTopicResources()
+                .listPartitionedTopicsAsync(namespaceName, topicDomain));
+    }
+
+    protected CompletableFuture<List<String>> getPartitionedTopicListAsync(TopicDomain topicDomain) {
+        return namespaceResources().getPartitionedTopicResources()
+                .listPartitionedTopicsAsync(namespaceName, topicDomain);
+    }
+
+    @Deprecated
+    protected List<String> getTopicPartitionList() {
+        return sync(() -> getPulsarResources().getTopicResources().getExistingPartitions(topicName));
+    }
+
+    protected void internalCreatePartitionedTopic(AsyncResponse asyncResponse, int numPartitions,
+                                                  boolean createLocalTopicOnly) {
+        internalCreatePartitionedTopic(asyncResponse, numPartitions, createLocalTopicOnly, null);
+    }
+
+    protected void internalCreatePartitionedTopic(AsyncResponse asyncResponse, int numPartitions,
+                                                  boolean createLocalTopicOnly, Map<String, String> properties) {
+        if (numPartitions <= 0) {
+            asyncResponse.resume(new RestException(Status.NOT_ACCEPTABLE,
+                    "Number of partitions should be more than 0"));
+            return;
+        }
+        int maxPartitions = pulsar().getConfig().getMaxNumPartitionsPerPartitionedTopic();
+        if (maxPartitions > 0 && numPartitions > maxPartitions) {
+            asyncResponse.resume(new RestException(Status.NOT_ACCEPTABLE,
+                    "Number of partitions should be less than or equal to " + maxPartitions));
+            return;
+        }
+        validateNamespaceOperationAsync(topicName.getNamespaceObject(), NamespaceOperation.CREATE_TOPIC)
+                .thenCompose((__) -> getNamespacePoliciesAsync(namespaceName).exceptionally(ex -> {
+                    Throwable unwrapped = FutureUtil.unwrapCompletionException(ex);
+                    if (unwrapped instanceof RestException) {
+                        RestException re = (RestException) unwrapped;
+                        if (re.getResponse().getStatus() == Status.NOT_FOUND.getStatusCode()) {
+                            return null;
+                        }
+                    }
+                    throw new CompletionException(unwrapped);
+                }))
+                .thenCompose(policies -> {
+                    int maxTopicsPerNamespace = policies != null && policies.max_topics_per_namespace != null
+                            ? policies.max_topics_per_namespace : pulsar().getConfig().getMaxTopicsPerNamespace();
+
+                    // new create check
+                    if (maxTopicsPerNamespace > 0 && !pulsar().getBrokerService().isSystemTopic(topicName)) {
+                        return getPartitionedTopicListAsync(TopicDomain.persistent)
+                                .thenCompose(partitionedTopics -> {
+                                    // exclude created system topic
+                                    long topicsCount =
+                                            partitionedTopics.stream().filter(t ->
+                                                            !pulsar().getBrokerService().isSystemTopic(TopicName.get(t)))
+                                                    .count();
+                                    if (topicsCount + numPartitions > maxTopicsPerNamespace) {
+                                        log.error("[{}] Failed to create partitioned topic {}, "
+                                                        + "exceed maximum number of topics in namespace", clientAppId(),
+                                                topicName);
+                                        return FutureUtil.failedFuture(new RestException(Status.PRECONDITION_FAILED,
+                                                "Exceed maximum number of topics in namespace."));
+                                    }
+                                    return CompletableFuture.completedFuture(null);
+                                });
+                    }
+                    return CompletableFuture.completedFuture(null);
+                })
+                .thenCompose(__ -> checkTopicExistsV2Async(topicName))
+                .thenAccept(topicExistsInfo -> {
+                    try {
+                        if (topicExistsInfo.isExists()) {
+                            if (topicExistsInfo.getTopicType().equals(TopicType.NON_PARTITIONED)
+                                    || (topicExistsInfo.getTopicType().equals(TopicType.PARTITIONED)
+                                    && !createLocalTopicOnly)) {
+                                log.warn("[{}] Failed to create already existing topic {}", clientAppId(), topicName);
+                                throw new RestException(Status.CONFLICT, "This topic already exists");
+                            }
+                        }
+                    } finally {
+                        topicExistsInfo.recycle();
+                    }
+                })
+                .thenCompose(__ -> getMaxPartitionIndex(topicName)
+                        .thenAccept(existingMaxPartitionIndex -> {
+                            // Case 1: Metadata loss — user tries to recreate the partitioned topic.
+                            // Case 2: Non-partitioned topic — user attempts to convert it to a partitioned topic.
+                            if (existingMaxPartitionIndex >= numPartitions) {
+                                int requiredMinPartitions = existingMaxPartitionIndex + 1;
+                                throw new RestException(Status.CONFLICT, String.format(
+                                        "The topic has a max partition index of %d, the number of partitions must be "
+                                                + "at least %d",
+                                        existingMaxPartitionIndex, requiredMinPartitions));
+                            }
+                        }))
+                .thenCompose(__ -> provisionPartitionedTopicPath(numPartitions, createLocalTopicOnly, properties))
+                .thenCompose(__ -> tryCreatePartitionsAsync(numPartitions))
+                .thenRun(() -> {
+                    if (!createLocalTopicOnly && topicName.isGlobal()) {
+                        internalCreatePartitionedTopicToReplicatedClustersInBackground(numPartitions);
+                        log.info("[{}] Successfully created partitioned for topic {} for the remote clusters",
+                                clientAppId(), topicName);
+                    } else {
+                        log.info("[{}] Skip creating partitioned for topic {} for the remote clusters",
+                                clientAppId(), topicName);
+                    }
+                    asyncResponse.resume(Response.noContent().build());
+                })
+                .exceptionally(ex -> {
+                    log.error("[{}] Failed to create partitioned topic {}", clientAppId(), topicName, ex);
+                    resumeAsyncResponseExceptionally(asyncResponse, ex);
+                    return null;
+                });
+    }
+
+    private CompletableFuture<Integer> getMaxPartitionIndex(TopicName topicName) {
+        if (topicName.getDomain() == TopicDomain.persistent) {
+            return getPulsarResources().getTopicResources().listPersistentTopicsAsync(topicName.getNamespaceObject())
+                    .thenApply(list -> {
+                        int maxIndex = -1;
+                        for (String s : list) {
+                            TopicName item = TopicName.get(s);
+                            if (item.isPartitioned() && item.getPartitionedTopicName()
+                                    .startsWith(topicName.getPartitionedTopicName())) {
+                                if (item.getPartitionIndex() > maxIndex) {
+                                    maxIndex = item.getPartitionIndex();
+                                }
+                            }
+                        }
+                        return maxIndex;
+                    });
+        }
+        return CompletableFuture.completedFuture(-1);
     }
 
     private void internalCreatePartitionedTopicToReplicatedClustersInBackground(int numPartitions) {
@@ -737,24 +766,32 @@ public abstract class AdminResource extends PulsarWebResource {
      * to the partitioned name of this partition.
      *
      * @param topicName given topic name
+     * @deprecated Use {@link #checkTopicExistsV2Async(TopicName)} instead.
      */
+    @Deprecated
     protected CompletableFuture<Boolean> checkTopicExistsAsync(TopicName topicName) {
-        return pulsar().getNamespaceService().getListOfTopics(topicName.getNamespaceObject(),
-                CommandGetTopicsOfNamespace.Mode.ALL)
-                .thenCompose(topics -> {
-                    boolean exists = false;
-                    for (String topic : topics) {
-                        if (topicName.getPartitionedTopicName().equals(
-                                TopicName.get(topic).getPartitionedTopicName())) {
-                            exists = true;
-                            break;
-                        }
-                    }
-                    return CompletableFuture.completedFuture(exists);
-                });
+        return pulsar().getNamespaceService().checkTopicExists(topicName).thenApply(topicExistsInfo -> {
+            boolean isExists = topicExistsInfo.isExists();
+            topicExistsInfo.recycle();
+            return isExists;
+        });
     }
 
-    private CompletableFuture<Void> provisionPartitionedTopicPath(AsyncResponse asyncResponse, int numPartitions,
+    /**
+     * Check the exists topics contains the given topic.
+     * Since there are topic partitions and non-partitioned topics in Pulsar. This check ensures that
+     * there is no duplication between them. Partition *instances* (e.g., topic-partition-0)
+     * are not considered individually — only the base partitioned topic name is checked.
+     *
+     * <p>Note: Be sure to recycle the {@link TopicExistsInfo} after it is no longer needed.</p>
+     *
+     * @param topicName given topic name
+     */
+    protected CompletableFuture<TopicExistsInfo> checkTopicExistsV2Async(TopicName topicName) {
+        return pulsar().getNamespaceService().checkTopicExists(topicName);
+    }
+
+    private CompletableFuture<Void> provisionPartitionedTopicPath(int numPartitions,
                                                                   boolean createLocalTopicOnly,
                                                                   Map<String, String> properties) {
         CompletableFuture<Void> future = new CompletableFuture<>();
