@@ -3711,8 +3711,9 @@ public class PersistentTopicsBase extends AdminResource {
         }
         return ret
                 .thenCompose(__ -> checkTopicExistsAsync(topicName))
-                .thenCompose(exist -> {
-                    if (!exist) {
+                .thenCompose(topicExistsInfo -> {
+                    if (!topicExistsInfo.isExists()) {
+                        topicExistsInfo.recycle();
                         throw new RestException(Status.NOT_FOUND, getTopicNotFoundErrorMessage(topicName.toString()));
                     } else {
                         return getPartitionedTopicMetadataAsync(topicName, false, false)
