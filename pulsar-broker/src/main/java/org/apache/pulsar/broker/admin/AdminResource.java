@@ -569,10 +569,9 @@ public abstract class AdminResource extends PulsarWebResource {
                         return getTopicPartitionListAsync()
                                 .thenCompose(partitionedTopics -> {
                                     // exclude created system topic
-                                    long topicsCount =
-                                            partitionedTopics.stream().filter(t ->
-                                                            !pulsar().getBrokerService().isSystemTopic(TopicName.get(t)))
-                                                    .count();
+                                    long topicsCount = partitionedTopics.stream().filter(t ->
+                                                    !pulsar().getBrokerService().isSystemTopic(TopicName.get(t)))
+                                            .count();
                                     if (topicsCount + numPartitions > maxTopicsPerNamespace) {
                                         log.error("[{}] Failed to create partitioned topic {}, "
                                                         + "exceed maximum number of topics in namespace", clientAppId(),
