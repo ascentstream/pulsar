@@ -70,12 +70,12 @@ RUN echo networkaddress.cache.negative.ttl=1 >> /opt/jvm/conf/security/java.secu
 # Fix the issue when using snappy-java in x86 arch alpine
 # See https://github.com/xerial/snappy-java/issues/181 https://github.com/xerial/snappy-java/issues/579
 # We need to ensure that the version of the native library matches the version of snappy-java imported via Maven
-FROM alpine:$ALPINE_VERSION AS snappy-java
-
-ARG SNAPPY_VERSION
-RUN apk add git alpine-sdk util-linux cmake autoconf automake libtool openjdk17 maven curl bash tar
-ENV JAVA_HOME=/usr
-RUN curl -Ls https://github.com/xerial/snappy-java/archive/refs/tags/v$SNAPPY_VERSION.tar.gz | tar zxf - && cd snappy-java-$SNAPPY_VERSION && make clean-native native
+#FROM alpine:$ALPINE_VERSION AS snappy-java
+#
+#ARG SNAPPY_VERSION
+#RUN apk add git alpine-sdk util-linux cmake autoconf automake libtool openjdk17 maven curl bash tar
+#ENV JAVA_HOME=/usr
+#RUN curl -Ls https://github.com/xerial/snappy-java/archive/refs/tags/v$SNAPPY_VERSION.tar.gz | tar zxf - && cd snappy-java-$SNAPPY_VERSION && make clean-native native
 
 
 ## Create final stage from Alpine image
@@ -106,15 +106,15 @@ RUN apk upgrade --no-cache
 
 # Python dependencies
 ARG PULSAR_CLIENT_PYTHON_VERSION
-RUN pip3 install --break-system-packages --no-cache-dir \
-    --only-binary grpcio \
-    pulsar-client[all]==${PULSAR_CLIENT_PYTHON_VERSION} \
-    kazoo
+#RUN pip3 install --break-system-packages --no-cache-dir \
+#    --only-binary grpcio \
+#    pulsar-client[all]==${PULSAR_CLIENT_PYTHON_VERSION} \
+#    kazoo
 
 COPY --from=jvm /opt/jvm /opt/jvm
 ENV JAVA_HOME=/opt/jvm
 
-COPY --from=snappy-java /tmp/libsnappyjava.so /usr/lib/libsnappyjava.so
+#COPY --from=snappy-java /tmp/libsnappyjava.so /usr/lib/libsnappyjava.so
 
 # The default is /pulsat/bin and cannot be written.
 ENV PULSAR_PID_DIR=/pulsar/logs

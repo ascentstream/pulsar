@@ -167,7 +167,7 @@ flexible messaging model and an intuitive client API.</description>
     <surefire.shutdown>kill</surefire.shutdown>
     <docker.organization>apachepulsar</docker.organization>
     <docker.image>pulsar</docker.image>
-    <docker.tag>latest</docker.tag>
+    <docker.tag>${project.version}-${git.commit.id.abbrev}</docker.tag>
     <skipSourceReleaseAssembly>false</skipSourceReleaseAssembly>
     <skipBuildDistribution>false</skipBuildDistribution>
     <skipDeployConnector>false</skipDeployConnector>
