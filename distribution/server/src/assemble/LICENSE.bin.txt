@@ -537,7 +537,6 @@ The Apache Software License, Version 2.0
     - io.vertx-vertx-core-4.5.15.jar
     - io.vertx-vertx-web-4.5.15.jar
     - io.vertx-vertx-web-common-4.5.15.jar
-    - io.vertx-vertx-grpc-4.5.15.jar
   * Apache ZooKeeper
     - org.apache.zookeeper-zookeeper-3.9.3.jar
     - org.apache.zookeeper-zookeeper-jute-3.9.3.jar
