@@ -1725,6 +1725,7 @@ flexible messaging model and an intuitive client API.</description>
                 <exclude>**/.idea/**</exclude>
                 <exclude>**/generated/**</exclude>
                 <exclude>**/zk-3.5-test-data/*</exclude>
+                <exclude>**/.mvn/**</exclude>
               </excludes>
             </licenseSet>
           </licenseSets>
