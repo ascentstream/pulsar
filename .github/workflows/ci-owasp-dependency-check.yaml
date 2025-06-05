@@ -70,7 +70,7 @@ jobs:
           java-version: 11
 
       - name: run install by skip tests
-        run: mvn -q -B -ntp clean install -DskipTests -T 1C
+        run: mvn -B -ntp clean install -DskipTests -T 1C
 
       - name: run OWASP Dependency Check for distribution/server (-DfailBuildOnAnyVulnerability=true)
         run: mvn -B -ntp -Pmain,skip-all,skipDocker,owasp-dependency-check initialize verify -pl distribution/server -DfailBuildOnAnyVulnerability=true
