@@ -46,7 +46,7 @@ public class PrometheusMetricsGeneratorUtilsTest {
         PrometheusMetricsGeneratorUtils.generate(defaultClusterValue, out,  Collections.emptyList());
         System.out.println(("metrics 1 :" + out.toString()));
         assertTrue(out.toString().contains(
-                String.format("%s{cluster=\"%s\"} 1.0", metricsName, specifyClusterValue)
+                String.format("%s_total{cluster=\"%s\"} 1.0", metricsName, specifyClusterValue)
         ));
         // cleanup
         out.close();
@@ -70,7 +70,7 @@ public class PrometheusMetricsGeneratorUtilsTest {
         PrometheusMetricsGeneratorUtils.generate(defaultClusterValue, out,  Collections.emptyList());
         System.out.println(("metrics 1 :" + out.toString()));
         assertTrue(out.toString().contains(
-                String.format("%s{cluster=\"%s\",%s=\"%s\"} 1.0",
+                String.format("%s_total{cluster=\"%s\",%s=\"%s\"} 1.0",
                         metricsName, defaultClusterValue, labelName, labelValue)
         ));
         // cleanup
@@ -92,7 +92,7 @@ public class PrometheusMetricsGeneratorUtilsTest {
         PrometheusMetricsGeneratorUtils.generate(defaultClusterValue, out,  Collections.emptyList());
         System.out.println(("metrics 1 :" + out.toString()));
         assertTrue(out.toString().contains(
-                String.format("%s{cluster=\"%s\"} 1.0", metricsName, defaultClusterValue)
+                String.format("%s_total{cluster=\"%s\"} 1.0", metricsName, defaultClusterValue)
         ));
         // cleanup
         out.close();
