@@ -901,7 +901,7 @@ public class ResourceGroup implements AutoCloseable{
             .labelNames(resourceGroupMontoringclassRemotebrokerLabels)
             .register();
     private static final Gauge rgRemoteUsageReportsBytes = Gauge.build()
-            .name("pulsar_resource_group_remote_usage_bytes_used")
+            .name("pulsar_resource_group_remote_usage_bytes_used_gauge")
             .help("Bytes used reported about this <RG, monitoring class> from a remote broker")
             .labelNames(resourceGroupMontoringclassRemotebrokerLabels)
             .register();
@@ -911,7 +911,7 @@ public class ResourceGroup implements AutoCloseable{
             .labelNames(resourceGroupMontoringclassRemotebrokerLabels)
             .register();
     private static final Gauge rgRemoteUsageReportsMessages = Gauge.build()
-            .name("pulsar_resource_group_remote_usage_messages_used")
+            .name("pulsar_resource_group_remote_usage_messages_used_gauge")
             .help("Messages used reported about this <RG, monitoring class> from a remote broker")
             .labelNames(resourceGroupMontoringclassRemotebrokerLabels)
             .register();
