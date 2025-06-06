@@ -25,7 +25,7 @@
   <parent>
     <groupId>org.apache</groupId>
     <artifactId>apache</artifactId>
-    <version>23</version>
+    <version>29</version>
     <relativePath></relativePath>
   </parent>
 
@@ -45,7 +45,7 @@
   <properties>
     <maven.compiler.source>1.8</maven.compiler.source>
     <maven.compiler.target>1.8</maven.compiler.target>
-    <surefire.version>3.0.0-M3</surefire.version>
+    <surefire.version>3.5.3</surefire.version>
     <log4j2.version>2.18.0</log4j2.version>
     <slf4j.version>1.7.32</slf4j.version>
     <testng.version>7.3.0</testng.version>
@@ -103,11 +103,6 @@
       <version>${testng.version}</version>
     </dependency>
     <dependency>
-      <groupId>junit</groupId>
-      <artifactId>junit</artifactId>
-      <version>4.13.1</version>
-    </dependency>
-    <dependency>
       <groupId>org.apache.logging.log4j</groupId>
       <artifactId>log4j-api</artifactId>
     </dependency>
@@ -139,7 +134,7 @@
     <dependency>
       <groupId>io.netty</groupId>
       <artifactId>netty-common</artifactId>
-      <version>4.1.86.Final</version>
+      <version>${netty.version}</version>
       <scope>test</scope>
     </dependency>
     <dependency>
@@ -189,11 +184,17 @@
             ${test.additional.args}
           </argLine>
         </configuration>
+        <dependencies>
+          <dependency>
+            <groupId>org.apache.maven.surefire</groupId>
+            <artifactId>surefire-testng</artifactId>
+            <version>${surefire.version}</version>
+          </dependency>
+        </dependencies>
       </plugin>
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-shade-plugin</artifactId>
-        <version>${maven-shade-plugin.version}</version>
         <configuration>
           <createDependencyReducedPom>true</createDependencyReducedPom>
           <promoteTransitiveDependencies>true</promoteTransitiveDependencies>
@@ -253,7 +254,7 @@
       <extension>
         <groupId>org.apache.maven.wagon</groupId>
         <artifactId>wagon-ssh-external</artifactId>
-        <version>2.10</version>
+        <version>3.5.3</version>
       </extension>
     </extensions>
   </build>
