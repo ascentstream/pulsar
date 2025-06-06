@@ -17,19 +17,11 @@
 # under the License.
 #
 
-name: Pulsar Bot
-on:
-  issue_comment:
-    types: [created]
-
-jobs:
-  pulsarbot:
-    runs-on: ubuntu-22.04
-    timeout-minutes: 10
-    if: github.event_name == 'issue_comment' && contains(github.event.comment.body, '/pulsarbot')
-    steps:
-      - name: Execute pulsarbot command
-        id: pulsarbot
-        env:
-          GITHUB_TOKEN: ${{ secrets.PULSARBOT_TOKEN }}
-        uses: apache/pulsar-test-infra/pulsarbot@master
+name: Copy test reports
+description: Aggregates all test reports to ./test-reports and ./surefire-reports directories
+runs:
+  using: composite
+  steps:
+    - run: |
+        $GITHUB_WORKSPACE/build/pulsar_ci_tool.sh move_test_reports
+      shell: bash

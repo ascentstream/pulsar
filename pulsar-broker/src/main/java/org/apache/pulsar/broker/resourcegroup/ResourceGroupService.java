@@ -1040,7 +1040,7 @@ public class ResourceGroupService implements AutoCloseable{
             .labelNames(resourceGroupMonitoringclassLabels)
             .register();
     private static final Gauge rgCalculatedQuotaBytes = Gauge.build()
-            .name("pulsar_resource_group_calculated_bytes_quota")
+            .name("pulsar_resource_group_calculated_bytes_quota_gauge")
             .help("Bytes quota calculated for resource group")
             .labelNames(resourceGroupMonitoringclassLabels)
             .register();
@@ -1050,7 +1050,7 @@ public class ResourceGroupService implements AutoCloseable{
             .labelNames(resourceGroupMonitoringclassLabels)
             .register();
     private static final Gauge rgCalculatedQuotaMessages = Gauge.build()
-            .name("pulsar_resource_group_calculated_messages_quota")
+            .name("pulsar_resource_group_calculated_messages_quota_gauge")
             .help("Messages quota calculated for resource group")
             .labelNames(resourceGroupMonitoringclassLabels)
             .register();
