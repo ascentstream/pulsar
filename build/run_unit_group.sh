@@ -18,22 +18,30 @@
 # under the License.
 #
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
+
 set -e
 set -o pipefail
 set -o errexit
 
-# solution for printing output in "set -x" trace mode without tracing the echo calls
-shopt -s expand_aliases
-echo_and_restore_trace() {
-  builtin echo "$@"
-  [ $trace_enabled -eq 1 ] && set -x || true
-}
-alias echo='{ [[ $- =~ .*x.* ]] && trace_enabled=1 || trace_enabled=0; set +x; } 2> /dev/null; echo_and_restore_trace'
-
-MVN_COMMAND='mvn -B -ntp'
+MVN_TEST_OPTIONS='mvn -B -ntp -DskipSourceReleaseAssembly=true -DskipBuildDistribution=true -Dspotbugs.skip=true -Dlicense.skip=true -Dcheckstyle.skip=true -Drat.skip=true'
 
 function mvn_test() {
   (
+    local clean_arg=""
+    if [[ "$1" == "--clean" ]]; then
+        clean_arg="clean"
+        shift
+    fi
+    local coverage_arg="-Pcoverage"
+    if [[ "${COLLECT_COVERAGE}" == "false" ]]; then
+      coverage_arg=""
+    fi
+    local target="verify"
+    if [[ "$1" == "--install" ]]; then
+      target="install"
+      shift
+    fi
     local use_fail_fast=1
     if [[ "$GITHUB_ACTIONS" == "true" && "$GITHUB_EVENT_NAME" != "pull_request" ]]; then
       use_fail_fast=0
@@ -49,36 +57,50 @@ function mvn_test() {
       failfast_args="-DtestFailFast=false --fail-at-end"
     fi
     echo "::group::Run tests for " "$@"
-    $MVN_COMMAND test $failfast_args "$@"
+    # use "verify" instead of "test" to workaround MDEP-187 issue in pulsar-functions-worker and pulsar-broker projects with the maven-dependency-plugin's copy goal
+    # Error message was "Artifact has not been packaged yet. When used on reactor artifact, copy should be executed after packaging: see MDEP-187"
+    $MVN_TEST_OPTIONS $failfast_args $clean_arg $target $coverage_arg "$@" "${COMMANDLINE_ARGS[@]}"
     echo "::endgroup::"
+    set +x
+    "$SCRIPT_DIR/pulsar_ci_tool.sh" move_test_reports
   )
 }
 
-echo -n "Test Group : $TEST_GROUP"
+# solution for printing output in "set -x" trace mode without tracing the echo calls
+shopt -s expand_aliases
+echo_and_restore_trace() {
+  builtin echo "$@"
+  [ $trace_enabled -eq 1 ] && set -x || true
+}
+alias echo='{ [[ $- =~ .*x.* ]] && trace_enabled=1 || trace_enabled=0; set +x; } 2> /dev/null; echo_and_restore_trace'
 
 # Test Groups  -- start --
-function broker_group_1() {
-  mvn_test -pl pulsar-broker -Dgroups='broker' -DtestReuseFork=true -DskipAfterFailureCount=1
+function test_group_broker_group_1() {
+  mvn_test -pl pulsar-broker -Dgroups='broker' -DtestReuseFork=true
 }
 
-function broker_group_2() {
-  mvn_test -pl pulsar-broker -Dgroups='schema,utils,functions-worker,broker-io,broker-discovery,broker-compaction,broker-naming,websocket,other' -DtestReuseFork=false -DfailIfNoTests=false
+function test_group_broker_group_2() {
+  mvn_test -pl pulsar-broker -Dgroups='schema,utils,functions-worker,broker-io,broker-discovery,broker-compaction,broker-naming,websocket,other'
 }
 
-function broker_group_3() {
+function test_group_broker_group_3() {
   mvn_test -pl pulsar-broker -Dgroups='broker-admin'
 }
 
-function broker_client_api() {
+function test_group_broker_group_4() {
+  mvn_test -pl pulsar-broker -Dgroups='cluster-migration'
+}
+
+function test_group_broker_client_api() {
   mvn_test -pl pulsar-broker -Dgroups='broker-api'
 }
 
-function broker_client_impl() {
+function test_group_broker_client_impl() {
   mvn_test -pl pulsar-broker -Dgroups='broker-impl'
 }
 
-function broker_jdk8() {
-  mvn_test -pl pulsar-broker -Dgroups='broker-jdk8' -Dpulsar.allocator.pooled=true
+function test_group_client() {
+  mvn_test -pl pulsar-client
 }
 
 # prints summaries of failed tests to console
@@ -101,7 +123,7 @@ function print_testng_failures() {
         fi
         local test_report_file="${testng_report_dir}/${failed_test_class}.txt"
         if [ -f "${test_report_file}" ]; then
-          local test_report="$(cat "${test_report_file}" | egrep "^Tests run: " | perl -p -se 's/^(Tests run: .*) <<< FAILURE! - in (.*)$/::warning::$report_prefix $2 - $1/' -- -report_prefix="${report_prefix}")"
+          local test_report="$(cat "${test_report_file}" | grep -E "^Tests run: " | perl -p -se 's/^(Tests run: .*) <<< FAILURE! - in (.*)$/::warning::$report_prefix $2 - $1/' -- -report_prefix="${report_prefix}")"
           echo "$test_report"
           cat "${test_report_file}"
         fi
@@ -110,7 +132,7 @@ function print_testng_failures() {
   )
 }
 
-function broker_flaky() {
+function test_group_broker_flaky() {
   echo "::endgroup::"
   echo "::group::Running quarantined tests"
   mvn_test --no-fail-fast -pl pulsar-broker -Dgroups='quarantine' -DexcludedGroups='flaky' -DfailIfNoTests=false \
@@ -130,7 +152,7 @@ function broker_flaky() {
   fi
 }
 
-function proxy() {
+function test_group_proxy() {
     echo "::group::Running pulsar-proxy tests"
     mvn_test -pl pulsar-proxy -Dtest="org.apache.pulsar.proxy.server.ProxyServiceTlsStarterTest"
     mvn_test -pl pulsar-proxy -Dtest="org.apache.pulsar.proxy.server.ProxyServiceStarterTest"
@@ -139,28 +161,25 @@ function proxy() {
     echo "::endgroup::"
 }
 
-function other() {
-  $MVN_COMMAND clean install -PbrokerSkipTest \
-                                     -Dexclude='org/apache/pulsar/proxy/**/*.java,
-                                                **/ManagedLedgerTest.java,
-                                                **/TestPulsarKeyValueSchemaHandler.java,
-                                                **/PrimitiveSchemaTest.java,
-                                                **/BlobStoreManagedLedgerOffloaderTest.java,
-                                                **/BlobStoreManagedLedgerOffloaderStreamingTest.java'
+function test_group_other() {
+  mvn_test --clean --install \
+           -pl '!org.apache.pulsar:distribution,!org.apache.pulsar:pulsar-offloader-distribution,!org.apache.pulsar:pulsar-server-distribution,!org.apache.pulsar:pulsar-io-distribution,!org.apache.pulsar:pulsar-all-docker-image' \
+           -PskipTestsForUnitGroupOther -DdisableIoMainProfile=true -DdisableSqlMainProfile=true -DskipIntegrationTests \
+           -Dexclude='**/ManagedLedgerTest.java,
+                   **/OffloadersCacheTest.java
+                  **/PrimitiveSchemaTest.java,
+                  **/BlobStoreManagedLedgerOffloaderTest.java,
+                  **/BlobStoreManagedLedgerOffloaderStreamingTest.java'
 
   mvn_test -pl managed-ledger -Dinclude='**/ManagedLedgerTest.java,
                                                   **/OffloadersCacheTest.java'
-
-  mvn_test -pl pulsar-sql/presto-pulsar-plugin -Dinclude='**/TestPulsarKeyValueSchemaHandler.java'
-
-  mvn_test -pl pulsar-client -Dinclude='**/PrimitiveSchemaTest.java'
 
   mvn_test -pl tiered-storage/jcloud -Dinclude='**/BlobStoreManagedLedgerOffloaderTest.java'
   mvn_test -pl tiered-storage/jcloud -Dinclude='**/BlobStoreManagedLedgerOffloaderStreamingTest.java'
 
   echo "::endgroup::"
   local modules_with_quarantined_tests=$(git grep -l '@Test.*"quarantine"' | grep '/src/test/java/' | \
-    awk -F '/src/test/java/' '{ print $1 }' | egrep -v 'pulsar-broker|pulsar-proxy' | sort | uniq | \
+    awk -F '/src/test/java/' '{ print $1 }' | grep -v -E 'pulsar-broker|pulsar-proxy|pulsar-io|pulsar-sql|pulsar-client' | sort | uniq | \
     perl -0777 -p -e 's/\n(\S)/,$1/g')
   if [ -n "${modules_with_quarantined_tests}" ]; then
     echo "::group::Running quarantined tests outside of pulsar-broker & pulsar-proxy (if any)"
@@ -171,54 +190,56 @@ function other() {
   fi
 }
 
+function test_group_pulsar_io() {
+    echo "::group::Running pulsar-io tests"
+    mvn_test --install -Ppulsar-io-tests,-main
+    echo "::endgroup::"
+
+    echo "::group::Running pulsar-sql tests"
+    mvn_test --install -Ppulsar-sql-tests,-main -DtestForkCount=1
+    echo "::endgroup::"
+}
+
+function test_group_pulsar_io_elastic() {
+    echo "::group::Running elastic-search tests"
+    mvn_test --install -Ppulsar-io-elastic-tests,-main
+    echo "::endgroup::"
+}
+
+function test_group_pulsar_io_kafka_connect() {
+    echo "::group::Running Pulsar IO Kafka connect adaptor tests"
+    mvn_test --install -Ppulsar-io-kafka-connect-tests,-main
+    echo "::endgroup::"
+}
+
+function list_test_groups() {
+  declare -F | awk '{print $NF}' | sort | grep -E '^test_group_' | sed 's/^test_group_//g' | tr '[:lower:]' '[:upper:]'
+}
+
 # Test Groups  -- end --
 
+if [[ "$1" == "--list" ]]; then
+  list_test_groups
+  exit 0
+fi
+
 TEST_GROUP=$1
-
+if [ -z "$TEST_GROUP" ]; then
+  echo "usage: $0 [test_group]"
+  echo "Available test groups:"
+  list_test_groups
+  exit 1
+fi
+shift
+COMMANDLINE_ARGS=("$@")
 echo "Test Group : $TEST_GROUP"
-
-set -x
-
-case $TEST_GROUP in
-
-  BROKER_GROUP_1)
-    broker_group_1
-    ;;
-
-  BROKER_GROUP_2)
-    broker_group_2
-    ;;
-
-  BROKER_GROUP_3)
-    broker_group_3
-    ;;
-
-  BROKER_CLIENT_API)
-    broker_client_api
-    ;;
-
-  BROKER_CLIENT_IMPL)
-    broker_client_impl
-    ;;
-
-  BROKER_FLAKY)
-    broker_flaky
-    ;;
-
-  PROXY)
-    proxy
-    ;;
-
-  OTHER)
-    other
-    ;;
-
-  BROKER_JDK8)
-    broker_jdk8
-    ;;
-
-  *)
-    echo -n "INVALID TEST GROUP"
-    exit 1
-    ;;
-esac
+test_group_function_name="test_group_$(echo "$TEST_GROUP" | tr '[:upper:]' '[:lower:]')"
+if [[ "$(LC_ALL=C type -t "${test_group_function_name}")" == "function" ]]; then
+  set -x
+  eval "$test_group_function_name"
+else
+  echo "INVALID TEST GROUP"
+  echo "Available test groups:"
+  list_test_groups
+  exit 1
+fi

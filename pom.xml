@@ -1611,7 +1611,7 @@ flexible messaging model and an intuitive client API.</description>
           <properties>
             <property>
               <name>listener</name>
-              <value>org.apache.pulsar.tests.PulsarTestListener,org.apache.pulsar.tests.AnnotationListener,org.apache.pulsar.tests.FailFastNotifier,org.apache.pulsar.tests.MockitoCleanupListener,org.apache.pulsar.tests.FastThreadLocalCleanupListener,org.apache.pulsar.tests.ThreadLeakDetectorListener</value>
+              <value>org.apache.pulsar.tests.PulsarTestListener,org.apache.pulsar.tests.JacocoDumpListener,org.apache.pulsar.tests.TraceTestResourceCleanupListener,org.apache.pulsar.tests.AnnotationListener,org.apache.pulsar.tests.FailFastNotifier,org.apache.pulsar.tests.MockitoCleanupListener,org.apache.pulsar.tests.FastThreadLocalCleanupListener,org.apache.pulsar.tests.ThreadLeakDetectorListener,org.apache.pulsar.tests.SingletonCleanerListener</value>
             </property>
           </properties>
         </configuration>
@@ -2624,6 +2624,20 @@ flexible messaging model and an intuitive client API.</description>
       <properties>
         <os.detected.classifier>osx-x86_64</os.detected.classifier>
       </properties>
+    </profile>
+
+    <profile>
+      <id>pulsar-io-tests</id>
+      <modules>
+        <module>pulsar-io</module>
+      </modules>
+    </profile>
+
+    <profile>
+      <id>pulsar-sql-tests</id>
+      <modules>
+        <module>pulsar-sql</module>
+      </modules>
     </profile>
   </profiles>
 
