@@ -59,10 +59,6 @@ FROM $PULSAR_IMAGE
 # However, any processes exec'ing into the containers will run as root, by default.
 USER root
 
-# We need to define the user in order for supervisord to work correctly
-# We don't need a user defined in the public docker image, though.
-RUN adduser -u 10000 --gid 0 --disabled-login --disabled-password --gecos '' pulsar
-
 RUN rm -rf /var/lib/apt/lists/* && apt update
 
 RUN apt-get clean && apt-get update && apt-get install -y supervisor vim procps curl
