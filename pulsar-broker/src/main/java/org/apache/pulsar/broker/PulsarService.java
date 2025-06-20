@@ -275,6 +275,7 @@ public class PulsarService implements AutoCloseable, ShutdownService {
 
     private TransactionPendingAckStoreProvider transactionPendingAckStoreProvider;
     private final ExecutorProvider transactionExecutorProvider;
+    private final ExecutorProvider transactionSnapshotRecoverExecutorProvider;
     private String brokerId;
     private final CompletableFuture<Void> readyForIncomingRequestsFuture = new CompletableFuture<>();
     private final List<Runnable> pendingTasksBeforeReadyForIncomingRequests = new ArrayList<>();
@@ -337,8 +338,11 @@ public class PulsarService implements AutoCloseable, ShutdownService {
         if (config.isTransactionCoordinatorEnabled()) {
             this.transactionExecutorProvider = new ExecutorProvider(this.getConfiguration()
                     .getNumTransactionReplayThreadPoolSize(), "pulsar-transaction-executor");
+            this.transactionSnapshotRecoverExecutorProvider = new ExecutorProvider(this.getConfiguration()
+                    .getNumTransactionReplayThreadPoolSize(), "pulsar-transaction-snapshot-recover");
         } else {
             this.transactionExecutorProvider = null;
+            this.transactionSnapshotRecoverExecutorProvider = null;
         }
 
         this.ioEventLoopGroup = EventLoopUtil.newEventLoopGroup(config.getNumIOThreads(), config.isEnableBusyWait(),
@@ -428,6 +432,12 @@ public class PulsarService implements AutoCloseable, ShutdownService {
     public CompletableFuture<Void> closeAsync() {
         mutex.lock();
         try {
+            // Close protocol handler before unloading namespace bundles because protocol handlers might maintain
+            // Pulsar clients that could send lookup requests that affect unloading.
+            if (protocolHandlers != null) {
+                protocolHandlers.close();
+                protocolHandlers = null;
+            }
             if (closeFuture != null) {
                 return closeFuture;
             }
@@ -435,6 +445,7 @@ public class PulsarService implements AutoCloseable, ShutdownService {
             if (brokerService != null) {
                 brokerService.unloadNamespaceBundlesGracefully();
             }
+            // It only tells the Pulsar clients that this service is not ready to serve for the lookup requests
             state = State.Closing;
 
             if (healthChecker != null) {
@@ -489,11 +500,6 @@ public class PulsarService implements AutoCloseable, ShutdownService {
                                             (long) (GRACEFUL_SHUTDOWN_TIMEOUT_RATIO_OF_TOTAL_TIMEOUT
                                                     * getConfiguration()
                                                     .getBrokerShutdownTimeoutMs())));
-            // close protocol handler before closing broker service
-            if (protocolHandlers != null) {
-                protocolHandlers.close();
-                protocolHandlers = null;
-            }
 
             // cancel loadShedding task and shutdown the loadManager executor before shutting down the broker
             if (this.loadSheddingTask != null) {
@@ -599,6 +605,9 @@ public class PulsarService implements AutoCloseable, ShutdownService {
 
             if (transactionExecutorProvider != null) {
                 transactionExecutorProvider.shutdownNow();
+            }
+            if (transactionSnapshotRecoverExecutorProvider != null) {
+                transactionSnapshotRecoverExecutorProvider.shutdownNow();
             }
             if (transactionTimer != null) {
                 transactionTimer.stop();

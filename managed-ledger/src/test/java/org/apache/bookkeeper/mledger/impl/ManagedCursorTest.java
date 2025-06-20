@@ -5218,5 +5218,48 @@ public class ManagedCursorTest extends MockedBookKeeperTestCase {
         assertEquals(positionRef4.get(), position4);
     }
 
+    @Test
+    public void testDeleteBatchedMessageWithEmptyAckSet() throws Exception {
+        ManagedLedgerConfig managedLedgerConfig = new ManagedLedgerConfig();
+        managedLedgerConfig.setDeletionAtBatchIndexLevelEnabled(false);
+        ManagedLedgerImpl ml = (ManagedLedgerImpl) factory.open("testDeleteBatchedMessageWithEmptyAckSet",
+            managedLedgerConfig);
+        ManagedCursorImpl cursor = (ManagedCursorImpl) ml.openCursor("c1");
+        Position position = ml.addEntry(new byte[1]);
+        Position positionWithEmptyAckSet =
+                new PositionImpl(position.getLedgerId(), position.getEntryId(), new long[]{});
+        cursor.delete(positionWithEmptyAckSet);
+        assertEquals(cursor.markDeletePosition, position);
+        ml.delete();
+    }
+
+    @Test
+    public void testCallbackTimes() throws Exception {
+        ManagedLedgerImpl ml = (ManagedLedgerImpl) factory.open("testCallbackTimes");
+        ManagedCursorImpl cursor = (ManagedCursorImpl) ml.openCursor("c1");
+        Position position1 = ml.addEntry(new byte[1]);
+        Position position2 = ml.addEntry(new byte[2]);
+        AtomicInteger executedCallbackTimes = new AtomicInteger();
+        cursor.asyncDelete(Arrays.asList(position1, position2), new DeleteCallback() {
+            @Override
+            public void deleteComplete(Object ctx) {
+                executedCallbackTimes.incrementAndGet();
+            }
+
+            @Override
+            public void deleteFailed(ManagedLedgerException exception, Object ctx) {
+                executedCallbackTimes.incrementAndGet();
+            }
+        }, new Object());
+        // Verify that the executed count of callback is "1".
+        Awaitility.await().untilAsserted(() -> {
+            assertTrue(executedCallbackTimes.get() > 0);
+        });
+        Thread.sleep(2000);
+        assertEquals(executedCallbackTimes.get(), 1);
+        // cleanup.
+        ml.delete();
+    }
+
     private static final Logger log = LoggerFactory.getLogger(ManagedCursorTest.class);
 }

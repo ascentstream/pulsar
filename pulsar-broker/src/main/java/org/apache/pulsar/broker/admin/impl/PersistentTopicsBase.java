@@ -855,8 +855,10 @@ public class PersistentTopicsBase extends AdminResource {
                         })
                 // Only tries to delete the znode for partitioned topic when all its partitions are successfully deleted
                 ).thenCompose(ignore ->
-                        pulsar().getBrokerService().deleteSchema(topicName).exceptionally(ex -> null))
-                .thenCompose(__ -> getPulsarResources().getNamespaceResources().getPartitionedTopicResources()
+                        pulsar().getBrokerService().deleteSchema(topicName).exceptionally(ex -> null)
+                ).thenCompose(ignore ->
+                        pulsar().getTopicPoliciesService().deleteTopicPoliciesAsync(topicName).exceptionally(ex -> null)
+                ).thenCompose(__ -> getPulsarResources().getNamespaceResources().getPartitionedTopicResources()
                         .runWithMarkDeleteAsync(topicName, () -> namespaceResources()
                                 .getPartitionedTopicResources().deletePartitionedTopicAsync(topicName)))
                 .thenAccept(__ -> {
@@ -5243,7 +5245,7 @@ public class PersistentTopicsBase extends AdminResource {
 
     protected void handleTopicPolicyException(String methodName, Throwable thr, AsyncResponse asyncResponse) {
         Throwable cause = thr.getCause();
-        if (isNot307And404And400Exception(cause)) {
+        if (isNot307And4xxException(cause)) {
             log.error("[{}] Failed to perform {} on topic {}",
                     clientAppId(), methodName, topicName, cause);
         }

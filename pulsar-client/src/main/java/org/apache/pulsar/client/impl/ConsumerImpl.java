@@ -222,6 +222,8 @@ public class ConsumerImpl<T> extends ConsumerBase<T> implements ConnectionHandle
     private final AtomicReference<ClientCnx> clientCnxUsedForConsumerRegistration = new AtomicReference<>();
     private final List<Throwable> previousExceptions = new CopyOnWriteArrayList<Throwable>();
     private volatile boolean hasSoughtByTimestamp = false;
+    // This field will be set after the state becomes Failed, then the following operations will fail immediately
+    private volatile Throwable failReason = null;
 
     static <T> ConsumerImpl<T> newConsumerImpl(PulsarClientImpl client,
                                                String topic,
@@ -915,29 +917,22 @@ public class ConsumerImpl<T> extends ConsumerBase<T> implements ConnectionHandle
 
                 if (e.getCause() instanceof PulsarClientException
                         && PulsarClientException.isRetriableError(e.getCause())
+                        && !isUnrecoverableError(e.getCause())
                         && System.currentTimeMillis() < SUBSCRIBE_DEADLINE_UPDATER.get(ConsumerImpl.this)) {
                     future.completeExceptionally(e.getCause());
                 } else if (!subscribeFuture.isDone()) {
                     // unable to create new consumer, fail operation
                     setState(State.Failed);
+                    final Throwable throwable = PulsarClientException.wrap(e, String.format("Failed to subscribe the "
+                            + "topic %s with subscription name %s when connecting to the broker", topicName.toString(),
+                            subscription));
+                    fail(throwable);
+
                     closeConsumerTasks();
-                    subscribeFuture.completeExceptionally(
-                            PulsarClientException.wrap(e, String.format("Failed to subscribe the topic %s "
-                                            + "with subscription name %s when connecting to the broker",
-                                    topicName.toString(), subscription)));
+                    subscribeFuture.completeExceptionally(throwable);
                     client.cleanupConsumer(this);
-                } else if (e.getCause() instanceof TopicDoesNotExistException) {
-                    // The topic was deleted after the consumer was created, and we're
-                    // not allowed to recreate the topic. This can happen in few cases:
-                    //  * Regex consumer getting error after topic gets deleted
-                    //  * Regular consumer after topic is manually delete and with
-                    //    auto-topic-creation set to false
-                    // No more retries are needed in this case.
-                    setState(State.Failed);
-                    closeConsumerTasks();
-                    client.cleanupConsumer(this);
-                    log.warn("[{}][{}] Closed consumer because topic does not exist anymore {}",
-                            topic, subscription, cnx.channel().remoteAddress());
+                } else if (isUnrecoverableError(e.getCause())) {
+                    closeWhenReceivedUnrecoverableError(e.getCause(), cnx);
                 } else {
                     // consumer was subscribed and connected but we got some error, keep trying
                     future.completeExceptionally(e.getCause());
@@ -950,6 +945,37 @@ public class ConsumerImpl<T> extends ConsumerBase<T> implements ConnectionHandle
             });
         }
         return future;
+    }
+
+    /***
+     * Different consumer implementation can define its additional unrecoverable error.
+     */
+    protected boolean isUnrecoverableError(Throwable t) {
+        // TopicDoesNotExistException: topic has been deleted.
+        // NotFoundException: topic has been deleted.
+        // IllegalStateException: consumer has been closed.
+        return (t instanceof TopicDoesNotExistException) || (t instanceof IllegalStateException)
+                || (t instanceof PulsarClientException.NotFoundException);
+    }
+
+    protected void closeWhenReceivedUnrecoverableError(Throwable t, ClientCnx cnx) {
+        // The topic was deleted after the consumer was created, and we're
+        // not allowed to recreate the topic. This can happen in few cases:
+        //  * Regex consumer getting error after topic gets deleted
+        //  * Regular consumer after topic is manually delete and with
+        //    auto-topic-creation set to false
+        // No more retries are needed in this case.
+        final String cnxStr = cnx == null ? "null" : String.valueOf(cnx.channel().remoteAddress());
+        log.warn("[{}][{}] {} Closed consumer because get an error that does not support to retry: {} {}",
+                topic, subscription, cnxStr, t.getClass().getName(), t.getMessage());
+        closeAsync().whenComplete((__, ex) -> {
+            if (ex == null) {
+                fail(t);
+                return;
+            }
+            log.error("[{}][{}] {} Failed to close consumer after got an error that does not support to retry: {} {}",
+                topic, subscription, cnxStr, t.getClass().getName(), t.getMessage());
+        });
     }
 
     protected void consumerIsReconnectedToBroker(ClientCnx cnx, int currentQueueSize) {
@@ -1032,13 +1058,13 @@ public class ConsumerImpl<T> extends ConsumerBase<T> implements ConnectionHandle
     }
 
     @Override
-    public void connectionFailed(PulsarClientException exception) {
+    public boolean connectionFailed(PulsarClientException exception) {
         boolean nonRetriableError = !PulsarClientException.isRetriableError(exception);
         boolean timeout = System.currentTimeMillis() > lookupDeadline;
         if (nonRetriableError || timeout) {
             exception.setPreviousExceptions(previousExceptions);
             if (subscribeFuture.completeExceptionally(exception)) {
-                setState(State.Failed);
+                fail(exception);
                 if (nonRetriableError) {
                     log.info("[{}] Consumer creation failed for consumer {} with unretriableError {}",
                             topic, consumerId, exception.getMessage());
@@ -1048,10 +1074,18 @@ public class ConsumerImpl<T> extends ConsumerBase<T> implements ConnectionHandle
                 closeConsumerTasks();
                 deregisterFromClientCnx();
                 client.cleanupConsumer(this);
+                return false;
+            } else {
+                Throwable actError = FutureUtil.unwrapCompletionException(exception);
+                if (isUnrecoverableError(actError)) {
+                    closeWhenReceivedUnrecoverableError(actError, null);
+                    return false;
+                }
             }
         } else {
             previousExceptions.add(exception);
         }
+        return true;
     }
 
     @Override
@@ -2690,6 +2724,10 @@ public class ConsumerImpl<T> extends ConsumerBase<T> implements ConnectionHandle
                 return null;
             });
         } else {
+            if (failReason != null) {
+                future.completeExceptionally(failReason);
+                return;
+            }
             long nextDelay = Math.min(backoff.next(), remainingTime.get());
             if (nextDelay <= 0) {
                 future.completeExceptionally(
@@ -3104,5 +3142,10 @@ public class ConsumerImpl<T> extends ConsumerBase<T> implements ConnectionHandle
         NOT_STARTED,
         IN_PROGRESS,
         COMPLETED
+    }
+
+    private void fail(Throwable throwable) {
+        setState(State.Failed);
+        failReason = throwable;
     }
 }

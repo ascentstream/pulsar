@@ -26,12 +26,13 @@
     <parent>
         <groupId>org.apache.pulsar</groupId>
         <artifactId>pulsar</artifactId>
-        <version>3.0.12</version>
+        <version>3.0.13-SNAPSHOT</version>
         <relativePath>..</relativePath>
     </parent>
 
     <artifactId>pulsar-config-validation</artifactId>
     <description>Annotation based config validation for Pulsar</description>
+    <name>Pulsar Config Validation</name>
 
     <dependencies>
         <dependency>

@@ -25,13 +25,14 @@
   <parent>
     <groupId>org.apache.pulsar</groupId>
     <artifactId>pulsar</artifactId>
-    <version>3.0.12</version>
+    <version>3.0.13-SNAPSHOT</version>
     <relativePath>..</relativePath>
   </parent>
 
   <artifactId>pulsar-client-messagecrypto-bc</artifactId>
   <packaging>jar</packaging>
   <description>Message crypto for End to End encryption with BouncyCastleProvider</description>
+  <name>Pulsar Client Messagecrypto BC</name>
 
   <dependencies>
     <dependency>

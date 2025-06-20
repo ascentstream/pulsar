@@ -16,30 +16,18 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package org.apache.pulsar.common.naming;
-
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
-import lombok.experimental.UtilityClass;
+package org.apache.bookkeeper.mledger;
 
 /**
+ *  This is a marked interface for ledger handle that represent offloaded data.
  */
-@UtilityClass
-public class NamedEntity {
+public interface OffloadedLedgerHandle {
 
-    // allowed characters for property, namespace, cluster and topic names are
-    // alphanumeric (a-zA-Z_0-9) and these special chars -=:.
-    // % is allowed as part of valid URL encoding
-    public static final Pattern NAMED_ENTITY_PATTERN = Pattern.compile("^[-=:.\\w]*$");
-
-    public static void checkName(String name) throws IllegalArgumentException {
-        if (!isAllowed(name)) {
-            throw new IllegalArgumentException("Invalid named entity: " + name);
-        }
+    default long lastAccessTimestamp() {
+        return -1;
     }
 
-    public static boolean isAllowed(String name) {
-        Matcher m = NAMED_ENTITY_PATTERN.matcher(name);
-        return m.matches();
+    default int getPendingRead() {
+        return 0;
     }
 }

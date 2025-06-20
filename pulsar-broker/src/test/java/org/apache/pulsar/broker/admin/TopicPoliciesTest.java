@@ -18,6 +18,7 @@
  */
 package org.apache.pulsar.broker.admin;
 
+import static org.apache.pulsar.common.naming.SystemTopicNames.NAMESPACE_EVENTS_LOCAL_NAME;
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertFalse;
 import static org.testng.Assert.assertNotEquals;
@@ -29,6 +30,7 @@ import static org.testng.Assert.fail;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -53,6 +55,7 @@ import org.apache.pulsar.broker.namespace.NamespaceService;
 import org.apache.pulsar.broker.service.AbstractTopic;
 import org.apache.pulsar.broker.service.PublishRateLimiterImpl;
 import org.apache.pulsar.broker.service.SystemTopicBasedTopicPoliciesService;
+import org.apache.pulsar.broker.service.TopicPoliciesService;
 import org.apache.pulsar.broker.service.Topic;
 import org.apache.pulsar.broker.service.persistent.DispatchRateLimiter;
 import org.apache.pulsar.broker.service.persistent.PersistentSubscription;
@@ -90,6 +93,7 @@ import org.apache.pulsar.common.policies.data.SubscriptionPolicies;
 import org.apache.pulsar.common.policies.data.TenantInfoImpl;
 import org.apache.pulsar.common.policies.data.TopicPolicies;
 import org.apache.pulsar.common.policies.data.TopicStats;
+import org.apache.pulsar.common.policies.data.TopicType;
 import org.apache.pulsar.common.policies.data.impl.DispatchRateImpl;
 import org.apache.pulsar.common.util.collections.ConcurrentOpenHashMap;
 import org.assertj.core.api.Assertions;
@@ -606,6 +610,114 @@ public class TopicPoliciesTest extends MockedPulsarServiceBaseTest {
 
         // cleanup.
         producer.close();
+        admin.topics().delete(topic, false);
+    }
+
+    @Test
+    public void testGlobalPolicyStillAffectsAfterUnloading() throws Exception {
+        // create topic and load it up.
+        final String namespace = myNamespace;
+        final String topic = BrokerTestUtil.newUniqueName("persistent://" + namespace + "/tp");
+        final TopicName topicName = TopicName.get(topic);
+        admin.topics().createNonPartitionedTopic(topic);
+        pulsarClient.newProducer().topic(topic).create().close();
+        final SystemTopicBasedTopicPoliciesService topicPoliciesService
+                = (SystemTopicBasedTopicPoliciesService) pulsar.getTopicPoliciesService();
+
+        // Set non-global policy of the limitation of max consumers.
+        // Set global policy of the limitation of max producers.
+        admin.topicPolicies(false).setMaxConsumers(topic, 10);
+        admin.topicPolicies(true).setMaxProducers(topic, 20);
+        Awaitility.await().untilAsserted(() -> {
+            assertEquals(topicPoliciesService.getTopicPoliciesAsync(topicName, false).join().get()
+                    .getMaxConsumerPerTopic(), 10);
+            assertEquals(topicPoliciesService.getTopicPoliciesAsync(topicName, true).join().get()
+                    .getMaxProducerPerTopic(), 20);
+            PersistentTopic persistentTopic =
+                    (PersistentTopic) pulsar.getBrokerService().getTopics().get(topic).get().get();
+            HierarchyTopicPolicies hierarchyTopicPolicies = persistentTopic.getHierarchyTopicPolicies();
+            assertEquals(hierarchyTopicPolicies.getMaxConsumerPerTopic().get(), 10);
+            assertEquals(hierarchyTopicPolicies.getMaxProducersPerTopic().get(), 20);
+        });
+
+        // Reload topic and verify: both global policy and non-global policy affect.
+        admin.topics().unload(topic);
+        pulsarClient.newProducer().topic(topic).create().close();
+        Awaitility.await().untilAsserted(() -> {
+            PersistentTopic persistentTopic =
+                    (PersistentTopic) pulsar.getBrokerService().getTopics().get(topic).get().get();
+            HierarchyTopicPolicies hierarchyTopicPolicies = persistentTopic.getHierarchyTopicPolicies();
+            assertEquals(hierarchyTopicPolicies.getMaxConsumerPerTopic().get(), 10);
+            assertEquals(hierarchyTopicPolicies.getMaxProducersPerTopic().get(), 20);
+        });
+
+        // cleanup.
+        admin.topics().delete(topic, false);
+    }
+
+    @Test
+    public void testRetentionGlobalPolicyAffects() throws Exception {
+        // create topic and load it up.
+        final String namespace = myNamespace;
+        final String topic = BrokerTestUtil.newUniqueName("persistent://" + namespace + "/tp");
+        final TopicName topicName = TopicName.get(topic);
+        admin.topics().createNonPartitionedTopic(topic);
+        pulsarClient.newProducer().topic(topic).create().close();
+        final SystemTopicBasedTopicPoliciesService topicPoliciesService
+                = (SystemTopicBasedTopicPoliciesService) pulsar.getTopicPoliciesService();
+
+        // Set non-global policy of the limitation of max consumers.
+        // Set global policy of the persistence policies.
+        admin.topicPolicies(false).setMaxConsumers(topic, 10);
+        RetentionPolicies retentionPolicies = new RetentionPolicies(100, 200);
+        admin.topicPolicies(true).setRetention(topic, retentionPolicies);
+        Awaitility.await().atMost(20, TimeUnit.SECONDS).untilAsserted(() -> {
+            assertEquals(topicPoliciesService.getTopicPoliciesAsync(topicName, false).join().get()
+                    .getMaxConsumerPerTopic(), 10);
+            PersistentTopic persistentTopic =
+                    (PersistentTopic) pulsar.getBrokerService().getTopics().get(topic).get().get();
+            HierarchyTopicPolicies hierarchyTopicPolicies = persistentTopic.getHierarchyTopicPolicies();
+            assertEquals(hierarchyTopicPolicies.getMaxConsumerPerTopic().get(), 10);
+            ManagedLedgerConfig mlConfig = persistentTopic.getManagedLedger().getConfig();
+            assertEquals(mlConfig.getRetentionTimeMillis(), TimeUnit.MINUTES.toMillis(100));
+            assertEquals(mlConfig.getRetentionSizeInMB(), 200);
+        });
+        PersistencePolicies persistencePolicy = new PersistencePolicies(3, 2, 1, 4);
+        admin.topicPolicies(true).setPersistence(topic, persistencePolicy);
+        Awaitility.await().atMost(20, TimeUnit.SECONDS).untilAsserted(() -> {
+            assertEquals(topicPoliciesService.getTopicPoliciesAsync(topicName, false).join().get()
+                    .getMaxConsumerPerTopic(), 10);
+            PersistentTopic persistentTopic =
+                    (PersistentTopic) pulsar.getBrokerService().getTopics().get(topic).get().get();
+            HierarchyTopicPolicies hierarchyTopicPolicies = persistentTopic.getHierarchyTopicPolicies();
+            assertEquals(hierarchyTopicPolicies.getMaxConsumerPerTopic().get(), 10);
+            ManagedLedgerConfig mlConfig = persistentTopic.getManagedLedger().getConfig();
+            assertEquals(mlConfig.getRetentionTimeMillis(), TimeUnit.MINUTES.toMillis(100));
+            assertEquals(mlConfig.getRetentionSizeInMB(), 200);
+            assertEquals(mlConfig.getEnsembleSize(), 3);
+            assertEquals(mlConfig.getWriteQuorumSize(), 2);
+            assertEquals(mlConfig.getAckQuorumSize(), 1);
+            assertEquals(mlConfig.getThrottleMarkDelete(), 4D);
+        });
+
+        // Reload topic and verify: retention policy of global policy affects.
+        admin.topics().unload(topic);
+        pulsarClient.newProducer().topic(topic).create().close();
+        Awaitility.await().untilAsserted(() -> {
+            PersistentTopic persistentTopic =
+                    (PersistentTopic) pulsar.getBrokerService().getTopics().get(topic).get().get();
+            HierarchyTopicPolicies hierarchyTopicPolicies = persistentTopic.getHierarchyTopicPolicies();
+            ManagedLedgerConfig mlConfig = persistentTopic.getManagedLedger().getConfig();
+            assertEquals(hierarchyTopicPolicies.getMaxConsumerPerTopic().get(), 10);
+            assertEquals(mlConfig.getRetentionTimeMillis(), TimeUnit.MINUTES.toMillis(100));
+            assertEquals(mlConfig.getRetentionSizeInMB(), 200);
+            assertEquals(mlConfig.getEnsembleSize(), 3);
+            assertEquals(mlConfig.getWriteQuorumSize(), 2);
+            assertEquals(mlConfig.getAckQuorumSize(), 1);
+            assertEquals(mlConfig.getThrottleMarkDelete(), 4D);
+        });
+
+        // cleanup.
         admin.topics().delete(topic, false);
     }
 
@@ -3233,6 +3345,242 @@ public class TopicPoliciesTest extends MockedPulsarServiceBaseTest {
         }
     }
 
+    private void triggerAndWaitNewTopicCompaction(String topicName) throws Exception {
+        PersistentTopic tp =
+                (PersistentTopic) pulsar.getBrokerService().getTopic(topicName, false).join().get();
+        // Wait for the old task finish.
+        Awaitility.await().untilAsserted(() -> {
+            CompletableFuture<Long> compactionTask = WhiteboxImpl.getInternalState(tp, "currentCompaction");
+            assertTrue(compactionTask == null || compactionTask.isDone());
+        });
+        // Trigger a new task.
+        tp.triggerCompaction();
+        // Wait for the new task finish.
+        Awaitility.await().untilAsserted(() -> {
+            CompletableFuture<Long> compactionTask = WhiteboxImpl.getInternalState(tp, "currentCompaction");
+            assertTrue(compactionTask == null || compactionTask.isDone());
+        });
+    }
+
+    /***
+     * It is not a thread safety method, something will go to a wrong pointer if there is a task is trying to load a
+     * topic policies.
+     */
+    private void clearTopicPoliciesCache() {
+        TopicPoliciesService topicPoliciesService = pulsar.getTopicPoliciesService();
+        if (topicPoliciesService instanceof TopicPoliciesService.TopicPoliciesServiceDisabled) {
+            return;
+        }
+        assertTrue(topicPoliciesService instanceof SystemTopicBasedTopicPoliciesService);
+
+        Map<NamespaceName, CompletableFuture<Void>> policyCacheInitMap =
+                WhiteboxImpl.getInternalState(topicPoliciesService, "policyCacheInitMap");
+        for (CompletableFuture<Void> future : policyCacheInitMap.values()) {
+            future.join();
+        }
+        Map<TopicName, TopicPolicies> policiesCache =
+                WhiteboxImpl.getInternalState(topicPoliciesService, "policiesCache");
+        Map<TopicName, TopicPolicies> globalPoliciesCache =
+                WhiteboxImpl.getInternalState(topicPoliciesService, "globalPoliciesCache");
+
+        policyCacheInitMap.clear();
+        policiesCache.clear();
+        globalPoliciesCache.clear();
+    }
+
+    @DataProvider(name = "reloadPolicyTypes")
+    public Object[][] reloadPolicyTypes() {
+        return new Object[][]{
+            {"Clean_Cache"},
+            {"Recreate_Service"}
+        };
+    }
+
+    @Test(dataProvider = "reloadPolicyTypes")
+    public void testTopicPoliciesAfterCompaction(String reloadPolicyType) throws Exception {
+        final String tpName = BrokerTestUtil.newUniqueName("persistent://" + myNamespace + "/tp");
+        final String tpNameChangeEvents = "persistent://" + myNamespace + "/" + NAMESPACE_EVENTS_LOCAL_NAME;
+        final String subscriptionName = "s1";
+        final int rateMsgLocal = 2000;
+        final int rateMsgGlobal = 1000;
+        admin.topics().createNonPartitionedTopic(tpName);
+        admin.topics().createSubscription(tpName, subscriptionName, MessageId.earliest);
+
+        // Set global policy and local policy.
+        // Trigger __change_events compaction.
+        // Reload polices into memory.
+        // Verify: policies was affected.
+        DispatchRate dispatchRateLocal = new DispatchRateImpl(rateMsgLocal, 1, false, 1);
+        DispatchRate dispatchRateGlobal = new DispatchRateImpl(rateMsgGlobal, 1, false, 1);
+        admin.topicPolicies(false).setDispatchRate(tpName, dispatchRateLocal);
+        admin.topicPolicies(true).setDispatchRate(tpName, dispatchRateGlobal);
+        triggerAndWaitNewTopicCompaction(tpNameChangeEvents);
+        Optional<TopicPolicies> topicPoliciesOptional1 = null;
+        Optional<TopicPolicies> topicPoliciesOptionalGlobal1 = null;
+        if ("Clean_Cache".equals(reloadPolicyType)) {
+            clearTopicPoliciesCache();
+            topicPoliciesOptional1 = pulsar.getTopicPoliciesService().getTopicPoliciesAsync(TopicName.get(tpName),
+                            false).join();
+            topicPoliciesOptionalGlobal1 = pulsar.getTopicPoliciesService().getTopicPoliciesAsync(TopicName.get(tpName),
+                    true).join();
+        } else {
+            SystemTopicBasedTopicPoliciesService newService = new SystemTopicBasedTopicPoliciesService(pulsar);
+            topicPoliciesOptional1 = newService.getTopicPoliciesAsync(TopicName.get(tpName), false).join();
+            topicPoliciesOptionalGlobal1 = newService.getTopicPoliciesAsync(TopicName.get(tpName), true).join();
+            newService.close();
+        }
+        assertTrue(topicPoliciesOptional1.isPresent());
+        assertEquals(topicPoliciesOptional1.get().getDispatchRate().getDispatchThrottlingRateInMsg(), rateMsgLocal);
+        assertEquals(topicPoliciesOptionalGlobal1.get().getDispatchRate().getDispatchThrottlingRateInMsg(),
+                rateMsgGlobal);
+
+        // Remove local policy.
+        // Trigger __change_events compaction.
+        // Reload polices into memory.
+        // Verify: policies was affected.
+        admin.topicPolicies(false).removeDispatchRate(tpName);
+        triggerAndWaitNewTopicCompaction(tpNameChangeEvents);
+        Optional<TopicPolicies> topicPoliciesOptional2 = null;
+        Optional<TopicPolicies> topicPoliciesOptionalGlobal2 = null;
+        if ("Clean_Cache".equals(reloadPolicyType)) {
+            clearTopicPoliciesCache();
+            topicPoliciesOptional2 = pulsar.getTopicPoliciesService().getTopicPoliciesAsync(TopicName.get(tpName),
+                    false).join();
+            topicPoliciesOptionalGlobal2 = pulsar.getTopicPoliciesService().getTopicPoliciesAsync(TopicName.get(tpName),
+                    true).join();
+        } else {
+            SystemTopicBasedTopicPoliciesService newService = new SystemTopicBasedTopicPoliciesService(pulsar);
+            topicPoliciesOptional2 = newService.getTopicPoliciesAsync(TopicName.get(tpName), false).join();
+            topicPoliciesOptionalGlobal2 = newService.getTopicPoliciesAsync(TopicName.get(tpName), true).join();
+            newService.close();
+        }
+        assertTrue(topicPoliciesOptional2.isEmpty() || topicPoliciesOptional2.get().getDispatchRate() == null);
+        assertTrue(topicPoliciesOptionalGlobal2.isPresent());
+        assertEquals(topicPoliciesOptionalGlobal2.get().getDispatchRate().getDispatchThrottlingRateInMsg(),
+                rateMsgGlobal);
+
+        // Delete topic.
+        // Trigger __change_events compaction.
+        // Reload polices into memory.
+        // Verify: policies was deleted.
+        admin.topics().delete(tpName, false);
+        Awaitility.await().untilAsserted(() -> {
+            // Reload polices into memory.
+            // Verify: policies was affected.
+            Optional<TopicPolicies> topicPoliciesOptional3 = null;
+            Optional<TopicPolicies> topicPoliciesOptionalGlobal3 = null;
+            if ("Clean_Cache".equals(reloadPolicyType)) {
+                clearTopicPoliciesCache();
+                topicPoliciesOptional3 = pulsar.getTopicPoliciesService().getTopicPoliciesAsync(TopicName.get(tpName),
+                        false).join();
+                topicPoliciesOptionalGlobal3 = pulsar.getTopicPoliciesService()
+                        .getTopicPoliciesAsync(TopicName.get(tpName), true).join();
+            } else {
+                SystemTopicBasedTopicPoliciesService newService = new SystemTopicBasedTopicPoliciesService(pulsar);
+                topicPoliciesOptional3 = newService.getTopicPoliciesAsync(TopicName.get(tpName), false).join();
+                topicPoliciesOptionalGlobal3 = newService.getTopicPoliciesAsync(TopicName.get(tpName), true)
+                        .join();
+                newService.close();
+            }
+            assertTrue(topicPoliciesOptional3.isEmpty()
+                    || topicPoliciesOptional3.get().getDispatchRate() == null);
+            assertTrue(topicPoliciesOptionalGlobal3.isEmpty()
+                    || topicPoliciesOptionalGlobal3.get().getDispatchRate() == null);
+        });
+    }
+
+    @Test
+    public void testDeleteGlobalPolicy() throws Exception {
+        final String tpName = BrokerTestUtil.newUniqueName("persistent://" + myNamespace + "/tp");
+        final String tpNameChangeEvents = "persistent://" + myNamespace + "/" + NAMESPACE_EVENTS_LOCAL_NAME;
+        final String subscriptionName = "s1";
+        final int rateMsgGlobal = 1000;
+        admin.topics().createNonPartitionedTopic(tpName);
+        admin.topics().createSubscription(tpName, subscriptionName, MessageId.earliest);
+        PersistentTopic persistentTopic =
+                (PersistentTopic) pulsar.getBrokerService().getTopicIfExists(tpName).get().get();
+
+        // Set global policy.
+        // Verify: policies was affected.
+        DispatchRate dispatchRateGlobal = new DispatchRateImpl(rateMsgGlobal, 1, false, 1);
+        admin.topicPolicies(true).setDispatchRate(tpName, dispatchRateGlobal);
+        Awaitility.await().untilAsserted(() -> {
+            assertEquals(persistentTopic.getHierarchyTopicPolicies().getDispatchRate().get(), dispatchRateGlobal);
+        });
+
+        // Delete global policy.
+        // Verify: policies were deleted.
+        triggerAndWaitNewTopicCompaction(tpNameChangeEvents);
+        admin.topicPolicies(true).removeDispatchRate(tpName);
+
+        Awaitility.await().untilAsserted(() -> {
+            Optional<TopicPolicies> topicPoliciesOptional = pulsar.getTopicPoliciesService()
+                    .getTopicPoliciesAsync(TopicName.get(tpName), false).join();
+            Optional<TopicPolicies> topicPoliciesOptionalGlobal = pulsar.getTopicPoliciesService()
+                    .getTopicPoliciesAsync(TopicName.get(tpName), true).join();
+            assertTrue(topicPoliciesOptional.isEmpty()
+                    || topicPoliciesOptional.get().getDispatchRate() == null);
+            assertTrue(topicPoliciesOptionalGlobal.isEmpty()
+                    || topicPoliciesOptionalGlobal.get().getDispatchRate() == null);
+        });
+
+        // cleanup.
+        admin.topics().delete(tpName, false);
+    }
+
+    @DataProvider
+    public Object[][] partitionedTypes() {
+        return new Object[][]{
+            {TopicType.NON_PARTITIONED},
+            {TopicType.PARTITIONED}
+        };
+    }
+
+    @Test(dataProvider = "partitionedTypes")
+    public void testCleanupPoliciesAfterDeletedTopic(TopicType topicType) throws Exception {
+        final String tpName = BrokerTestUtil.newUniqueName("persistent://" + myNamespace + "/tp");
+        final TopicName tpNameP0 = TopicName.get(tpName).getPartition(0);
+        final String subscriptionName = "s1";
+        final int rateMsgGlobal = 1000;
+        final int rateMsgLocal = 1000;
+        if (TopicType.PARTITIONED.equals(topicType)) {
+            admin.topics().createPartitionedTopic(tpName, 2);
+        } else {
+            admin.topics().createNonPartitionedTopic(tpName);
+        }
+
+        admin.topics().createSubscription(tpName, subscriptionName, MessageId.earliest);
+        PersistentTopic persistentTopic = (PersistentTopic) pulsar.getBrokerService()
+            .getTopicIfExists(TopicType.PARTITIONED.equals(topicType) ? tpNameP0.toString(): tpName).get().get();
+
+        // Set global policy.
+        // Verify: policies was affected.
+        DispatchRate dispatchRateGlobal = new DispatchRateImpl(rateMsgGlobal, 1, false, 1);
+        admin.topicPolicies(true).setDispatchRate(tpName, dispatchRateGlobal);
+        DispatchRate dispatchRateLocal = new DispatchRateImpl(rateMsgLocal, 2, false, 2);
+        admin.topicPolicies(true).setDispatchRate(tpName, dispatchRateLocal);
+        Awaitility.await().untilAsserted(() -> {
+            assertEquals(persistentTopic.getHierarchyTopicPolicies().getDispatchRate().get(), dispatchRateLocal);
+        });
+
+        // cleanup.
+        if (TopicType.PARTITIONED.equals(topicType)) {
+            admin.topics().deletePartitionedTopic(tpName, false);
+        } else {
+            admin.topics().delete(tpName, false);
+        }
+
+        // Verify: the topic-level policies will be removed after the topic is deleted.
+        Awaitility.await().untilAsserted(() -> {
+            Optional<TopicPolicies> topicPoliciesOptional = pulsar.getTopicPoliciesService()
+                    .getTopicPoliciesAsync(TopicName.get(tpName), false).join();
+            Optional<TopicPolicies> topicPoliciesOptionalGlobal = pulsar.getTopicPoliciesService()
+                    .getTopicPoliciesAsync(TopicName.get(tpName), false).join();
+            assertTrue(topicPoliciesOptional.isEmpty());
+            assertTrue(topicPoliciesOptionalGlobal.isEmpty());
+        });
+    }
+
     @Test
     public void testGlobalTopicPolicies() throws Exception {
         final String topic = testTopic + UUID.randomUUID();
@@ -3482,6 +3830,37 @@ public class TopicPoliciesTest extends MockedPulsarServiceBaseTest {
                 .dispatchThrottlingRateInByte(10)
                 .ratePeriodInSecond(10)
                 .build());
+    }
+
+    @DataProvider
+    public Object[][] topicTypes() {
+        return new Object[][]{
+            {TopicType.PARTITIONED},
+            {TopicType.NON_PARTITIONED}
+        };
+    }
+
+    @Test(dataProvider = "topicTypes")
+    public void testRemoveLocalCluster(TopicType topicType) throws Exception {
+        String topic = "persistent://" + myNamespace + "/testSetSubRateWithSub";
+        if (TopicType.PARTITIONED.equals(topicType)) {
+            admin.topics().createNonPartitionedTopic(topic);
+        } else {
+            admin.topics().createPartitionedTopic(topic, 2);
+        }
+        try {
+            admin.topics().setReplicationClusters(topic, Arrays.asList("not-local-cluster"));
+            fail("Can not remove local cluster from the topic-level replication clusters policy");
+        } catch (PulsarAdminException.PreconditionFailedException e) {
+            assertTrue(e.getMessage().contains("Can not remove local cluster from the topic-level replication clusters"
+                + " policy"));
+        }
+        // cleanup.
+        if (TopicType.PARTITIONED.equals(topicType)) {
+            admin.topics().delete(topic, false);
+        } else {
+            admin.topics().deletePartitionedTopic(topic, false);
+        }
     }
 
 }

@@ -25,13 +25,14 @@
   <parent>
     <groupId>org.apache.pulsar</groupId>
     <artifactId>pulsar</artifactId>
-    <version>3.0.12</version>
+    <version>3.0.13-SNAPSHOT</version>
     <relativePath>..</relativePath>
   </parent>
 
   <artifactId>pulsar-client-auth-sasl</artifactId>
   <packaging>jar</packaging>
   <description>SASL authentication plugin for java client</description>
+  <name>Pulsar Client Auth SASL</name>
 
   <dependencies>
 
