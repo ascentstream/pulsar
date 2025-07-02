@@ -32,7 +32,7 @@ public interface Replicator {
 
     CompletableFuture<Void> terminate();
 
-    CompletableFuture<Void> disconnect(boolean failIfHasBacklog, boolean closeTheStartingProducer);
+    CompletableFuture<Void> disconnect();
 
     void updateRates();
 

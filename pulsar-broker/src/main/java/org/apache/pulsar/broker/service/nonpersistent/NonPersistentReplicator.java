@@ -269,4 +269,9 @@ public class NonPersistentReplicator extends AbstractReplicator implements Repli
         ProducerImpl<?> producer = this.producer;
         return producer != null && producer.isConnected();
     }
+
+    @Override
+    protected void beforeTerminate() {
+        // No-op
+    }
 }
