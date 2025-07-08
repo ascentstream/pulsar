@@ -1,4 +1,4 @@
-<?xml version="1.0"?>
+<?xml version='1.0' encoding='UTF-8'?>
 <!--
 
     Licensed to the Apache Software Foundation (ASF) under one
@@ -19,14 +19,13 @@
     under the License.
 
 -->
-<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
- xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
     <parent>
-        <groupId>org.apache.pulsar</groupId>
+        <groupId>com.ascentstream.pulsar</groupId>
         <artifactId>pulsar-functions</artifactId>
-        <version>2.10.7-SNAPSHOT</version>
+        <version>2.10.7.14-1aec955-20250708182245-SNAPSHOT</version>
         <relativePath>..</relativePath>
     </parent>
 
@@ -82,9 +81,7 @@
                         <configuration>
                             <target>
                                 <!-- shade the AsyncHttpClient ahc-default.properties files -->
-                                <replace token= "org.asynchttpclient."
-                                         value="org.apache.pulsar.functions.runtime.shaded.org.asynchttpclient."
-                                         file="${project.build.directory}/classes/org/asynchttpclient/config/ahc-default.properties"/>
+                                <replace token="org.asynchttpclient." value="org.apache.pulsar.functions.runtime.shaded.org.asynchttpclient." file="${project.build.directory}/classes/org/asynchttpclient/config/ahc-default.properties"/>
                             </target>
                         </configuration>
                     </execution>
@@ -103,12 +100,12 @@
                         <configuration>
                             <minimizeJar>false</minimizeJar>
                             <transformers>
-                                <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer" />
-                                <transformer implementation="org.apache.maven.plugins.shade.resource.PluginXmlResourceTransformer" />
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.PluginXmlResourceTransformer"/>
                             </transformers>
                             <artifactSet>
                                 <includes>
-                                    <include>org.apache.pulsar:*</include>
+                                    <include>com.ascentstream.pulsar:*</include>
                                     <include>org.apache.bookkeeper:*</include>
                                     <include>commons-*:*</include>
                                     <include>org.apache.commons:*</include>
@@ -142,7 +139,7 @@
                             </artifactSet>
                             <filters>
                                 <filter>
-                                    <artifact>org.apache.pulsar:pulsar-client-original</artifact>
+                                    <artifact>com.ascentstream.pulsar:pulsar-client-original</artifact>
                                     <includes>
                                         <include>**</include>
                                     </includes>
@@ -441,6 +438,21 @@
                     </execution>
                 </executions>
             </plugin>
-        </plugins>
+        <plugin>
+    <artifactId>maven-jar-plugin</artifactId>
+    <version>3.3.0</version>
+    <executions>
+        <execution>
+            <id>javadoc-jar</id>
+            <phase>package</phase>
+            <goals>
+                <goal>jar</goal>
+            </goals>
+            <configuration>
+                <classifier>javadoc</classifier>
+            </configuration>
+        </execution>
+    </executions>
+</plugin></plugins>
     </build>
 </project>
