@@ -2991,7 +2991,12 @@ public class ManagedLedgerImpl implements ManagedLedger, CreateCallback {
                             return null;
                         });
                     }
-                    promise.complete(null);
+
+                    if (promise instanceof CompletableFuture<?>) {
+                        @SuppressWarnings("unchecked")
+                        CompletableFuture<List<LedgerInfo>> casted = (CompletableFuture<List<LedgerInfo>>) promise;
+                        casted.complete(ledgersToDelete);
+                    }
                 }
 
                 @Override
