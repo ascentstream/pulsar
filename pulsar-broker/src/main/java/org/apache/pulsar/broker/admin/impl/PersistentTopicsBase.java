@@ -66,6 +66,7 @@ import org.apache.bookkeeper.mledger.impl.ManagedLedgerFactoryImpl;
 import org.apache.bookkeeper.mledger.impl.ManagedLedgerImpl;
 import org.apache.bookkeeper.mledger.impl.ManagedLedgerOfflineBacklog;
 import org.apache.bookkeeper.mledger.impl.PositionImpl;
+import org.apache.bookkeeper.mledger.proto.MLDataFormats.ManagedLedgerInfo.LedgerInfo;
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.collections4.MapUtils;
 import org.apache.commons.lang3.StringUtils;
@@ -4976,15 +4977,17 @@ public class PersistentTopicsBase extends AdminResource {
                         asyncResponse.resume(null);
                         return CompletableFuture.completedFuture(null);
                     }
-                    CompletableFuture<Void> result = new CompletableFuture<>();
-                    managedLedger.trimConsumedLedgersInBackground(result);
-                    return result.whenComplete((res, e) -> {
-                        if (e != null) {
-                            asyncResponse.resume(e);
-                        } else {
-                            asyncResponse.resume(res);
-                        }
-                    });
+                    CompletableFuture<List<LedgerInfo>> result = managedLedger.asyncTrimConsumedLedgers();
+                    return result
+                            .thenRun(() -> {
+                            })
+                            .whenComplete((res, e) -> {
+                                if (e != null) {
+                                    asyncResponse.resume(e);
+                                } else {
+                                    asyncResponse.resume(Response.noContent().build());
+                                }
+                            });
                 });
     }
 

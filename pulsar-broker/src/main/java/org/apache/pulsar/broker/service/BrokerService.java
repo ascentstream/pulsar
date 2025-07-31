@@ -90,8 +90,8 @@ import org.apache.bookkeeper.mledger.ManagedLedgerConfig;
 import org.apache.bookkeeper.mledger.ManagedLedgerException;
 import org.apache.bookkeeper.mledger.ManagedLedgerException.ManagedLedgerNotFoundException;
 import org.apache.bookkeeper.mledger.ManagedLedgerFactory;
-import org.apache.bookkeeper.mledger.ManagedLedgerInfo.LedgerInfo;
 import org.apache.bookkeeper.mledger.impl.NonAppendableLedgerOffloader;
+import org.apache.bookkeeper.mledger.proto.MLDataFormats.ManagedLedgerInfo;
 import org.apache.commons.collections4.MapUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.tuple.ImmutablePair;
@@ -2266,26 +2266,18 @@ public class BrokerService implements Closeable {
             if (t instanceof PersistentTopic) {
                 Optional.ofNullable(((PersistentTopic) t).getManagedLedger()).ifPresent(
                         managedLedger -> {
-                            CompletableFuture<?> future = new CompletableFuture<>();
-                            managedLedger.trimConsumedLedgersInBackground(future);
-                            future.thenAccept(result -> {
-                                if (result instanceof List<?>) {
-                                    try {
-                                        List<LedgerInfo> ledgerInfos = (List<LedgerInfo>) result;
-                                        List<MessagePurgeEventData.LedgerInfo> purgedLedgers = ledgerInfos.stream()
-                                                .map(n -> MessagePurgeEventData.LedgerInfo.builder()
-                                                        .ledgerId(n.ledgerId).entries(n.entries)
-                                                        .build())
-                                                .collect(Collectors.toUnmodifiableList());
-                                        topicEventsDispatcher.newEvent(t.getName(), TopicEvent.MESSAGE_PURGE)
-                                                .data(MessagePurgeEventData.builder().ledgerInfos(purgedLedgers)
-                                                        .build())
-                                                .dispatch();
-                                    } catch (Exception e) {
-                                        log.warn("Failed to cast result to List<LedgerInfo> for topic: {}", t.getName(),
-                                                e);
-                                    }
-                                }
+                            CompletableFuture<List<ManagedLedgerInfo.LedgerInfo>> future =
+                                    managedLedger.asyncTrimConsumedLedgers();
+                            future.thenAccept(ledgerInfos -> {
+                                List<MessagePurgeEventData.LedgerInfo> purgedLedgers = ledgerInfos.stream()
+                                        .map(n -> MessagePurgeEventData.LedgerInfo.builder()
+                                                .ledgerId(n.getLedgerId()).entries(n.getEntries())
+                                                .build())
+                                        .collect(Collectors.toUnmodifiableList());
+                                topicEventsDispatcher.newEvent(t.getName(), TopicEvent.MESSAGE_PURGE)
+                                        .data(MessagePurgeEventData.builder().ledgerInfos(purgedLedgers)
+                                                .build())
+                                        .dispatch();
                             });
                         }
                 );
