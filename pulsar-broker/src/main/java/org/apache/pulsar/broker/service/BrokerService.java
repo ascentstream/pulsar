@@ -1794,7 +1794,11 @@ public class BrokerService implements Closeable {
 
         maxTopicsCheck.thenCompose(partitionedTopicMetadata -> validateTopicConsistency(topicName))
                 .thenCompose(__ -> getManagedLedgerConfig(topicName))
-        .thenAccept(managedLedgerConfig -> {
+        .thenCombine(pulsar().getNamespaceService().checkTopicExistsAsync(topicName).thenApply(n->{
+            boolean found = n.isExists();
+            n.recycle();
+            return found;
+        }),(managedLedgerConfig, exists) -> {
             if (isBrokerEntryMetadataEnabled() || isBrokerPayloadProcessorEnabled()) {
                 // init managedLedger interceptor
                 Set<BrokerEntryMetadataInterceptor> interceptors = new HashSet<>();
@@ -1829,15 +1833,18 @@ public class BrokerService implements Closeable {
             });
 
             if (createIfMissing) {
-                TopicCreateEventData createEventData = TopicCreateEventData.builder().implicit(true).build();
-                topicEventsDispatcher.newEvent(topic, TopicEvent.CREATE).stage(EventStage.BEFORE).data(createEventData)
-                        .dispatch();
-                topicFuture.whenComplete((__, ex) -> {
-                    topicEventsDispatcher.newEvent(topic, TopicEvent.CREATE)
-                            .stage(ex != null ? EventStage.FAILURE : EventStage.SUCCESS).error(ex)
+                if (!exists) {
+                    TopicCreateEventData createEventData = TopicCreateEventData.builder().implicit(true).build();
+                    topicEventsDispatcher.newEvent(topic, TopicEvent.CREATE).stage(EventStage.BEFORE)
                             .data(createEventData)
                             .dispatch();
-                });
+                    topicFuture.whenComplete((__, ex) -> {
+                        topicEventsDispatcher.newEvent(topic, TopicEvent.CREATE)
+                                .stage(ex != null ? EventStage.FAILURE : EventStage.SUCCESS).error(ex)
+                                .data(createEventData)
+                                .dispatch();
+                    });
+                }
             }
             topicEventsDispatcher.notifyOnCompletion(loadFuture, topic, TopicEvent.LOAD);
 
@@ -1925,6 +1932,7 @@ public class BrokerService implements Closeable {
                         }
                     }, () -> isTopicNsOwnedByBrokerAsync(topicName), null);
 
+            return null;
         }).exceptionally((exception) -> {
             log.warn("[{}] Failed to get topic configuration: {}", topic, exception.getMessage(), exception);
             // remove topic from topics-map in different thread to avoid possible deadlock if

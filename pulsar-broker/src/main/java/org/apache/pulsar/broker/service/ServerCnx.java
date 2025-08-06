@@ -2175,6 +2175,7 @@ public class ServerCnx extends PulsarHandler implements TransportCnx {
     public TopicEventsDispatcher.TopicEventBuilder newTopicEvent(String topic, TopicEvent topicEvent) {
         return getBrokerService().getTopicEventsDispatcher().newEvent(topic, topicEvent)
                 .role(authRole, originalPrincipal)
+                .clientVersion(clientVersion)
                 .proxyVersion(proxyVersion);
     }
 
