@@ -1288,7 +1288,8 @@ public class BrokerService implements Closeable {
     private TopicEventsDispatcher.TopicEventBuilder newTopicEvent(TopicLoadingContext topicLoadingContext,
                                                                   TopicEvent topicEvent) {
         return getTopicEventsDispatcher().newEvent(topicLoadingContext.topic, topicEvent)
-                .clientVersion(topicLoadingContext.clientVersion);
+                .clientVersion(topicLoadingContext.clientVersion)
+                .proxyVersion(topicLoadingContext.proxyVersion);
     }
 
     private CompletableFuture<Optional<TopicPolicies>> getTopicPoliciesBypassSystemTopic(@Nonnull TopicName topicName,
