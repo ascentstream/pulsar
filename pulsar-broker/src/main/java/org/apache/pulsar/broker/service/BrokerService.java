@@ -1844,7 +1844,7 @@ public class BrokerService implements Closeable {
             boolean found = n.isExists();
             n.recycle();
             return found;
-        }),(managedLedgerConfig, exists) -> {
+        }), (managedLedgerConfig, exists) -> {
             if (isBrokerEntryMetadataEnabled() || isBrokerPayloadProcessorEnabled()) {
                 // init managedLedger interceptor
                 Set<BrokerEntryMetadataInterceptor> interceptors = new HashSet<>();
