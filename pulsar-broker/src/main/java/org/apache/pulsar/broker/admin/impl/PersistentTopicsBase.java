@@ -79,10 +79,10 @@ import org.apache.pulsar.broker.authorization.AuthorizationService;
 import org.apache.pulsar.broker.event.data.SubscriptionCreateEventData;
 import org.apache.pulsar.broker.event.data.SubscriptionDeleteEventData;
 import org.apache.pulsar.broker.event.data.SubscriptionSeekEventData;
-import org.apache.pulsar.broker.event.data.TopicCreateEventData;
 import org.apache.pulsar.broker.event.data.TopicDeleteEventData;
 import org.apache.pulsar.broker.event.data.TopicMetadataUpdateEventData;
 import org.apache.pulsar.broker.service.AnalyzeBacklogResult;
+import org.apache.pulsar.broker.service.BrokerService.TopicLoadingContext;
 import org.apache.pulsar.broker.service.BrokerServiceException.AlreadyRunningException;
 import org.apache.pulsar.broker.service.BrokerServiceException.SubscriptionBusyException;
 import org.apache.pulsar.broker.service.BrokerServiceException.SubscriptionInvalidCursorPosition;
@@ -428,14 +428,16 @@ public class PersistentTopicsBase extends AdminResource {
                    log.warn("[{}] Topic {} already exists", clientAppId(), topicName);
                    throw new RestException(Status.CONFLICT, "This topic already exists");
                }
-               return pulsar().getBrokerService().getTopic(topicName.toString(), true, properties);
+               return pulsar().getBrokerService()
+                       .getTopic(TopicLoadingContext.builder()
+                               .topic(topicName.toString())
+                               .createIfMissing(true)
+                               .properties(properties)
+                               .clientVersion(getClientVersion())
+                               .build()
+                       );
            })
-           .thenAccept(__ -> log.info("[{}] Successfully created non-partitioned topic {}", clientAppId(), topicName))
-           .thenRun(()->{
-                newTopicEvent(topicName, TopicEvent.CREATE)
-                        .data(TopicCreateEventData.builder().partitions(0).properties(properties).build())
-                        .dispatch();
-            });
+           .thenAccept(__ -> log.info("[{}] Successfully created non-partitioned topic {}", clientAppId(), topicName));
     }
 
     /**
