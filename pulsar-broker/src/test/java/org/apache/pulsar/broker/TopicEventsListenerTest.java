@@ -21,15 +21,20 @@ package org.apache.pulsar.broker;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertTrue;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.collect.Sets;
+import java.io.IOException;
 import java.util.Arrays;
 import java.util.Queue;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.TimeUnit;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.pulsar.broker.event.data.ProducerDisconnectEventData;
 import org.apache.pulsar.broker.service.BrokerTestBase;
 import org.apache.pulsar.broker.service.TopicEventsListener;
+import org.apache.pulsar.broker.service.TopicEventsListener.EventContext;
+import org.apache.pulsar.broker.service.TopicEventsListener.EventStage;
 import org.apache.pulsar.client.admin.PulsarAdmin;
 import org.apache.pulsar.client.admin.PulsarAdminException;
 import org.apache.pulsar.client.api.Consumer;
@@ -38,6 +43,7 @@ import org.apache.pulsar.client.api.PulsarClientException;
 import org.apache.pulsar.common.policies.data.InactiveTopicDeleteMode;
 import org.apache.pulsar.common.policies.data.InactiveTopicPolicies;
 import org.apache.pulsar.common.policies.data.RetentionPolicies;
+import org.apache.pulsar.common.util.ObjectMapperFactory;
 import org.awaitility.Awaitility;
 import org.testng.Assert;
 import org.testng.annotations.AfterClass;
@@ -253,6 +259,26 @@ public class TopicEventsListenerTest extends BrokerTestBase {
                         "UNLOAD__SUCCESS",
                 })
         );
+    }
+
+    @Test
+    public void testTopicEventContextSerialization() throws IOException {
+        ObjectMapper objectMapper = ObjectMapperFactory.getMapper().getObjectMapper();
+        EventContext eventContext = EventContext.builder()
+                .brokerId("broker-1")
+                .proxyRole("proxy-role")
+                .clientRole("client-role")
+                .topicName("persistent://prop/namespace/topic")
+                .stage(EventStage.SUCCESS)
+                .data(ProducerDisconnectEventData.builder()
+                        .producerId(1)
+                        .producerAddress("localhost:1234")
+                        .producerName("abc")
+                        .build())
+                .build();
+        byte[] bytes = objectMapper.writeValueAsBytes(eventContext);
+        EventContext deserializedEventContext = objectMapper.readValue(bytes, EventContext.class);
+        assertEquals(eventContext, deserializedEventContext);
     }
 
     private void createTopicAndVerifyEvents(String topicDomain, String topicTypePartitioned, String topicName) throws Exception {
