@@ -198,7 +198,7 @@ public class TopicEventsDispatcher {
         }
 
         public TopicEventBuilder proxyVersion(String version) {
-            builder.clientVersion(version);
+            builder.proxyVersion(version);
             return this;
         }
 
