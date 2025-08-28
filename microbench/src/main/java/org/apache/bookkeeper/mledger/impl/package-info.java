@@ -17,5 +17,7 @@
  * under the License.
  */
 
-/** Benchmarks for managed-ledger data structures. */
+/**
+ * Microbenchmarks for Managed Ledger's implementation package.
+ */
 package org.apache.bookkeeper.mledger.impl;
