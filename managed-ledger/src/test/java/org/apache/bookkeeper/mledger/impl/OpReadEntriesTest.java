@@ -19,7 +19,6 @@
 package org.apache.bookkeeper.mledger.impl;
 
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.spy;
@@ -169,7 +168,7 @@ public class OpReadEntriesTest extends MockedBookKeeperTestCase {
             callback.readEntriesComplete(Collections.emptyList(), invocation.getArgument(5));
             return null;
         }).when(spyCache).asyncReadEntry(any(ReadHandle.class), anyLong(), anyLong(),
-                anyBoolean(), any(ReadEntriesCallback.class), any());
+                any(), any(ReadEntriesCallback.class), any());
 
         Field f = ManagedLedgerImpl.class.getDeclaredField("entryCache");
         f.setAccessible(true);
