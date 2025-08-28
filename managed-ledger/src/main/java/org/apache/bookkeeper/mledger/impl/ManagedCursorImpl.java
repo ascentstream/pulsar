@@ -2417,7 +2417,8 @@ public class ManagedCursorImpl implements ManagedCursor {
         markDeletePosition = newMarkDeletePosition;
         individualDeletedMessages.removeAtMost(markDeletePosition.getLedgerId(), markDeletePosition.getEntryId());
 
-        READ_POSITION_UPDATER.updateAndGet(this, currentReadPosition -> {
+        MutableBoolean readPositionUpdated = new MutableBoolean(false);
+        Position updatedReadPosition = READ_POSITION_UPDATER.updateAndGet(this, currentReadPosition -> {
             if (currentReadPosition.compareTo(markDeletePosition) <= 0) {
                 // If the position that is mark-deleted is past the read position, it
                 // means that the client has skipped some entries. We need to move
@@ -2427,12 +2428,15 @@ public class ManagedCursorImpl implements ManagedCursor {
                     log.debug("[{}] Moved read position from: {} to: {}, and new mark-delete position {}",
                             ledger.getName(), currentReadPosition, newReadPosition, markDeletePosition);
                 }
-                ledger.onCursorReadPositionUpdated(ManagedCursorImpl.this, newReadPosition);
+                readPositionUpdated.setTrue();
                 return newReadPosition;
             } else {
                 return currentReadPosition;
             }
         });
+        if (readPositionUpdated.booleanValue()) {
+            ledger.onCursorReadPositionUpdated(this, updatedReadPosition);
+        }
 
         return newMarkDeletePosition;
     }
@@ -4838,6 +4842,22 @@ public class ManagedCursorImpl implements ManagedCursor {
             }
             addWaitingCursorRunnable.run();
             registeredToWaitingCursors = true;
+        }
+    }
+
+    /**
+     * When cache eviction by expected read count is enabled, this method returns the number of cursors
+     * that are at the same position or before this cursor.
+     *
+     * @return the number of cursors at the same position or before
+     */
+    public int getNumberOfCursorsAtSamePositionOrBefore() {
+        if (ledger.getConfig().isCacheEvictionByExpectedReadCount()) {
+            return ledger.getNumberOfCursorsAtSamePositionOrBefore(this);
+        } else if (isCacheReadEntry()) {
+            return 1;
+        } else {
+            return 0;
         }
     }
 }

@@ -178,7 +178,9 @@ public class PersistentDispatcherSingleActiveConsumerStuckReadTest extends Mocke
 
     private final AtomicLong msgCounter = new AtomicLong();
 
-    private ManagedLedgerConfig initManagedLedgerConfig(ManagedLedgerConfig config) {
+    @Override
+    protected ManagedLedgerConfig initManagedLedgerConfig(ManagedLedgerConfig config) {
+        super.initManagedLedgerConfig(config);
         // Inline checkForNewEntries: the +10ms task runs synchronously at arm time -> deterministic.
         config.setNewEntriesCheckDelayInMillis(0);
         config.setMaxEntriesPerLedger(1_000_000);
