@@ -140,12 +140,6 @@ public class RangeEntryCacheImpl implements EntryCache {
                     entryLength);
         }
 
-        Position position = entry.getPosition();
-        if (entries.exists(position)) {
-            // If the entry is already in the cache, don't insert it again
-            return false;
-        }
-
         ByteBuf cachedData;
         if (copyEntries) {
             cachedData = copyEntry(entry);
@@ -157,6 +151,7 @@ public class RangeEntryCacheImpl implements EntryCache {
             cachedData = entry.getDataBuffer().retain();
         }
 
+        Position position = entry.getPosition();
         ReferenceCountedEntry cacheEntry =
                 EntryImpl.createWithRetainedDuplicate(position, cachedData, entry.getReadCountHandler());
         cachedData.release();
