@@ -151,6 +151,8 @@ public abstract class AbstractBaseDispatcher extends EntryFilterSupport implemen
                 msgMetadata = metadataArray[metadataIndex];
             } else if (entry instanceof EntryAndMetadata) {
                 msgMetadata = ((EntryAndMetadata) entry).getMetadata();
+            } else if (entry.getMessageMetadata() != null) {
+                msgMetadata = entry.getMessageMetadata();
             } else {
                 msgMetadata = Commands.peekAndCopyMessageMetadata(metadataAndPayload, subscription.toString(), -1);
             }
@@ -481,8 +483,18 @@ public abstract class AbstractBaseDispatcher extends EntryFilterSupport implemen
         return true;
     }
 
-    protected byte[] peekStickyKey(ByteBuf metadataAndPayload) {
-        return Commands.peekStickyKey(metadataAndPayload, subscription.getTopicName(), subscription.getName());
+    protected byte[] peekStickyKey(Entry entry) {
+        if (entry instanceof EntryAndMetadata entryAndMetadata) {
+            return entryAndMetadata.getStickyKey();
+        }
+        MessageMetadata metadata = entry.getMessageMetadata();
+        if (metadata == null) {
+            metadata = Commands.peekMessageMetadata(entry.getDataBuffer(), subscription.toString(), -1);
+        }
+        if (metadata == null) {
+            return Commands.NONE_KEY;
+        }
+        return Commands.resolveStickyKey(metadata);
     }
 
     protected String getSubscriptionName() {
@@ -555,5 +567,17 @@ public abstract class AbstractBaseDispatcher extends EntryFilterSupport implemen
 
     protected final void updatePendingBytesToDispatch(long size) {
         PENDING_BYTES_TO_DISPATCH.inc(size);
+    }
+
+    protected int getNumberOfMessagesInBatch(Entry entry) {
+        MessageMetadata msgMetadata = entry.getMessageMetadata();
+        if (msgMetadata == null) {
+            msgMetadata = Commands.peekMessageMetadata(entry.getDataBuffer(), subscription.toString(), -1);
+        }
+        if (msgMetadata == null) {
+            return -1;
+        } else {
+            return msgMetadata.getNumMessagesInBatch();
+        }
     }
 }
