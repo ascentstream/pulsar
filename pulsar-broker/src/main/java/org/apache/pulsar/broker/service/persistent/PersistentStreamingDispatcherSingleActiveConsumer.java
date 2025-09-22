@@ -66,7 +66,7 @@ public class PersistentStreamingDispatcherSingleActiveConsumer extends Persisten
     public void canReadMoreEntries(boolean withBackoff) {
         havePendingRead = false;
         topic.getBrokerService().executor().schedule(() -> {
-             topicExecutor.execute(() -> {
+             executor.execute(() -> {
                 synchronized (PersistentStreamingDispatcherSingleActiveConsumer.this) {
                     Consumer currentConsumer = ACTIVE_CONSUMER_UPDATER.get(this);
                     if (currentConsumer != null && !havePendingRead) {
