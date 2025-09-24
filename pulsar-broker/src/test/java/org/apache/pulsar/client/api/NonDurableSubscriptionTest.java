@@ -25,7 +25,6 @@ import static org.testng.Assert.assertNotNull;
 import static org.testng.AssertJUnit.assertNull;
 import static org.testng.AssertJUnit.assertTrue;
 import java.lang.reflect.Field;
-import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -35,6 +34,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import lombok.Cleanup;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.bookkeeper.client.LedgerHandle;
+import org.apache.bookkeeper.mledger.ManagedLedgerEventListener.LedgerRollReason;
 import org.apache.bookkeeper.mledger.impl.ManagedCursorImpl;
 import org.apache.bookkeeper.mledger.impl.ManagedLedgerImpl;
 import org.apache.bookkeeper.mledger.impl.PositionImpl;
@@ -330,13 +330,6 @@ public class NonDurableSubscriptionTest extends ProducerConsumerBase {
     }
 
     private void switchLedgerManually(final String tpName) throws Exception {
-        Method ledgerClosed =
-                ManagedLedgerImpl.class.getDeclaredMethod("ledgerClosed", new Class[]{LedgerHandle.class});
-        Method createLedgerAfterClosed =
-                ManagedLedgerImpl.class.getDeclaredMethod("createLedgerAfterClosed", new Class[0]);
-        ledgerClosed.setAccessible(true);
-        createLedgerAfterClosed.setAccessible(true);
-
         // Wait for topic create.
         org.awaitility.Awaitility.await().untilAsserted(() -> {
             PersistentTopic persistentTopic =
@@ -349,8 +342,8 @@ public class NonDurableSubscriptionTest extends ProducerConsumerBase {
                 (PersistentTopic) pulsar.getBrokerService().getTopic(tpName, false).join().get();
         ManagedLedgerImpl ml = (ManagedLedgerImpl) persistentTopic.getManagedLedger();
         LedgerHandle currentLedger1 = WhiteboxImpl.getInternalState(ml, "currentLedger");
-        ledgerClosed.invoke(ml, new Object[]{currentLedger1});
-        createLedgerAfterClosed.invoke(ml, new Object[0]);
+        ml.ledgerClosedWithReason(currentLedger1, LedgerRollReason.FULL);
+        ml.createLedgerAfterClosed(LedgerRollReason.FULL);
         Awaitility.await().untilAsserted(() -> {
             LedgerHandle currentLedger2 = WhiteboxImpl.getInternalState(ml, "currentLedger");
             assertNotEquals(currentLedger1.getId(), currentLedger2.getId());

@@ -1871,7 +1871,8 @@ public class ManagedLedgerImpl implements ManagedLedger, CreateCallback {
     // //////////////////////////////////////////////////////////////////////
     // Private helpers
 
-    synchronized void ledgerClosedWithReason(final LedgerHandle lh, LedgerRollReason ledgerRollReason) {
+    @VisibleForTesting
+    public synchronized void ledgerClosedWithReason(final LedgerHandle lh, LedgerRollReason ledgerRollReason) {
         final State state = STATE_UPDATER.get(this);
         LedgerHandle currentLedger = this.currentLedger;
         if (currentLedger == lh && (state == State.ClosingLedger || state == State.LedgerOpened)) {
@@ -1914,7 +1915,8 @@ public class ManagedLedgerImpl implements ManagedLedger, CreateCallback {
         }
     }
 
-    synchronized void createLedgerAfterClosed(LedgerRollReason ledgerRollReason) {
+    @VisibleForTesting
+    public synchronized void createLedgerAfterClosed(LedgerRollReason ledgerRollReason) {
         if (isNeededCreateNewLedgerAfterCloseLedger()) {
             log.info("[{}] Creating a new ledger after closed {}", name,
                     currentLedger == null ? "null" : currentLedger.getId());
