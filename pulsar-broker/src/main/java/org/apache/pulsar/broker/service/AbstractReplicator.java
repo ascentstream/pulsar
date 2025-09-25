@@ -398,14 +398,16 @@ public abstract class AbstractReplicator implements Replicator {
             disableReplicatorRead();
             // release resources.
             doReleaseResources();
-            brokerService.getTopicEventsDispatcher()
-                    .newEvent(localTopicName, TopicEvent.REPLICATOR_STOP)
-                    .data(ReplicatorStopEventData.builder()
-                            .replicatorId(replicatorId)
-                            .localCluster(localCluster)
-                            .remoteCluster(remoteCluster)
-                            .build())
-                    .dispatch();
+            TopicEventsDispatcher topicEventsDispatcher = brokerService.getTopicEventsDispatcher();
+            if (topicEventsDispatcher != null) {
+                topicEventsDispatcher.newEvent(localTopicName, TopicEvent.REPLICATOR_STOP)
+                        .data(ReplicatorStopEventData.builder()
+                                .replicatorId(replicatorId)
+                                .localCluster(localCluster)
+                                .remoteCluster(remoteCluster)
+                                .build())
+                        .dispatch();
+            }
         });
     }
 

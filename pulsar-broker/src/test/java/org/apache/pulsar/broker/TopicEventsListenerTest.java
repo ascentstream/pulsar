@@ -18,6 +18,8 @@
  */
 package org.apache.pulsar.broker;
 
+import static org.apache.pulsar.broker.service.TopicEventsListener.TopicEvent.LEDGER_PURGE;
+import static org.apache.pulsar.broker.service.TopicEventsListener.TopicEvent.MESSAGE_EXPIRE;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertTrue;
@@ -417,11 +419,11 @@ public class TopicEventsListenerTest extends BrokerTestBase {
         PersistentSubscription subscription = persistentTopic.getSubscription(subscriptionName);
         subscription.expireMessages(ttl);
         Awaitility.await().untilAsserted(() -> assertThat(events).contains(
-                "MESSAGE_EXPIRE__SUCCESS"
+                MESSAGE_EXPIRE + "__SUCCESS"
         ));
         pulsar.getBrokerService().checkConsumedLedgers();
         Awaitility.await().untilAsserted(() -> assertThat(events).contains(
-                "MESSAGE_PURGE__SUCCESS"
+                LEDGER_PURGE + "__SUCCESS"
         ));
     }
 
