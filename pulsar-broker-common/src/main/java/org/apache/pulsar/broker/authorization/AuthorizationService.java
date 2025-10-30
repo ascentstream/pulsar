@@ -755,6 +755,11 @@ public class AuthorizationService {
                 authParams.getClientRole(), authParams.getClientAuthenticationDataSource());
     }
 
+    /**
+     * @deprecated use {@link #allowTopicOperationAsync(TopicName, TopicOperation, String, String,
+     * AuthenticationDataSource, AuthenticationDataSource)} instead.
+     */
+    @Deprecated
     public CompletableFuture<Boolean> allowTopicOperationAsync(TopicName topicName,
                                                                TopicOperation operation,
                                                                String originalRole,
@@ -768,6 +773,27 @@ public class AuthorizationService {
                     topicName, operation, role, authData);
             CompletableFuture<Boolean> isOriginalAuthorizedFuture = allowTopicOperationAsync(
                     topicName, operation, originalRole, authData);
+            return isRoleAuthorizedFuture.thenCombine(isOriginalAuthorizedFuture,
+                    (isRoleAuthorized, isOriginalAuthorized) -> isRoleAuthorized && isOriginalAuthorized);
+        } else {
+            return allowTopicOperationAsync(topicName, operation, role, authData);
+        }
+    }
+
+    public CompletableFuture<Boolean> allowTopicOperationAsync(TopicName topicName,
+                                                               TopicOperation operation,
+                                                               String originalRole,
+                                                               String role,
+                                                               AuthenticationDataSource originalAuthData,
+                                                               AuthenticationDataSource authData) {
+        if (!isValidOriginalPrincipal(role, originalRole, originalAuthData)) {
+            return CompletableFuture.completedFuture(false);
+        }
+        if (isProxyRole(role)) {
+            CompletableFuture<Boolean> isRoleAuthorizedFuture = allowTopicOperationAsync(
+                    topicName, operation, role, authData);
+            CompletableFuture<Boolean> isOriginalAuthorizedFuture = allowTopicOperationAsync(
+                    topicName, operation, originalRole, originalAuthData);
             return isRoleAuthorizedFuture.thenCombine(isOriginalAuthorizedFuture,
                     (isRoleAuthorized, isOriginalAuthorized) -> isRoleAuthorized && isOriginalAuthorized);
         } else {

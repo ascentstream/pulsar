@@ -19,11 +19,9 @@
 package org.apache.pulsar.proxy.server;
 
 import static org.mockito.Mockito.spy;
-
 import com.google.common.collect.Sets;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-
 import java.io.IOException;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -32,9 +30,7 @@ import java.util.Map.Entry;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
-
 import javax.naming.AuthenticationException;
-
 import lombok.Cleanup;
 import org.apache.pulsar.broker.ServiceConfiguration;
 import org.apache.pulsar.broker.authentication.AuthenticationDataSource;
@@ -250,12 +246,13 @@ public class ProxyAuthenticationTest extends ProducerConsumerBase {
 		proxyClient.newProducer(Schema.BYTES).topic(topicName).create();
 		proxyClient.newProducer(Schema.BYTES).topic(topicName).create();
 
-		// Step 4: Ensure that all client contexts share the same auth provider
-		Assert.assertTrue(proxyService.getClientCnxs().size() >= 3, "expect at least 3 clients");
-		proxyService.getClientCnxs().stream().forEach((cnx) -> {
-			Assert.assertSame(cnx.authenticationProvider, proxyService.getAuthenticationService().getAuthenticationProvider("BasicAuthentication"));
-		});
-	}
+        // Step 4: Ensure that all client contexts share the same auth provider
+        Assert.assertTrue(proxyService.getClientCnxs().size() >= 3, "expect at least 3 clients");
+        proxyService.getClientCnxs().stream().forEach((cnx) -> {
+            Assert.assertSame(cnx.getBinaryAuthSession().getAuthenticationProvider(),
+                    proxyService.getAuthenticationService().getAuthenticationProvider("BasicAuthentication"));
+        });
+    }
 
 	private void updateAdminClient() throws PulsarClientException {
 		// Expires after an hour
