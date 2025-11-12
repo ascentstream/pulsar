@@ -292,7 +292,6 @@ public class BrokerService implements Closeable {
     private Channel listenChannel;
     private Channel listenChannelTls;
 
-    private boolean preciseTopicPublishRateLimitingEnable;
     private final LongAdder pausedConnections = new LongAdder();
     private BrokerInterceptor interceptor;
     private final EntryFilterProvider entryFilterProvider;
@@ -308,8 +307,6 @@ public class BrokerService implements Closeable {
         this.pulsar = pulsar;
         this.topicEventsDispatcher = new TopicEventsDispatcher(pulsar);
         this.dynamicConfigurationMap = prepareDynamicConfigurationMap();
-        this.preciseTopicPublishRateLimitingEnable =
-                pulsar.getConfiguration().isPreciseTopicPublishRateLimiterEnable();
         this.managedLedgerFactory = pulsar.getManagedLedgerFactory();
         this.keepAliveIntervalSeconds = pulsar.getConfiguration().getKeepAliveIntervalSeconds();
         this.pendingTopicLoadingQueue = Queues.newConcurrentLinkedQueue();
@@ -2970,13 +2967,6 @@ public class BrokerService implements Closeable {
         registerConfigurationListener("dispatchThrottlingRateInByte",
                 (dispatchThrottlingRateInByte) ->
                         updateBrokerDispatchThrottlingMaxRate());
-        // add listener to notify topic publish-rate monitoring
-        if (!preciseTopicPublishRateLimitingEnable) {
-            registerConfigurationListener("topicPublisherThrottlingTickTimeMillis",
-                    (publisherThrottlingTickTimeMillis) -> {
-                        setupTopicPublishRateLimiterMonitor();
-                    });
-        }
 
         // add listener to notify topic subscriptionTypesEnabled changed.
         registerConfigurationListener("subscriptionTypesEnabled", this::updateBrokerSubscriptionTypesEnabled);

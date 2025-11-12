@@ -503,12 +503,8 @@ public class SystemTopicBasedTopicPoliciesServiceTest extends MockedPulsarServic
                 .when(service)
                 .getNamespaceEventsSystemTopicFactory();
 
-        CompletableFuture<Optional<TopicPolicies>> topicPoliciesFuture;
-        Optional<TopicPolicies> topicPoliciesOptional;
         try {
-            topicPoliciesFuture =
-                    service.getTopicPoliciesAsync(topicName, false);
-            topicPoliciesOptional = topicPoliciesFuture.join();
+            service.getTopicPoliciesAsync(topicName, false).join();
             Assert.fail();
         } catch (Exception e) {
             Assert.assertTrue(e.getCause().getMessage().contains("test exception"));
@@ -521,15 +517,16 @@ public class SystemTopicBasedTopicPoliciesServiceTest extends MockedPulsarServic
                     .succeedsWithin(Duration.ofSeconds(2));
         });
 
-        topicPoliciesFuture =
-                service.getTopicPoliciesAsync(topicName, false);
-        topicPoliciesOptional = topicPoliciesFuture.join();
-
-        Assert.assertNotNull(topicPoliciesOptional);
-        Assert.assertTrue(topicPoliciesOptional.isPresent());
-
-        TopicPolicies topicPolicies = topicPoliciesOptional.get();
-        Assert.assertNotNull(topicPolicies);
-        Assert.assertEquals(topicPolicies.getMaxConsumerPerTopic(), 10);
+        Awaitility.await().untilAsserted(() -> {
+            CompletableFuture<Optional<TopicPolicies>> topicPoliciesFuture =
+                    service.getTopicPoliciesAsync(topicName, false);
+            assertThat(topicPoliciesFuture).succeedsWithin(Duration.ofSeconds(2))
+                    .satisfies(n -> {
+                        Assert.assertTrue(n.isPresent());
+                        TopicPolicies topicPolicies = n.get();
+                        Assert.assertNotNull(topicPolicies);
+                        Assert.assertEquals(topicPolicies.getMaxConsumerPerTopic(), 10);
+                    });
+        });
     }
 }
