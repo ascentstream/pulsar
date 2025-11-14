@@ -19,6 +19,7 @@
 package org.apache.pulsar.broker.admin;
 
 import static org.apache.pulsar.common.naming.SystemTopicNames.NAMESPACE_EVENTS_LOCAL_NAME;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertFalse;
 import static org.testng.Assert.assertNotEquals;
@@ -53,10 +54,10 @@ import org.apache.pulsar.broker.ConfigHelper;
 import org.apache.pulsar.broker.auth.MockedPulsarServiceBaseTest;
 import org.apache.pulsar.broker.namespace.NamespaceService;
 import org.apache.pulsar.broker.service.AbstractTopic;
-import org.apache.pulsar.broker.service.PublishRateLimiterImpl;
+import org.apache.pulsar.broker.service.PrecisePublishLimiter;
 import org.apache.pulsar.broker.service.SystemTopicBasedTopicPoliciesService;
-import org.apache.pulsar.broker.service.TopicPoliciesService;
 import org.apache.pulsar.broker.service.Topic;
+import org.apache.pulsar.broker.service.TopicPoliciesService;
 import org.apache.pulsar.broker.service.persistent.DispatchRateLimiter;
 import org.apache.pulsar.broker.service.persistent.PersistentSubscription;
 import org.apache.pulsar.broker.service.persistent.PersistentTopic;
@@ -2349,64 +2350,56 @@ public class TopicPoliciesTest extends MockedPulsarServiceBaseTest {
 
         final String topicName = "persistent://" + myNamespace + "/test-" + UUID.randomUUID();
         pulsarClient.newProducer().topic(topicName).create().close();
-        Field publishMaxMessageRate = PublishRateLimiterImpl.class.getDeclaredField("publishMaxMessageRate");
-        publishMaxMessageRate.setAccessible(true);
-        Field publishMaxByteRate = PublishRateLimiterImpl.class.getDeclaredField("publishMaxByteRate");
-        publishMaxByteRate.setAccessible(true);
 
         //1 use broker-level policy by default
         PersistentTopic topic = (PersistentTopic) pulsar.getBrokerService().getTopicIfExists(topicName).get().get();
-        PublishRateLimiterImpl publishRateLimiter = (PublishRateLimiterImpl) topic.getTopicPublishRateLimiter();
-        Assert.assertEquals(publishMaxMessageRate.get(publishRateLimiter), 5);
-        Assert.assertEquals(publishMaxByteRate.get(publishRateLimiter), 50L);
+        assertThat(topic.getTopicPublishRateLimiter())
+                .isInstanceOfSatisfying(PrecisePublishLimiter.class, publishRateLimiter -> {
+                    Assert.assertEquals(publishRateLimiter.getPublishMaxMessageRate(), 5);
+                    Assert.assertEquals(publishRateLimiter.getPublishMaxByteRate(), 50L);
+                });
 
         //2 set namespace-level policy
         PublishRate publishMsgRate = new PublishRate(10, 100L);
         admin.namespaces().setPublishRate(myNamespace, publishMsgRate);
-
-        Awaitility.await()
-                .until(() -> {
-                    PublishRateLimiterImpl limiter = (PublishRateLimiterImpl) topic.getTopicPublishRateLimiter();
-                    return (int)publishMaxMessageRate.get(limiter) == 10;
-                });
-
-        publishRateLimiter = (PublishRateLimiterImpl) topic.getTopicPublishRateLimiter();
-        Assert.assertEquals(publishMaxMessageRate.get(publishRateLimiter), 10);
-        Assert.assertEquals(publishMaxByteRate.get(publishRateLimiter), 100L);
+        Awaitility.await().untilAsserted(() -> assertThat(topic.getTopicPublishRateLimiter())
+                .isInstanceOfSatisfying(PrecisePublishLimiter.class, publishRateLimiter -> {
+                    Assert.assertEquals(publishRateLimiter.getPublishMaxMessageRate(), 10);
+                    Assert.assertEquals(publishRateLimiter.getPublishMaxByteRate(), 100L);
+                }));
 
         //3 set topic-level policy, namespace-level policy should be overwritten
         PublishRate publishMsgRate2 = new PublishRate(11, 101L);
         admin.topicPolicies().setPublishRate(topicName, publishMsgRate2);
 
-        Awaitility.await()
-                .until(() -> admin.topicPolicies().getPublishRate(topicName) != null);
+        Awaitility.await().until(() -> admin.topicPolicies().getPublishRate(topicName) != null);
 
-        publishRateLimiter = (PublishRateLimiterImpl) topic.getTopicPublishRateLimiter();
-        Assert.assertEquals(publishMaxMessageRate.get(publishRateLimiter), 11);
-        Assert.assertEquals(publishMaxByteRate.get(publishRateLimiter), 101L);
-
+        Awaitility.await().untilAsserted(() -> assertThat(topic.getTopicPublishRateLimiter())
+                .isInstanceOfSatisfying(PrecisePublishLimiter.class, publishRateLimiter -> {
+                    Assert.assertEquals(publishRateLimiter.getPublishMaxMessageRate(), 11);
+                    Assert.assertEquals(publishRateLimiter.getPublishMaxByteRate(), 101L);
+                }));
         //4 remove topic-level policy, namespace-level policy will take effect
         admin.topicPolicies().removePublishRate(topicName);
 
         Awaitility.await()
                 .until(() -> admin.topicPolicies().getPublishRate(topicName) == null);
 
-        publishRateLimiter = (PublishRateLimiterImpl) topic.getTopicPublishRateLimiter();
-        Assert.assertEquals(publishMaxMessageRate.get(publishRateLimiter), 10);
-        Assert.assertEquals(publishMaxByteRate.get(publishRateLimiter), 100L);
+        Awaitility.await().untilAsserted(() -> assertThat(topic.getTopicPublishRateLimiter())
+                .isInstanceOfSatisfying(PrecisePublishLimiter.class, publishRateLimiter -> {
+                    Assert.assertEquals(publishRateLimiter.getPublishMaxMessageRate(), 10);
+                    Assert.assertEquals(publishRateLimiter.getPublishMaxByteRate(), 100L);
+                }));
 
         //5 remove namespace-level policy, broker-level policy will take effect
         admin.namespaces().removePublishRate(myNamespace);
 
-        Awaitility.await()
-                .until(() -> {
-                    PublishRateLimiterImpl limiter = (PublishRateLimiterImpl) topic.getTopicPublishRateLimiter();
-                    return (int)publishMaxMessageRate.get(limiter) == 5;
-                });
-
-        publishRateLimiter = (PublishRateLimiterImpl) topic.getTopicPublishRateLimiter();
-        Assert.assertEquals(publishMaxMessageRate.get(publishRateLimiter), 5);
-        Assert.assertEquals(publishMaxByteRate.get(publishRateLimiter), 50L);
+        Awaitility.await().untilAsserted(() -> assertThat(topic.getTopicPublishRateLimiter())
+                .isInstanceOfSatisfying(PrecisePublishLimiter.class, publishRateLimiter -> {
+                    Assert.assertEquals(publishRateLimiter.getPublishMaxMessageRate(), 5);
+                    Assert.assertEquals(publishRateLimiter.getPublishMaxByteRate(), 50L);
+                })
+        );
     }
 
     @Test(timeOut = 20000)

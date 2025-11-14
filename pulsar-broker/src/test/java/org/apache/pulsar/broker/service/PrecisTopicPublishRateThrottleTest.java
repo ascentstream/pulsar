@@ -56,7 +56,6 @@ public class PrecisTopicPublishRateThrottleTest extends BrokerTestBase{
     public void testPrecisTopicPublishRateLimitingDisabled() throws Exception {
         PublishRate publishRate = new PublishRate(1,10);
         // disable precis topic publish rate limiting
-        conf.setPreciseTopicPublishRateLimiterEnable(false);
         conf.setMaxPendingPublishRequestsPerConnection(0);
         super.baseSetup();
         admin.namespaces().setPublishRate("prop/ns-abc", publishRate);
@@ -91,7 +90,6 @@ public class PrecisTopicPublishRateThrottleTest extends BrokerTestBase{
     @Test
     public void testProducerBlockedByPrecisTopicPublishRateLimiting() throws Exception {
         PublishRate publishRate = new PublishRate(1,10);
-        conf.setPreciseTopicPublishRateLimiterEnable(true);
         conf.setMaxPendingPublishRequestsPerConnection(0);
         super.baseSetup();
         admin.namespaces().setPublishRate("prop/ns-abc", publishRate);
@@ -137,7 +135,6 @@ public class PrecisTopicPublishRateThrottleTest extends BrokerTestBase{
     @Test
     public void testPrecisTopicPublishRateLimitingProduceRefresh() throws Exception {
         PublishRate publishRate = new PublishRate(1,10);
-        conf.setPreciseTopicPublishRateLimiterEnable(true);
         conf.setMaxPendingPublishRequestsPerConnection(0);
         super.baseSetup();
         admin.namespaces().setPublishRate("prop/ns-abc", publishRate);
@@ -173,7 +170,6 @@ public class PrecisTopicPublishRateThrottleTest extends BrokerTestBase{
 
     @Test
     public void testBrokerLevelPublishRateDynamicUpdate() throws Exception{
-        conf.setPreciseTopicPublishRateLimiterEnable(true);
         conf.setMaxPendingPublishRequestsPerConnection(0);
         super.baseSetup();
         final String topic = "persistent://prop/ns-abc/testMultiLevelPublishRate";
@@ -212,7 +208,6 @@ public class PrecisTopicPublishRateThrottleTest extends BrokerTestBase{
     @Test
     public void testWithConcurrentUpdate() throws Exception {
         PublishRate publishRate = new PublishRate(-1,10);
-        conf.setPreciseTopicPublishRateLimiterEnable(true);
         conf.setMaxPendingPublishRequestsPerConnection(1000);
         super.baseSetup();
         admin.namespaces().setPublishRate("prop/ns-abc", publishRate);

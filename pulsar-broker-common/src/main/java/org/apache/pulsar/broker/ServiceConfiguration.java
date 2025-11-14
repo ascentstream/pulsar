@@ -962,11 +962,6 @@ public class ServiceConfiguration implements PulsarConfiguration {
         )
     private int topicPublisherThrottlingTickTimeMillis = 10;
     @FieldContext(
-            category = CATEGORY_SERVER,
-            doc = "Enable precise rate limit for topic publish"
-    )
-    private boolean preciseTopicPublishRateLimiterEnable = false;
-    @FieldContext(
         category = CATEGORY_SERVER,
         dynamic = true,
         doc = "Tick time to schedule task that checks broker publish rate limiting across all topics  "

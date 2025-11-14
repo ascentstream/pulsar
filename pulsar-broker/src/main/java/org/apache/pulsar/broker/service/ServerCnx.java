@@ -320,7 +320,6 @@ public class ServerCnx extends PulsarHandler implements TransportCnx {
         this.maxPendingSendRequests = conf.getMaxPendingPublishRequestsPerConnection();
         this.resumeReadsThreshold = maxPendingSendRequests / 2;
         this.preciseDispatcherFlowControl = conf.isPreciseDispatcherFlowControl();
-        this.preciseTopicPublishRateLimitingEnable = conf.isPreciseTopicPublishRateLimiterEnable();
         this.encryptionRequireOnProducer = conf.isEncryptionRequireOnProducer();
         // Assign a portion of max-pending bytes to each IO thread
         this.maxPendingBytesPerThread = conf.getMaxMessagePublishBufferSizeInMB() * 1024L * 1024L
@@ -3177,33 +3176,39 @@ public class ServerCnx extends PulsarHandler implements TransportCnx {
             .help("Counter of connections throttled because of per-connection limit")
             .register();
 
-    public void startSendOperation(Producer producer, int msgSize, int numMessages) {
-        boolean isPublishRateExceeded = false;
-        if (preciseTopicPublishRateLimitingEnable) {
-            boolean isPreciseTopicPublishRateExceeded =
-                    producer.getTopic().isTopicPublishRateExceeded(numMessages, msgSize);
-            if (isPreciseTopicPublishRateExceeded) {
-                producer.getTopic().disableCnxAutoRead();
-                return;
+    private boolean isTopicPublishRateExceeded(Producer producer, int msgSize, int numMessages) {
+        String topicName = producer.getTopic().getName();
+        boolean exceeded = producer.getTopic().isTopicPublishRateExceeded(numMessages, msgSize);
+        if (exceeded) {
+            if (log.isDebugEnabled()) {
+                log.debug("[{}] Topic-level publish rate exceeded", topicName);
             }
-            isPublishRateExceeded = producer.getTopic().isBrokerPublishRateExceeded();
-        } else {
-            if (producer.getTopic().isResourceGroupRateLimitingEnabled()) {
-                final boolean resourceGroupPublishRateExceeded =
-                  producer.getTopic().isResourceGroupPublishRateExceeded(numMessages, msgSize);
-                if (resourceGroupPublishRateExceeded) {
-                    producer.getTopic().disableCnxAutoRead();
-                    return;
-                }
-            }
-            isPublishRateExceeded = producer.getTopic().isPublishRateExceeded();
+            return true;
         }
 
-        if (++pendingSendRequest == maxPendingSendRequests || isPublishRateExceeded) {
+        exceeded = producer.getTopic().isResourceGroupPublishRateExceeded(numMessages, msgSize);
+        if (exceeded) {
+            if (log.isDebugEnabled()) {
+                log.debug("[{}] Resource-group publish rate exceeded", topicName);
+            }
+            return true;
+        }
+
+        return false;
+    }
+
+    public void startSendOperation(Producer producer, int msgSize, int numMessages) {
+        boolean isTopicPublishRateExceeded = isTopicPublishRateExceeded(producer, msgSize, numMessages);
+        if (isTopicPublishRateExceeded) {
+            producer.getTopic().disableCnxAutoRead();
+            return;
+        }
+        boolean isBrokerPublishRateExceeded = producer.getTopic().isBrokerPublishRateExceeded();
+        if (++pendingSendRequest == maxPendingSendRequests || isBrokerPublishRateExceeded) {
             // When the quota of pending send requests is reached, stop reading from socket to cause backpressure on
             // client connection, possibly shared between multiple producers
             disableCnxAutoRead();
-            autoReadDisabledRateLimiting = isPublishRateExceeded;
+            autoReadDisabledRateLimiting = isBrokerPublishRateExceeded;
             throttledConnections.inc();
         }
 

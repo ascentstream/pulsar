@@ -18,6 +18,7 @@
  */
 package org.apache.pulsar.broker.service;
 
+import com.google.common.annotations.VisibleForTesting;
 import java.util.concurrent.ScheduledExecutorService;
 import org.apache.pulsar.common.policies.data.Policies;
 import org.apache.pulsar.common.policies.data.PublishRate;
@@ -158,5 +159,15 @@ public class PrecisePublishLimiter implements PublishRateLimiter {
                 previousTopicPublishRateLimiterOnByte.close();
             }
         }
+    }
+
+    @VisibleForTesting
+    public int getPublishMaxMessageRate() {
+        return publishMaxMessageRate;
+    }
+
+    @VisibleForTesting
+    public long getPublishMaxByteRate() {
+        return publishMaxByteRate;
     }
 }

@@ -141,7 +141,6 @@ public class PrometheusMetricsTest extends BrokerTestBase {
             conf.setBrokerPublisherThrottlingMaxByteRate(1);
         }
         conf.setStatsUpdateFrequencyInSecs(100000000);
-        conf.setPreciseTopicPublishRateLimiterEnable(preciseRateLimit);
         setup();
         String ns1 = "prop/ns-abc1" + UUID.randomUUID();
         admin.namespaces().createNamespace(ns1, 1);
