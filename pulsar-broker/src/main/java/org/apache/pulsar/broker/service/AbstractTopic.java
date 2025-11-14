@@ -126,8 +126,6 @@ public abstract class AbstractTopic implements Topic, TopicPolicyListener<TopicP
     @Getter
     protected volatile Optional<ResourceGroupDispatchLimiter> resourceGroupDispatchRateLimiter = Optional.empty();
 
-    protected boolean preciseTopicPublishRateLimitingEnable;
-
     @Getter
     protected boolean resourceGroupRateLimitingEnabled;
 
@@ -170,7 +168,6 @@ public abstract class AbstractTopic implements Topic, TopicPolicyListener<TopicP
         updateTopicPolicyByBrokerConfig();
 
         this.lastActive = System.nanoTime();
-        this.preciseTopicPublishRateLimitingEnable = config.isPreciseTopicPublishRateLimiterEnable();
     }
 
     public SubscribeRate getSubscribeRate() {
@@ -1153,7 +1150,7 @@ public abstract class AbstractTopic implements Topic, TopicPolicyListener<TopicP
     @Override
     public boolean isTopicPublishRateExceeded(int numberMessages, int bytes) {
         // whether topic publish rate exceed if precise rate limit is enable
-        return preciseTopicPublishRateLimitingEnable && !this.topicPublishRateLimiter.tryAcquire(numberMessages, bytes);
+        return !this.topicPublishRateLimiter.tryAcquire(numberMessages, bytes);
     }
 
     @Override
@@ -1327,19 +1324,11 @@ public abstract class AbstractTopic implements Topic, TopicPolicyListener<TopicP
             PublishRate publishRate = topicPolicies.getPublishRate().get();
             if (publishRate.publishThrottlingRateInByte > 0 || publishRate.publishThrottlingRateInMsg > 0) {
                 log.info("Enabling publish rate limiting {} ", publishRate);
-                if (!preciseTopicPublishRateLimitingEnable) {
-                    this.brokerService.setupTopicPublishRateLimiterMonitor();
-                }
-
                 if (this.topicPublishRateLimiter == null
-                    || this.topicPublishRateLimiter == PublishRateLimiter.DISABLED_RATE_LIMITER) {
+                        || this.topicPublishRateLimiter == PublishRateLimiter.DISABLED_RATE_LIMITER) {
                     // create new rateLimiter if rate-limiter is disabled
-                    if (preciseTopicPublishRateLimitingEnable) {
-                        this.topicPublishRateLimiter = new PrecisPublishLimiter(publishRate,
+                    this.topicPublishRateLimiter = new PrecisPublishLimiter(publishRate,
                             () -> this.enableCnxAutoRead(), brokerService.pulsar().getExecutor());
-                    } else {
-                        this.topicPublishRateLimiter = new PublishRateLimiterImpl(publishRate);
-                    }
                 } else {
                     this.topicPublishRateLimiter.update(publishRate);
                 }
