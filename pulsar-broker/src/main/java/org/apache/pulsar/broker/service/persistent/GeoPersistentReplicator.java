@@ -293,8 +293,7 @@ public class GeoPersistentReplicator extends PersistentReplicator {
                     continue;
                 }
 
-                int msgCount = msg.getMessageBuilder().hasNumMessagesInBatch()
-                        ? msg.getMessageBuilder().getNumMessagesInBatch() : 1;
+                int msgCount = 1;
                 dispatchRateLimiter.ifPresent(
                         rateLimiter -> rateLimiter.tryDispatchPermit(msgCount, entry.getLength()));
 
