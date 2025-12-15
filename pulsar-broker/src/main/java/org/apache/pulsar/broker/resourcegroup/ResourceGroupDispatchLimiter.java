@@ -122,18 +122,15 @@ public class ResourceGroupDispatchLimiter implements AutoCloseable {
      * @param byteSize
      */
     public boolean tryAcquire(long numberOfMessages, long byteSize) {
+        boolean res = true;
         if (numberOfMessages > 0 && dispatchRateLimiterOnMessage != null) {
-            if (!dispatchRateLimiterOnMessage.tryAcquire(numberOfMessages)) {
-                return false;
-            }
+            res &= !dispatchRateLimiterOnMessage.tryAcquire(numberOfMessages);
         }
         if (byteSize > 0 && dispatchRateLimiterOnByte != null) {
-            if (!dispatchRateLimiterOnByte.tryAcquire(byteSize)) {
-                return false;
-            }
+            res &= !dispatchRateLimiterOnByte.tryAcquire(byteSize);
         }
 
-        return true;
+        return res;
     }
 
     /**
