@@ -70,6 +70,7 @@ import org.apache.pulsar.broker.topiclistlimit.TopicListSizeResultCache;
 import org.apache.pulsar.broker.web.RestException;
 import org.apache.pulsar.client.admin.GrantTopicPermissionOptions;
 import org.apache.pulsar.client.admin.PulsarAdmin;
+import org.apache.pulsar.client.admin.PulsarAdminException;
 import org.apache.pulsar.client.admin.RevokeTopicPermissionOptions;
 import org.apache.pulsar.client.api.SubscriptionType;
 import org.apache.pulsar.common.api.proto.CommandGetTopicsOfNamespace;
@@ -747,8 +748,7 @@ public abstract class NamespacesBase extends AdminResource {
     private CompletableFuture<Void> checkNamespace(Stream<String> namespaces) {
         boolean sameNamespace = namespaces.distinct().count() == 1;
         if (!sameNamespace) {
-            return FutureUtil.failedFuture(
-                    new RestException(Status.BAD_REQUEST, "The namespace should be the same"));
+            throw new RestException(Status.BAD_REQUEST, "The namespace should be the same");
         }
         return CompletableFuture.completedFuture(null);
     }
@@ -1793,14 +1793,8 @@ public abstract class NamespacesBase extends AdminResource {
     }
 
     protected CompletableFuture<Void> internalSetNamespaceAntiAffinityGroupAsync(String antiAffinityGroup) {
-        if (antiAffinityGroup == null) {
-            return FutureUtil.failedFuture(
-                    new RestException(Status.BAD_REQUEST, "Anti-affinity group should not be null"));
-        }
-        if (StringUtils.isBlank(antiAffinityGroup)) {
-            return FutureUtil.failedFuture(
-                    new RestException(Status.PRECONDITION_FAILED, "Anti-affinity group can't be empty"));
-        }
+        checkNotNull(antiAffinityGroup, "Anti-affinity group should not be null");
+        checkNotBlank(antiAffinityGroup, "Anti-affinity group can't be empty");
         return validateNamespacePolicyOperationAsync(namespaceName, PolicyName.ANTI_AFFINITY, PolicyOperation.WRITE)
                 .thenCompose(__ -> validatePoliciesReadOnlyAccessAsync()).thenCompose(
                         __ -> getDefaultBundleDataAsync().thenCompose(
@@ -1838,20 +1832,10 @@ public abstract class NamespacesBase extends AdminResource {
     protected CompletableFuture<List<String>> internalGetAntiAffinityNamespacesAsync(String cluster,
                                                                                      String antiAffinityGroup,
                                                                                      String tenant) {
-        if (cluster == null) {
-            return FutureUtil.failedFuture(new RestException(Status.BAD_REQUEST, "Cluster should not be null"));
-        }
-        if (antiAffinityGroup == null) {
-            return FutureUtil.failedFuture(
-                    new RestException(Status.BAD_REQUEST, "Anti-affinity group should not be null"));
-        }
-        if (tenant == null) {
-            return FutureUtil.failedFuture(new RestException(Status.BAD_REQUEST, "Tenant should not be null"));
-        }
-        if (StringUtils.isBlank(antiAffinityGroup)) {
-            return FutureUtil.failedFuture(
-                    new RestException(Status.PRECONDITION_FAILED, "Anti-affinity group can't be empty"));
-        }
+        checkNotNull(cluster, "Cluster should not be null");
+        checkNotNull(antiAffinityGroup, "Anti-affinity group should not be null");
+        checkNotNull(tenant, "Tenant should not be null");
+        checkNotBlank(antiAffinityGroup, "Anti-affinity group can't be empty");
 
         return validateNamespacePolicyOperationAsync(namespaceName, PolicyName.ANTI_AFFINITY, PolicyOperation.READ)
                 .thenCompose(__ -> validateClusterExistsAsync(cluster))
@@ -1987,7 +1971,7 @@ public abstract class NamespacesBase extends AdminResource {
                     + " Repl clusters: %s, allowed clusters: %s",
                     ns.toString(), policies.replication_clusters, policies.allowed_clusters);
             log.info(msg);
-            return FutureUtil.failedFuture(new RestException(Status.BAD_REQUEST, msg));
+            throw new RestException(Status.BAD_REQUEST, msg);
         }
         pulsar().getBrokerService().setCurrentClusterAllowedIfNoClusterIsAllowed(ns, policies);
 

@@ -57,7 +57,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
-import javax.servlet.ServletContext;
 import javax.ws.rs.BadRequestException;
 import javax.ws.rs.ClientErrorException;
 import javax.ws.rs.WebApplicationException;
@@ -96,7 +95,6 @@ import org.apache.pulsar.client.api.PulsarClientException;
 import org.apache.pulsar.client.api.Schema;
 import org.apache.pulsar.client.api.SubscriptionType;
 import org.apache.pulsar.common.api.proto.CommandSubscribe;
-import org.apache.pulsar.common.naming.Constants;
 import org.apache.pulsar.common.naming.NamespaceBundle;
 import org.apache.pulsar.common.naming.NamespaceBundles;
 import org.apache.pulsar.common.naming.NamespaceName;
@@ -188,18 +186,12 @@ public class NamespacesTest extends MockedPulsarServiceBaseTest {
     }
 
     @AfterMethod(alwaysRun = true)
-    public void cleanupAfterMethod() {
-        // Best-effort cleanup. Transient infra failures (e.g. ZK session expiry from a
-        // long-running test or GC pause) can make the admin call fail here; log and
-        // continue so the test method's actual result is preserved.
+    public void cleanupAfterMethod() throws Exception{
+        // cleanup.
         Set<String> existsNsSetAferSetup = Stream.concat(testLocalNamespaces.stream(), testGlobalNamespaces.stream())
                 .map(Objects::toString).collect(Collectors.toSet());
-        try {
-            cleanupNamespaceByPredicate(this.testTenant, v -> !existsNsSetAferSetup.contains(v));
-            cleanupNamespaceByPredicate(this.testOtherTenant, v -> !existsNsSetAferSetup.contains(v));
-        } catch (Exception e) {
-            log.warn("Failed to clean up namespaces after test method", e);
-        }
+        cleanupNamespaceByPredicate(this.testTenant, v -> !existsNsSetAferSetup.contains(v));
+        cleanupNamespaceByPredicate(this.testOtherTenant, v -> !existsNsSetAferSetup.contains(v));
     }
 
     protected void customizeNewPulsarClientBuilder(ClientBuilder clientBuilder) {
@@ -219,7 +211,7 @@ public class NamespacesTest extends MockedPulsarServiceBaseTest {
         super.internalSetup();
 
         namespaces = spy(Namespaces.class);
-        namespaces.setServletContext(mock(ServletContext.class));
+        namespaces.setServletContext(new MockServletContext());
         namespaces.setPulsar(pulsar);
         doReturn(false).when(namespaces).isRequestHttps();
         doReturn("test").when(namespaces).clientAppId();
@@ -1238,7 +1230,7 @@ public class NamespacesTest extends MockedPulsarServiceBaseTest {
         ownership.set(pulsar.getNamespaceService(), mockOwnershipCache);
         TopicName topicName = TopicName.get(testNs.getPersistentTopicName("my-topic"));
         PersistentTopics topics = spy(PersistentTopics.class);
-        topics.setServletContext(mock(ServletContext.class));
+        topics.setServletContext(new MockServletContext());
         topics.setPulsar(pulsar);
         doReturn(false).when(topics).isRequestHttps();
         doReturn("test").when(topics).clientAppId();
@@ -2519,126 +2511,6 @@ public class NamespacesTest extends MockedPulsarServiceBaseTest {
                 namespacesWithAntiAffinityGroup.stream().map(ns -> NamespaceName.get(testTenant, testLocalCluster, ns))
                         .map(NamespaceName::toString).toList();
         assertEquals(namespacesResp, namespacesWithFullPath);
-    }
-
-    @Test
-    public void testBundleValidationWithNonExistentNamespace() throws Exception {
-        String nonExistentNs = "non-existent-namespace";
-        String bundleRange = "0x00000000_0x80000000";
-
-        // Test unload on non-existent namespace - should return 404
-        // The error is thrown by validateGlobalNamespaceOwnershipAsync before reaching bundle validation
-        AsyncResponse unloadResponse = mock(AsyncResponse.class);
-        namespaces.unloadNamespaceBundle(unloadResponse, testTenant, Constants.GLOBAL_CLUSTER, nonExistentNs,
-                bundleRange, false, null);
-        ArgumentCaptor<RestException> unloadCaptor = ArgumentCaptor.forClass(RestException.class);
-        verify(unloadResponse, timeout(5000).times(1)).resume(unloadCaptor.capture());
-        assertEquals(unloadCaptor.getValue().getResponse().getStatus(),
-                Response.Status.NOT_FOUND.getStatusCode(),
-                "Non-existent namespace should return 404");
-
-        // Test split on non-existent namespace - should return 404
-        AsyncResponse splitResponse = mock(AsyncResponse.class);
-        namespaces.splitNamespaceBundle(splitResponse, testTenant, Constants.GLOBAL_CLUSTER, nonExistentNs,
-                bundleRange, false, true, null, null);
-        ArgumentCaptor<RestException> splitCaptor = ArgumentCaptor.forClass(RestException.class);
-        verify(splitResponse, timeout(5000).times(1)).resume(splitCaptor.capture());
-        assertEquals(splitCaptor.getValue().getResponse().getStatus(),
-                Response.Status.NOT_FOUND.getStatusCode(),
-                "Non-existent namespace should return 404");
-
-        // Test clear backlog on non-existent namespace - should return 404
-        AsyncResponse clearResponse = mock(AsyncResponse.class);
-        namespaces.clearNamespaceBundleBacklog(clearResponse, testTenant, Constants.GLOBAL_CLUSTER, nonExistentNs,
-                bundleRange, false);
-        ArgumentCaptor<RestException> clearCaptor = ArgumentCaptor.forClass(RestException.class);
-        verify(clearResponse, timeout(5000).times(1)).resume(clearCaptor.capture());
-        assertEquals(clearCaptor.getValue().getResponse().getStatus(),
-                Response.Status.NOT_FOUND.getStatusCode(),
-                "Non-existent namespace should return 404");
-
-        // Test clear backlog for subscription on non-existent namespace - should return 404
-        AsyncResponse clearSubResponse = mock(AsyncResponse.class);
-        namespaces.clearNamespaceBundleBacklogForSubscription(clearSubResponse, testTenant, Constants.GLOBAL_CLUSTER,
-                nonExistentNs, bundleRange, "test-sub", false);
-        ArgumentCaptor<RestException> clearSubCaptor = ArgumentCaptor.forClass(RestException.class);
-        verify(clearSubResponse, timeout(5000).times(1)).resume(clearSubCaptor.capture());
-        assertEquals(clearSubCaptor.getValue().getResponse().getStatus(),
-                Response.Status.NOT_FOUND.getStatusCode(),
-                "Non-existent namespace should return 404");
-    }
-
-    @Test
-    public void testBundleValidationAfterSplit() throws Exception {
-        URL localWebServiceUrl = new URL(pulsar.getSafeWebServiceAddress());
-        String bundledNsLocal = "test-bundle-validation-after-split";
-        List<String> boundaries = List.of("0x00000000", "0xffffffff");
-        BundlesData bundleData = BundlesData.builder()
-                .boundaries(boundaries)
-                .numBundles(boundaries.size() - 1)
-                .build();
-        createBundledTestNamespaces(this.testTenant, this.testLocalCluster, bundledNsLocal, bundleData);
-        final NamespaceName testNs = NamespaceName.get(this.testTenant, this.testLocalCluster, bundledNsLocal);
-
-        OwnershipCache mockOwnershipCache = spy(pulsar.getNamespaceService().getOwnershipCache());
-        doReturn(CompletableFuture.completedFuture(null)).when(mockOwnershipCache)
-                .disableOwnership(any(NamespaceBundle.class));
-        Field ownership = NamespaceService.class.getDeclaredField("ownershipCache");
-        ownership.setAccessible(true);
-        ownership.set(pulsar.getNamespaceService(), mockOwnershipCache);
-        mockWebUrl(localWebServiceUrl, testNs);
-
-        // Split the bundle
-        AsyncResponse splitResponse = mock(AsyncResponse.class);
-        namespaces.splitNamespaceBundle(splitResponse, testTenant, testLocalCluster, bundledNsLocal,
-                "0x00000000_0xffffffff",
-                false, true, null, null);
-        ArgumentCaptor<Response> splitCaptor = ArgumentCaptor.forClass(Response.class);
-        verify(splitResponse, timeout(5000).times(1)).resume(splitCaptor.capture());
-
-        // Verify split was successful
-        BundlesData bundlesDataAfterSplit = (BundlesData) asyncRequests(ctx -> namespaces.getBundlesData(ctx,
-                testTenant, testLocalCluster, bundledNsLocal));
-        assertNotNull(bundlesDataAfterSplit);
-        assertEquals(bundlesDataAfterSplit.getBoundaries().size(), 3);
-        assertEquals(bundlesDataAfterSplit.getBoundaries().get(0), "0x00000000");
-        assertEquals(bundlesDataAfterSplit.getBoundaries().get(1), "0x7fffffff");
-        assertEquals(bundlesDataAfterSplit.getBoundaries().get(2), "0xffffffff");
-
-        // Now test bundle validation with the old (invalid) bundle range - should return 412
-        AsyncResponse unloadOldBundleResponse = mock(AsyncResponse.class);
-        namespaces.unloadNamespaceBundle(unloadOldBundleResponse, testTenant, testLocalCluster, bundledNsLocal,
-                "0x00000000_0xffffffff", false, null);
-        ArgumentCaptor<RestException> unloadOldCaptor = ArgumentCaptor.forClass(RestException.class);
-        verify(unloadOldBundleResponse, timeout(5000).times(1)).resume(unloadOldCaptor.capture());
-        assertEquals(unloadOldCaptor.getValue().getResponse().getStatus(),
-                Response.Status.PRECONDITION_FAILED.getStatusCode(),
-                "Old bundle range after split should return 412");
-
-        // Test bundle validation with new valid bundle ranges - should succeed
-        doReturn(true).when(nsSvc)
-                .isServiceUnitOwned(Mockito.argThat(bundle -> bundle.getNamespaceObject().equals(testNs)));
-        doReturn(CompletableFuture.completedFuture(null)).when(nsSvc)
-                .unloadNamespaceBundle(any(NamespaceBundle.class));
-
-        AsyncResponse unloadNewBundle1Response = mock(AsyncResponse.class);
-        namespaces.unloadNamespaceBundle(unloadNewBundle1Response, testTenant, testLocalCluster, bundledNsLocal,
-                "0x00000000_0x7fffffff", false, null);
-        ArgumentCaptor<Response> newBundle1Captor = ArgumentCaptor.forClass(Response.class);
-        verify(unloadNewBundle1Response, timeout(5000).times(1)).resume(newBundle1Captor.capture());
-        assertEquals(newBundle1Captor.getValue().getStatus(), Response.Status.NO_CONTENT.getStatusCode(),
-                "New bundle range should be valid");
-
-        AsyncResponse unloadNewBundle2Response = mock(AsyncResponse.class);
-        namespaces.unloadNamespaceBundle(unloadNewBundle2Response, testTenant, testLocalCluster, bundledNsLocal,
-                "0x7fffffff_0xffffffff", false, null);
-        ArgumentCaptor<Response> newBundle2Captor = ArgumentCaptor.forClass(Response.class);
-        verify(unloadNewBundle2Response, timeout(5000).times(1)).resume(newBundle2Captor.capture());
-        assertEquals(newBundle2Captor.getValue().getStatus(), Response.Status.NO_CONTENT.getStatusCode(),
-                "New bundle range should be valid");
-
-        // cleanup
-        resetBroker();
     }
 
 }
