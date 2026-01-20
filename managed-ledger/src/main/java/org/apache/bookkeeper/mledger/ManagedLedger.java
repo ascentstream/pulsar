@@ -753,4 +753,18 @@ public interface ManagedLedger {
     default void addLedgerEventListener(ManagedLedgerEventListener listener) {
         // No-op by default
     }
+
+    /**
+     * Trim consumed ledgers before the specified ledgerId.
+     * This method will delete all ledgers that are strictly before the specified ledgerId,
+     * but only if they have been fully consumed by all cursors.
+     *
+     * @param ledgerId the ledger id before which ledgers will be trimmed
+     * @return a future that completes when the trim operation is complete
+     * @throws ManagedLedgerException if ledgers before the specified ledgerId are not fully consumed
+     */
+    default CompletableFuture<Void> asyncTrimConsumedLedgersBefore(long ledgerId) {
+        // No-op by default
+        return null;
+    }
 }
