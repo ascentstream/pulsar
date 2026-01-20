@@ -88,7 +88,8 @@ public class ManagedLedgerImplExt extends ManagedLedgerImpl {
 
         // Check metadata service availability
         if (!factory.isMetadataServiceAvailable()) {
-            future.completeExceptionally(new ManagedLedgerException.MetaStoreException("Metadata service is not available"));
+            future.completeExceptionally(new ManagedLedgerException.MetaStoreException(
+                    "Metadata service is not available"));
             return;
         }
 
@@ -131,8 +132,7 @@ public class ManagedLedgerImplExt extends ManagedLedgerImpl {
                     } else {
                         // No ledger is less than ledgerId (e.g., ledgerId < first ledger)
                         // Nothing to trim, return successfully
-                        log.info("[{}] Ledger {} is less than first ledger, nothing to trim",
-                                name, ledgerId);
+                        log.info("[{}] Ledger {} is less than first ledger, nothing to trim", name, ledgerId);
                         trimmerMutex.unlock();
                         future.complete(null);
                         return;
@@ -197,13 +197,14 @@ public class ManagedLedgerImplExt extends ManagedLedgerImpl {
                         name, trimBoundaryLedgerId, slowestReaderLedgerId);
                 trimmerMutex.unlock();
                 future.completeExceptionally(new ManagedLedgerException(
-                        "Cannot trim: ledgers before " + trimBoundaryLedgerId + " are not fully consumed. " +
-                        "Slowest reader is at ledger " + slowestReaderLedgerId));
+                        "Cannot trim: ledgers before " + trimBoundaryLedgerId + " are not fully consumed. "
+                        + "Slowest reader is at ledger " + slowestReaderLedgerId));
                 return;
             }
 
             // Collect ledgers to delete (all ledgers strictly before trimBoundaryLedgerId)
-            Iterator<LedgerInfo> ledgerInfoIterator = ledgersMap.headMap(trimBoundaryLedgerId, false).values().iterator();
+            Iterator<LedgerInfo> ledgerInfoIterator = ledgersMap.headMap(
+                    trimBoundaryLedgerId, false).values().iterator();
             while (ledgerInfoIterator.hasNext()) {
                 LedgerInfo ls = ledgerInfoIterator.next();
                 if (ls.getLedgerId() == currentLedger.getId()) {
@@ -214,7 +215,8 @@ public class ManagedLedgerImplExt extends ManagedLedgerImpl {
                     break;
                 }
                 if (log.isDebugEnabled()) {
-                    log.debug("[{}] Ledger {} will be deleted (before {})", name, ls.getLedgerId(), trimBoundaryLedgerId);
+                    log.debug("[{}] Ledger {} will be deleted (before {})",
+                            name, ls.getLedgerId(), trimBoundaryLedgerId);
                 }
                 ledgersToDelete.add(ls);
             }
@@ -273,7 +275,8 @@ public class ManagedLedgerImplExt extends ManagedLedgerImpl {
 
             Stat currentLedgersStat = ledgersStat;
 
-            store.asyncUpdateLedgerIds(name, getManagedLedgerInfo(), currentLedgersStat, new MetaStoreCallback<Void>() {
+            store.asyncUpdateLedgerIds(name, getManagedLedgerInfo(), currentLedgersStat,
+                    new MetaStoreCallback<Void>() {
                 @Override
                 public void operationComplete(Void result, Stat stat) {
                     log.info("[{}] End TrimConsumedLedgersBefore {}. ledgers={} totalSize={}",
@@ -308,7 +311,8 @@ public class ManagedLedgerImplExt extends ManagedLedgerImpl {
 
                 @Override
                 public void operationFailed(ManagedLedgerException.MetaStoreException e) {
-                    log.warn("[{}] Failed to update the list of ledgers after trimming before {}", name, trimBoundaryLedgerId, e);
+                    log.warn("[{}] Failed to update the list of ledgers after trimming before {}",
+                            name, trimBoundaryLedgerId, e);
                     metadataMutex.unlock();
                     trimmerMutex.unlock();
                     handleBadVersion(e);
@@ -319,7 +323,8 @@ public class ManagedLedgerImplExt extends ManagedLedgerImpl {
     }
 
     private void scheduleDeferredTrimmingBefore(long ledgerId, CompletableFuture<Void> future) {
-        scheduledExecutorForRetry.schedule(() -> executor.execute(() -> internalTrimConsumedLedgersBefore(ledgerId, future)),
+        scheduledExecutorForRetry.schedule(
+                () -> executor.execute(() -> internalTrimConsumedLedgersBefore(ledgerId, future)),
                 TRIM_RETRY_DELAY_MS, TimeUnit.MILLISECONDS);
     }
 
