@@ -80,6 +80,15 @@ public class ManagedLedgerImplExt extends ManagedLedgerImpl {
      * Internal method to trim consumed ledgers before the specified ledgerId.
      * This method follows the same structure as internalTrimLedgers but uses
      * the specified ledgerId as the trim boundary instead of retention policies.
+     *
+     * Semantics:
+     * - trimConsumedLedgersBefore(L4) where L4 is current ledger: delete L1, L2, L3, keep L4 → 1 left
+     * - trimConsumedLedgersBefore(L3) where L3 is middle ledger: delete L1, L2, L3, keep L4 → 1 left
+     * - trimConsumedLedgersBefore(L2) where L2 is middle ledger: delete L1, L2, keep L3, L4 → 2 left
+     * - trimConsumedLedgersBefore(L3) where L1, L2, L4 exist (L3 gap): delete L1, L2, keep L4 → 1 left
+     *
+     * Key rule: For current ledger, keep it. For middle ledger, delete it too.
+     * If ledgerId doesn't exist, use the next lower existing ledger as boundary.
      */
     @SuppressWarnings("unchecked")
     private void internalTrimConsumedLedgersBefore(long ledgerId, CompletableFuture<Void> future) {
@@ -160,24 +169,15 @@ public class ManagedLedgerImplExt extends ManagedLedgerImpl {
                 return;
             }
 
-            // Check if actualLedgerId is the current ledger
-            // If so, adjust to use the previous ledger as boundary to delete all before current
-            final long trimBoundaryLedgerId;
-            if (actualLedgerId == currentLedger.getId()) {
-                Long previousLedger = ledgersMap.lowerKey(currentLedger.getId());
-                if (previousLedger == null) {
-                    // No previous ledger exists, nothing to trim
-                    trimmerMutex.unlock();
-                    future.complete(null);
-                    return;
-                }
-                // Use previous ledger as the new boundary
-                trimBoundaryLedgerId = previousLedger;
-                log.info("[{}] Adjusting trim boundary from current ledger {} to previous ledger {}",
-                        name, currentLedger.getId(), trimBoundaryLedgerId);
-            } else {
-                trimBoundaryLedgerId = actualLedgerId;
-            }
+            // The trim boundary ledger ID:
+            // Semantics:
+            // - If targeting current ledger: delete all ledgers BEFORE it (keep current ledger)
+            // - If targeting middle ledger: delete the ledger AND all before it (do NOT keep boundary)
+            final long trimBoundaryLedgerId = actualLedgerId;
+            final boolean isTargetingCurrentLedger = (actualLedgerId == currentLedger.getId());
+
+            log.info("[{}] Trim boundary: {}, current ledger: {}, isTargetingCurrent: {}",
+                    name, trimBoundaryLedgerId, currentLedger.getId(), isTargetingCurrentLedger);
 
             // Calculate slowest reader position (same as internalTrimLedgers)
             long slowestReaderLedgerId = calculateSlowestReaderLedgerId();
@@ -204,9 +204,12 @@ public class ManagedLedgerImplExt extends ManagedLedgerImpl {
                 return;
             }
 
-            // Collect ledgers to delete (all ledgers strictly before trimBoundaryLedgerId)
+            // Collect ledgers to delete
+            // - If targeting current ledger: delete all BEFORE boundary (keep boundary)
+            // - If targeting middle ledger: delete boundary AND all BEFORE it (do not keep boundary)
+            // headMap(toKey, inclusive): true=include toKey, false=exclude toKey
             Iterator<LedgerInfo> ledgerInfoIterator = ledgersMap.headMap(
-                    trimBoundaryLedgerId, false).values().iterator();
+                    trimBoundaryLedgerId, !isTargetingCurrentLedger).values().iterator();
             while (ledgerInfoIterator.hasNext()) {
                 LedgerInfo ls = ledgerInfoIterator.next();
                 if (ls.getLedgerId() == currentLedger.getId()) {

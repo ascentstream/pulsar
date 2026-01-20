@@ -86,6 +86,10 @@ public class ManagedLedgerImplExtTest extends BookKeeperClusterTestCase {
 
     /**
      * Test trimming consumed ledgers before a specified ledger ID.
+     *
+     * Scenario: L1, L2, L3, L4 (current)
+     * Test: trimConsumedLedgersBefore(L3)
+     * Expected: delete L1, L2, L3, keep L4 → 1 ledger left
      */
     @Test
     public void testTrimConsumedLedgersBefore() throws Exception {
@@ -139,19 +143,20 @@ public class ManagedLedgerImplExtTest extends BookKeeperClusterTestCase {
         assertEquals(totalRead, 10, "Should have read 10 entries");
 
         // Now trim ledgers before the 2nd-to-last ledger ID
+        // This should delete the 2nd-to-last ledger and all before it, keeping only the last one
         ledger.asyncTrimConsumedLedgersBefore(trimBeforeLedgerId).get(30, TimeUnit.SECONDS);
 
-        // Should have only 2 ledgers left (the last 2)
+        // Should have only 1 ledger left (the last one)
         Awaitility.await().atMost(10, TimeUnit.SECONDS).untilAsserted(() -> {
-            assertEquals(ledger.getLedgersInfo().size(), 2,
-                    "Should have only 2 ledgers after trimming");
+            assertEquals(ledger.getLedgersInfo().size(), 1,
+                    "Should have only 1 ledger after trimming");
         });
 
-        // Verify the remaining ledgers are the last 2
+        // Verify the remaining ledger is the last one
         assertTrue(ledger.getLedgersInfo().containsKey(lastLedgerId),
                 "Last ledger should still exist");
-        assertTrue(ledger.getLedgersInfo().containsKey(trimBeforeLedgerId),
-                "2nd-to-last ledger should still exist");
+        assertFalse(ledger.getLedgersInfo().containsKey(trimBeforeLedgerId),
+                "2nd-to-last ledger should be deleted");
         assertFalse(ledger.getLedgersInfo().containsKey(firstLedgerId),
                 "First ledger should be deleted");
         assertFalse(ledger.getLedgersInfo().containsKey(secondLedgerId),
@@ -160,6 +165,10 @@ public class ManagedLedgerImplExtTest extends BookKeeperClusterTestCase {
 
     /**
      * Test that trimming fails when ledgers are not fully consumed.
+     *
+     * Scenario: Not all messages are consumed
+     * Test: trimConsumedLedgersBefore(ledgerId)
+     * Expected: throw exception because ledgers are not fully consumed
      */
     @Test(invocationCount = 1)
     public void testTrimConsumedLedgersBeforeNotConsumed() throws Exception {
@@ -220,7 +229,11 @@ public class ManagedLedgerImplExtTest extends BookKeeperClusterTestCase {
     }
 
     /**
-     * Test trimming with multiple cursors.
+     * Test trimming with multiple cursors - all must be consumed.
+     *
+     * Scenario: L1, L2, L3, L4 (current), multiple cursors all consumed
+     * Test: trimConsumedLedgersBefore(L3)
+     * Expected: delete L1, L2, L3, keep L4 → 1 ledger left
      */
     @Test
     public void testTrimConsumedLedgersBeforeWithMultipleCursors() throws Exception {
@@ -271,15 +284,19 @@ public class ManagedLedgerImplExtTest extends BookKeeperClusterTestCase {
         // Trim should succeed as all cursors have consumed
         ledger.asyncTrimConsumedLedgersBefore(trimBeforeLedgerId).get(30, TimeUnit.SECONDS);
 
-        // Should have 2 ledgers left (the last 2, since we trimmed before the 2nd-to-last)
+        // Should have 1 ledger left (only the last one, since we deleted boundary and all before it)
         Awaitility.await().atMost(10, TimeUnit.SECONDS).untilAsserted(() -> {
-            assertEquals(ledger.getLedgersInfo().size(), 2,
-                    "Should have 2 ledgers after trimming");
+            assertEquals(ledger.getLedgersInfo().size(), 1,
+                    "Should have 1 ledger after trimming (the last one)");
         });
     }
 
     /**
-     * Test trimming with one cursor lagging behind.
+     * Test trimming with one cursor lagging behind - should fail.
+     *
+     * Scenario: Multiple cursors, one cursor hasn't consumed yet
+     * Test: trimConsumedLedgersBefore(ledgerId)
+     * Expected: throw exception because slowest cursor hasn't consumed
      */
     @Test
     public void testTrimConsumedLedgersBeforeWithLaggingCursor() throws Exception {
@@ -339,6 +356,10 @@ public class ManagedLedgerImplExtTest extends BookKeeperClusterTestCase {
 
     /**
      * Test trimming when there are no ledgers to trim.
+     *
+     * Scenario: Only current ledger exists
+     * Test: trimConsumedLedgersBefore(currentLedgerId)
+     * Expected: no ledgers deleted, return successfully
      */
     @Test
     public void testTrimConsumedLedgersBeforeNoLedgersToTrim() throws Exception {
@@ -378,7 +399,11 @@ public class ManagedLedgerImplExtTest extends BookKeeperClusterTestCase {
     }
 
     /**
-     * Test that the ledger boundary is not deleted (ledgerId is exclusive).
+     * Test trimming with a middle ledger ID - the boundary ledger should be deleted.
+     *
+     * Scenario: L1, L2, L3, L4... (many ledgers)
+     * Test: trimConsumedLedgersBefore(L2)
+     * Expected: delete L1, L2, keep L3, L4... → initialCount - 2 ledgers left
      */
     @Test
     public void testTrimConsumedLedgersBeforeBoundaryIsExclusive() throws Exception {
@@ -420,24 +445,27 @@ public class ManagedLedgerImplExtTest extends BookKeeperClusterTestCase {
 
         int initialLedgerCount = ledger.getLedgersInfo().size();
 
-        // Trim before the second ledger ID (should only delete the first ledger)
+        // Trim before the second ledger ID
+        // This should delete the first AND second ledgers, keeping only ledgers after the boundary
         ledger.asyncTrimConsumedLedgersBefore(secondLedgerId).get(30, TimeUnit.SECONDS);
 
-        // Should have one less ledger
+        // Should have 2 less ledgers (first and second are deleted)
         Awaitility.await().atMost(10, TimeUnit.SECONDS).untilAsserted(() -> {
-            assertEquals(ledger.getLedgersInfo().size(), initialLedgerCount - 1,
-                    "Should have one less ledger after trimming");
+            assertEquals(ledger.getLedgersInfo().size(), initialLedgerCount - 2,
+                    "Should have 2 less ledgers after trimming");
         });
 
-        // Verify the boundary ledger (secondLedgerId) still exists
-        assertTrue(ledger.getLedgersInfo().containsKey(secondLedgerId),
-                "The boundary ledger should not be deleted");
+        // Verify the boundary ledger (secondLedgerId) is deleted
+        assertFalse(ledger.getLedgersInfo().containsKey(secondLedgerId),
+                "The boundary ledger (secondLedgerId) should be deleted");
     }
 
     /**
      * Test trimming with a ledgerId greater than the last existing ledger.
-     * When a very large ledger ID is passed, it should use current ledger as boundary
-     * and delete all consumed ledgers before the current one.
+     *
+     * Scenario: L1, L2, L3, L4 (current), pass 999999
+     * Test: trimConsumedLedgersBefore(999999)
+     * Expected: use L4 (current) as boundary, delete L1, L2, L3, keep L4 → 1 ledger left
      */
     @Test
     public void testTrimConsumedLedgersBeforeWithLargeLedgerId() throws Exception {
@@ -493,15 +521,21 @@ public class ManagedLedgerImplExtTest extends BookKeeperClusterTestCase {
 
         assertTrue(currentCount < initialLedgerCount,
                 "Should have fewer ledgers after trimming. Initial: " + initialLedgerCount + ", Current: " + currentCount);
-        assertTrue(ledger.getLedgersInfo().containsKey(lastLedgerId),
-                "Last ledger should still exist after trimming with large ID");
+
+        // After trimming with a large ledger ID (which becomes current ledger boundary),
+        // we should have only 1 ledger left (the current one)
+        assertEquals(1, currentCount,
+                "Should have exactly 1 ledger after trimming with large ID. Initial: " + initialLedgerCount);
 
         log.info("Test passed - final ledger count: {}", currentCount);
     }
 
     /**
      * Test trimming with a ledgerId that falls in a gap between existing ledgers.
-     * Should use the next lower existing ledger as boundary.
+     *
+     * Scenario: L1, L2, L4 exist (L3 is a gap)
+     * Test: trimConsumedLedgersBefore(L3)
+     * Expected: use L2 (next lower) as boundary, delete L1, L2, keep L4 → 1 ledger left
      */
     @Test
     public void testTrimConsumedLedgersBeforeWithGapLedgerId() throws Exception {
@@ -569,7 +603,10 @@ public class ManagedLedgerImplExtTest extends BookKeeperClusterTestCase {
 
     /**
      * Test trimming with a ledgerId smaller than the first existing ledger.
-     * Should return successfully with nothing to trim.
+     *
+     * Scenario: L1, L2, L3... (ledgers exist), pass 0
+     * Test: trimConsumedLedgersBefore(0)
+     * Expected: nothing to trim, return successfully, no ledgers deleted
      */
     @Test
     public void testTrimConsumedLedgersBeforeWithSmallLedgerId() throws Exception {
