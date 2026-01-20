@@ -5033,6 +5033,79 @@ public class PersistentTopicsBase extends AdminResource {
         return FutureUtil.waitForAll(futures).thenAccept(asyncResponse::resume);
     }
 
+    protected CompletableFuture<Void> internalTrimConsumedLedgersBefore(
+            AsyncResponse asyncResponse, long ledgerId, boolean authoritative) {
+        if (!topicName.isPersistent()) {
+            log.info("[{}] TrimConsumedLedgersBefore on a non-persistent topic {} is not allowed",
+                    clientAppId(), topicName);
+            asyncResponse.resume(new RestException(Status.METHOD_NOT_ALLOWED,
+                    "TrimConsumedLedgersBefore on a non-persistent topic is not allowed"));
+            return CompletableFuture.completedFuture(null);
+        }
+        CompletableFuture<Void> future = validateTopicOperationAsync(topicName, TopicOperation.TRIM_TOPIC);
+        if (topicName.isPartitioned()) {
+            return future.thenCompose((__) -> trimConsumedLedgersBeforeNonPartitionedTopic(
+                    asyncResponse, topicName, ledgerId, authoritative));
+        }
+        return future
+                .thenCompose(__ -> pulsar().getBrokerService().fetchPartitionedTopicMetadataAsync(topicName))
+                .thenCompose(metadata -> {
+                    if (metadata.partitions > 0) {
+                        return trimConsumedLedgersBeforePartitionedTopic(
+                                asyncResponse, metadata, ledgerId);
+                    }
+                    return trimConsumedLedgersBeforeNonPartitionedTopic(
+                            asyncResponse, topicName, ledgerId, authoritative);
+                });
+    }
+
+    private CompletableFuture<Void> trimConsumedLedgersBeforeNonPartitionedTopic(
+            AsyncResponse asyncResponse, TopicName topicName, long ledgerId, boolean authoritative) {
+        return validateTopicOwnershipAsync(topicName, authoritative)
+                .thenCompose(__ -> getTopicReferenceAsync(topicName))
+                .thenCompose(topic -> {
+                    if (!(topic instanceof PersistentTopic persistentTopic)) {
+                        log.info("[{}] TrimConsumedLedgersBefore on a non-persistent topic {} is not allowed",
+                                clientAppId(), topicName);
+                        asyncResponse.resume(new RestException(Status.METHOD_NOT_ALLOWED,
+                                "TrimConsumedLedgersBefore on a non-persistent topic is not allowed"));
+                        return CompletableFuture.completedFuture(null);
+                    }
+                    ManagedLedger managedLedger = persistentTopic.getManagedLedger();
+                    if (managedLedger == null) {
+                        asyncResponse.resume(null);
+                        return CompletableFuture.completedFuture(null);
+                    }
+
+                    // Directly call asyncTrimConsumedLedgersBefore on the ManagedLedger interface
+                    CompletableFuture<Void> result = managedLedger.asyncTrimConsumedLedgersBefore(ledgerId);
+                    return result.whenComplete((res, e) -> {
+                        if (e != null) {
+                            asyncResponse.resume(e);
+                        } else {
+                            asyncResponse.resume(res);
+                        }
+                    });
+                });
+    }
+
+    private CompletableFuture<Void> trimConsumedLedgersBeforePartitionedTopic(
+            AsyncResponse asyncResponse, PartitionedTopicMetadata metadata, long ledgerId) {
+        List<CompletableFuture<Void>> futures = new ArrayList<>(metadata.partitions);
+        for (int i = 0; i < metadata.partitions; i++) {
+            TopicName topicNamePartition = topicName.getPartition(i);
+            try {
+                futures.add(pulsar().getAdminClient().topics()
+                        .trimConsumedLedgersBeforeAsync(topicNamePartition.toString(), ledgerId));
+            } catch (Exception e) {
+                log.error("[{}] Failed to trim consumed ledgers before {} for topic {}",
+                        clientAppId(), ledgerId, topicNamePartition, e);
+                throw new RestException(e);
+            }
+        }
+        return FutureUtil.waitForAll(futures).thenAccept(asyncResponse::resume);
+    }
+
     protected CompletableFuture<DispatchRateImpl> internalGetDispatchRate(boolean applied, boolean isGlobal) {
         return getTopicPoliciesAsyncWithRetry(topicName, isGlobal)
             .thenApply(op -> op.map(TopicPolicies::getDispatchRate)

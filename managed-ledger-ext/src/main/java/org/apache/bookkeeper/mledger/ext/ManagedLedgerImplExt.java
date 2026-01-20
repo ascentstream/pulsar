@@ -183,7 +183,9 @@ public class ManagedLedgerImplExt extends ManagedLedgerImpl {
             long slowestReaderLedgerId = calculateSlowestReaderLedgerId();
 
             if (slowestReaderLedgerId < 0) {
-                // Error already handled
+                // Error in calculating slowest reader position
+                trimmerMutex.unlock();
+                future.completeExceptionally(new ManagedLedgerException("Couldn't find reader position"));
                 return;
             }
 

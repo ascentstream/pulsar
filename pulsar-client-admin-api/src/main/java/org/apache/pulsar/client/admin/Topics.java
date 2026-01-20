@@ -2076,6 +2076,33 @@ public interface Topics {
     CompletableFuture<Void> trimTopicAsync(String topic);
 
     /**
+     * Trim consumed ledgers before a specific ledger ID.
+     *
+     * <p>This operation deletes all ledgers that are fully consumed before the specified ledger ID.
+     * The ledger ID can be any value - the system will adjust to use the appropriate boundary:
+     * <ul>
+     *   <li>If the ledger ID exists, all ledgers before it (exclusive) will be deleted</li>
+     *   <li>If the ledger ID is greater than the last ledger, the current ledger is used as boundary</li>
+     *   <li>If the ledger ID falls in a gap, the next lower existing ledger is used as boundary</li>
+     *   <li>If the ledger ID is less than the first ledger, no action is taken</li>
+     * </ul>
+     *
+     * @param topic The topic name
+     * @param ledgerId The ledger ID to trim before
+     * @throws PulsarAdminException if the operation fails
+     */
+    void trimConsumedLedgersBefore(String topic, long ledgerId) throws PulsarAdminException;
+
+    /**
+     * Trim consumed ledgers before a specific ledger ID asynchronously.
+     *
+     * @param topic The topic name
+     * @param ledgerId The ledger ID to trim before
+     * @return A CompletableFuture that completes when the operation is done
+     */
+    CompletableFuture<Void> trimConsumedLedgersBeforeAsync(String topic, long ledgerId);
+
+    /**
      * Check the status of an ongoing compaction for a topic.
      *
      * @param topic The topic whose compaction status we wish to check

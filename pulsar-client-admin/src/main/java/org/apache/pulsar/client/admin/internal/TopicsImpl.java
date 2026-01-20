@@ -1167,6 +1167,18 @@ public class TopicsImpl extends BaseResource implements Topics {
     }
 
     @Override
+    public void trimConsumedLedgersBefore(String topic, long ledgerId) throws PulsarAdminException {
+        sync(() -> trimConsumedLedgersBeforeAsync(topic, ledgerId));
+    }
+
+    @Override
+    public CompletableFuture<Void> trimConsumedLedgersBeforeAsync(String topic, long ledgerId) {
+        TopicName tn = validateTopic(topic);
+        WebTarget path = topicPath(tn, "trimConsumedLedgersBefore", String.valueOf(ledgerId));
+        return asyncPostRequest(path, Entity.entity("", MediaType.APPLICATION_JSON));
+    }
+
+    @Override
     public LongRunningProcessStatus compactionStatus(String topic)
             throws PulsarAdminException {
         return sync(() -> compactionStatusAsync(topic));

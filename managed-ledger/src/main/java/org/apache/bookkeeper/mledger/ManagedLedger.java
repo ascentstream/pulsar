@@ -764,7 +764,10 @@ public interface ManagedLedger {
      * @throws ManagedLedgerException if ledgers before the specified ledgerId are not fully consumed
      */
     default CompletableFuture<Void> asyncTrimConsumedLedgersBefore(long ledgerId) {
-        // No-op by default
-        return null;
+        // Default implementation returns a failed future for unsupported operations
+        CompletableFuture<Void> future = new CompletableFuture<>();
+        future.completeExceptionally(new ManagedLedgerException(
+                "asyncTrimConsumedLedgersBefore is not supported."));
+        return future;
     }
 }
