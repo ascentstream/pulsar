@@ -103,10 +103,43 @@ public class ManagedLedgerImplExt extends ManagedLedgerImpl {
         List<LedgerInfo> offloadedLedgersToDelete = new ArrayList<>();
         Optional<OffloadPolicies> optionalOffloadPolicies = getOffloadPoliciesIfAppendable();
 
-        // Get ledgers map via reflection
-        NavigableMap<Long, LedgerInfo> ledgersMap = ledgers;
-
         synchronized (this) {
+            // Get ledgers map via reflection
+            NavigableMap<Long, LedgerInfo> ledgersMap = ledgers;
+
+            // Determine the actual ledger ID to use (adjust if original doesn't exist)
+            long effectiveLedgerId;
+            if (ledgersMap.containsKey(ledgerId)) {
+                // Ledger exists, use it directly
+                effectiveLedgerId = ledgerId;
+            } else {
+                // Ledger doesn't exist, find the appropriate boundary
+                long lastLedgerId = ledgersMap.lastKey();
+                if (ledgerId > lastLedgerId) {
+                    // ledgerId is beyond all ledgers, use current ledger as boundary
+                    effectiveLedgerId = currentLedger.getId();
+                    log.info("[{}] Ledger {} does not exist (last ledger is {}), using current ledger {} as boundary",
+                            name, ledgerId, lastLedgerId, effectiveLedgerId);
+                } else {
+                    // ledgerId is within the range but doesn't exist (e.g., gap)
+                    // Use the greatest existing ledger that is less than ledgerId
+                    Long lowerLedger = ledgersMap.lowerKey(ledgerId);
+                    if (lowerLedger != null) {
+                        effectiveLedgerId = lowerLedger;
+                        log.info("[{}] Ledger {} does not exist, using next lower ledger {} as boundary",
+                                name, ledgerId, effectiveLedgerId);
+                    } else {
+                        // No ledger is less than ledgerId (e.g., ledgerId < first ledger)
+                        // Nothing to trim, return successfully
+                        log.info("[{}] Ledger {} is less than first ledger, nothing to trim",
+                                name, ledgerId);
+                        trimmerMutex.unlock();
+                        future.complete(null);
+                        return;
+                    }
+                }
+            }
+            final long actualLedgerId = effectiveLedgerId;
             if (log.isDebugEnabled()) {
                 log.debug("[{}] Start TrimConsumedLedgersBefore {}. ledgers={} totalSize={}",
                         name, ledgerId, ledgersMap.keySet(), getTotalSize());
@@ -127,19 +160,23 @@ public class ManagedLedgerImplExt extends ManagedLedgerImpl {
                 return;
             }
 
-            // Validate ledgerId exists
-            if (!ledgersMap.containsKey(ledgerId)) {
-                trimmerMutex.unlock();
-                future.completeExceptionally(new ManagedLedgerException(
-                        "Ledger " + ledgerId + " does not exist in managed ledger " + name));
-                return;
-            }
-
-            // Check if ledgerId is the current ledger
-            if (ledgerId == currentLedger.getId()) {
-                trimmerMutex.unlock();
-                future.complete(null);
-                return;
+            // Check if actualLedgerId is the current ledger
+            // If so, adjust to use the previous ledger as boundary to delete all before current
+            final long trimBoundaryLedgerId;
+            if (actualLedgerId == currentLedger.getId()) {
+                Long previousLedger = ledgersMap.lowerKey(currentLedger.getId());
+                if (previousLedger == null) {
+                    // No previous ledger exists, nothing to trim
+                    trimmerMutex.unlock();
+                    future.complete(null);
+                    return;
+                }
+                // Use previous ledger as the new boundary
+                trimBoundaryLedgerId = previousLedger;
+                log.info("[{}] Adjusting trim boundary from current ledger {} to previous ledger {}",
+                        name, currentLedger.getId(), trimBoundaryLedgerId);
+            } else {
+                trimBoundaryLedgerId = actualLedgerId;
             }
 
             // Calculate slowest reader position (same as internalTrimLedgers)
@@ -150,23 +187,23 @@ public class ManagedLedgerImplExt extends ManagedLedgerImpl {
                 return;
             }
 
-            if (slowestReaderLedgerId < ledgerId) {
+            if (log.isDebugEnabled()) {
+                log.debug("[{}] Slowest consumer ledger id: {}, trimming before: {}",
+                        name, slowestReaderLedgerId, trimBoundaryLedgerId);
+            }
+
+            if (slowestReaderLedgerId < trimBoundaryLedgerId) {
                 log.debug("[{}] Cannot trim before {}: slowest reader is at {}",
-                        name, ledgerId, slowestReaderLedgerId);
+                        name, trimBoundaryLedgerId, slowestReaderLedgerId);
                 trimmerMutex.unlock();
                 future.completeExceptionally(new ManagedLedgerException(
-                        "Cannot trim: ledgers before " + ledgerId + " are not fully consumed. " +
+                        "Cannot trim: ledgers before " + trimBoundaryLedgerId + " are not fully consumed. " +
                         "Slowest reader is at ledger " + slowestReaderLedgerId));
                 return;
             }
 
-            if (log.isDebugEnabled()) {
-                log.debug("[{}] Slowest consumer ledger id: {}, trimming before: {}",
-                        name, slowestReaderLedgerId, ledgerId);
-            }
-
-            // Collect ledgers to delete (all ledgers strictly before ledgerId)
-            Iterator<LedgerInfo> ledgerInfoIterator = ledgersMap.headMap(ledgerId, false).values().iterator();
+            // Collect ledgers to delete (all ledgers strictly before trimBoundaryLedgerId)
+            Iterator<LedgerInfo> ledgerInfoIterator = ledgersMap.headMap(trimBoundaryLedgerId, false).values().iterator();
             while (ledgerInfoIterator.hasNext()) {
                 LedgerInfo ls = ledgerInfoIterator.next();
                 if (ls.getLedgerId() == currentLedger.getId()) {
@@ -177,7 +214,7 @@ public class ManagedLedgerImplExt extends ManagedLedgerImpl {
                     break;
                 }
                 if (log.isDebugEnabled()) {
-                    log.debug("[{}] Ledger {} will be deleted (before {})", name, ls.getLedgerId(), ledgerId);
+                    log.debug("[{}] Ledger {} will be deleted (before {})", name, ls.getLedgerId(), trimBoundaryLedgerId);
                 }
                 ledgersToDelete.add(ls);
             }
@@ -209,7 +246,7 @@ public class ManagedLedgerImplExt extends ManagedLedgerImpl {
                 advanceCursorsIfNecessary(ledgersToDelete);
             } catch (Exception e) {
                 log.info("[{}] Error while advancing cursors during trim before {}",
-                        name, ledgerId, e.getMessage());
+                        name, trimBoundaryLedgerId, e.getMessage());
                 metadataMutex.unlock();
                 trimmerMutex.unlock();
                 future.completeExceptionally(e);
@@ -231,7 +268,7 @@ public class ManagedLedgerImplExt extends ManagedLedgerImpl {
             }
 
             if (log.isDebugEnabled()) {
-                log.debug("[{}] Updating of ledgers list after trimming before {}", name, ledgerId);
+                log.debug("[{}] Updating of ledgers list after trimming before {}", name, trimBoundaryLedgerId);
             }
 
             Stat currentLedgersStat = ledgersStat;
@@ -240,7 +277,7 @@ public class ManagedLedgerImplExt extends ManagedLedgerImpl {
                 @Override
                 public void operationComplete(Void result, Stat stat) {
                     log.info("[{}] End TrimConsumedLedgersBefore {}. ledgers={} totalSize={}",
-                            name, ledgerId, ledgersMap.size(), getTotalSize());
+                            name, trimBoundaryLedgerId, ledgersMap.size(), getTotalSize());
                     ledgersStat = stat;
                     metadataMutex.unlock();
                     trimmerMutex.unlock();
@@ -271,7 +308,7 @@ public class ManagedLedgerImplExt extends ManagedLedgerImpl {
 
                 @Override
                 public void operationFailed(ManagedLedgerException.MetaStoreException e) {
-                    log.warn("[{}] Failed to update the list of ledgers after trimming before {}", name, ledgerId, e);
+                    log.warn("[{}] Failed to update the list of ledgers after trimming before {}", name, trimBoundaryLedgerId, e);
                     metadataMutex.unlock();
                     trimmerMutex.unlock();
                     handleBadVersion(e);
