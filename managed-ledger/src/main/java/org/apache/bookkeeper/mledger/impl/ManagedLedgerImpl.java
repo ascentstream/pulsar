@@ -216,7 +216,9 @@ public class ManagedLedgerImpl implements ManagedLedger, CreateCallback {
      * This lock is held while the ledgers list or propertiesMap is updated asynchronously on the metadata store.
      * Since we use the store version, we cannot have multiple concurrent updates.
      */
+    @Getter
     private final CallbackMutex metadataMutex = new CallbackMutex();
+    @Getter
     private final CallbackMutex trimmerMutex = new CallbackMutex();
 
     private final CallbackMutex offloadMutex = new CallbackMutex();
@@ -2200,7 +2202,7 @@ public class ManagedLedgerImpl implements ManagedLedger, CreateCallback {
         });
     }
 
-    void invalidateReadHandle(long ledgerId) {
+   protected void invalidateReadHandle(long ledgerId) {
         CompletableFuture<ReadHandle> rhf = ledgerCache.remove(ledgerId);
         if (rhf != null) {
             rhf.thenCompose(r -> {
@@ -2805,7 +2807,7 @@ public class ManagedLedgerImpl implements ManagedLedger, CreateCallback {
         return retentionSizeInMB >= 0 && totalSizeOfML - sizeToDelete >= retentionSizeInMB * MegaByte;
     }
 
-    boolean isOffloadedNeedsDelete(OffloadContext offload, Optional<OffloadPolicies> offloadPolicies) {
+    protected boolean isOffloadedNeedsDelete(OffloadContext offload, Optional<OffloadPolicies> offloadPolicies) {
         long elapsedMs = clock.millis() - offload.getTimestamp();
         return offloadPolicies.filter(policies -> offload.getComplete() && !offload.getBookkeeperDeleted()
                 && policies.getManagedLedgerOffloadDeletionLagInMillis() != null
@@ -2821,7 +2823,7 @@ public class ManagedLedgerImpl implements ManagedLedger, CreateCallback {
         internalTrimLedgers(false, promise);
     }
 
-    private Optional<OffloadPolicies> getOffloadPoliciesIfAppendable() {
+    protected Optional<OffloadPolicies> getOffloadPoliciesIfAppendable() {
         LedgerOffloader ledgerOffloader = config.getLedgerOffloader();
         if (ledgerOffloader == null
                 || !ledgerOffloader.isAppendable()
@@ -2832,7 +2834,7 @@ public class ManagedLedgerImpl implements ManagedLedger, CreateCallback {
     }
 
     @VisibleForTesting
-    synchronized List<Long> internalEvictOffloadedLedgers() {
+    protected synchronized List<Long> internalEvictOffloadedLedgers() {
         long inactiveOffloadedLedgerEvictionTimeMs = config.getInactiveOffloadedLedgerEvictionTimeMs();
         if (inactiveOffloadedLedgerEvictionTimeMs <= 0) {
             return Collections.emptyList();
@@ -3151,7 +3153,7 @@ public class ManagedLedgerImpl implements ManagedLedger, CreateCallback {
      * entries and the stats are reported correctly.
      */
     @VisibleForTesting
-    void advanceCursorsIfNecessary(List<LedgerInfo> ledgersToDelete) throws LedgerNotExistException {
+    protected void advanceCursorsIfNecessary(List<LedgerInfo> ledgersToDelete) throws LedgerNotExistException {
         if (ledgersToDelete.isEmpty()) {
             return;
         }
@@ -3308,7 +3310,7 @@ public class ManagedLedgerImpl implements ManagedLedger, CreateCallback {
         return asyncDeleteLedger(ledgerId, DEFAULT_LEDGER_DELETE_RETRIES);
     }
 
-    private void asyncDeleteLedger(long ledgerId, LedgerInfo info) {
+    protected void asyncDeleteLedger(long ledgerId, LedgerInfo info) {
         if (!info.getOffloadContext().getBookkeeperDeleted()) {
             // only delete if it hasn't been previously deleted for offload
             asyncDeleteLedger(ledgerId, DEFAULT_LEDGER_DELETE_RETRIES);
@@ -3322,7 +3324,7 @@ public class ManagedLedgerImpl implements ManagedLedger, CreateCallback {
         }
     }
 
-    private CompletableFuture<Void> asyncDeleteLedger(long ledgerId, long retry) {
+    protected CompletableFuture<Void> asyncDeleteLedger(long ledgerId, long retry) {
         CompletableFuture<Void> future = new CompletableFuture<>();
         asyncDeleteLedgerWithRetry(future, ledgerId, retry);
         return future;
@@ -4929,7 +4931,7 @@ public class ManagedLedgerImpl implements ManagedLedger, CreateCallback {
         }
     }
 
-    private void notifyDeleteLedgerEvent(LedgerInfo... ledgerInfos) {
+    protected void notifyDeleteLedgerEvent(LedgerInfo... ledgerInfos) {
         for (ManagedLedgerEventListener listener : ledgerEventListeners) {
             try {
                 listener.onLedgerDelete(ledgerInfos);
