@@ -3542,9 +3542,11 @@ public class PersistentTopics extends PersistentTopicsBase {
 
     @POST
     @Path("/{tenant}/{namespace}/{topic}/trimConsumedLedgersBefore/{ledgerId}")
-    @ApiOperation(value = "Trim consumed ledgers before a specific ledger ID")
+    @ApiOperation(value = "Trim consumed ledgers before a specific ledger ID", response = List.class,
+            responseContainer = "List")
     @ApiResponses(value = {
-            @ApiResponse(code = 204, message = "Operation successful"),
+            @ApiResponse(code = 200, message = "Operation successful", response = List.class,
+                    responseContainer = "List"),
             @ApiResponse(code = 307, message = "Current broker doesn't serve the namespace of this topic"),
             @ApiResponse(code = 401, message = "Don't have permission to administrate resources on this tenant or"
                     + "subscriber is not authorized to access this operation"),

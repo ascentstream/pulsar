@@ -20,8 +20,8 @@ package org.apache.bookkeeper.mledger.ext;
 
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertFalse;
+import static org.testng.Assert.assertNotNull;
 import static org.testng.Assert.assertTrue;
-import static org.testng.Assert.fail;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
@@ -35,7 +35,6 @@ import org.apache.bookkeeper.client.BookKeeper;
 import org.apache.bookkeeper.mledger.Entry;
 import org.apache.bookkeeper.mledger.ManagedCursor;
 import org.apache.bookkeeper.mledger.ManagedLedgerConfig;
-import org.apache.bookkeeper.mledger.ManagedLedgerException;
 import org.apache.bookkeeper.mledger.ManagedLedgerFactoryConfig;
 import org.apache.bookkeeper.mledger.impl.ManagedLedgerFactoryImpl;
 import org.apache.bookkeeper.mledger.impl.PositionImpl;
@@ -144,7 +143,8 @@ public class ManagedLedgerImplExtTest extends BookKeeperClusterTestCase {
 
         // Now trim ledgers before the 2nd-to-last ledger ID
         // This should delete the 2nd-to-last ledger and all before it, keeping only the last one
-        ledger.asyncTrimConsumedLedgersBefore(trimBeforeLedgerId).get(30, TimeUnit.SECONDS);
+        List<Long> deletedLedgerIds = ledger.asyncTrimConsumedLedgersBefore(trimBeforeLedgerId).get(30, TimeUnit.SECONDS);
+        assertTrue(deletedLedgerIds.size() >= 2, "Should have deleted at least 2 ledgers");
 
         // Should have only 1 ledger left (the last one)
         Awaitility.await().atMost(10, TimeUnit.SECONDS).untilAsserted(() -> {
@@ -164,11 +164,11 @@ public class ManagedLedgerImplExtTest extends BookKeeperClusterTestCase {
     }
 
     /**
-     * Test that trimming fails when ledgers are not fully consumed.
+     * Test that trimming returns empty list when ledgers are not fully consumed.
      *
      * Scenario: Not all messages are consumed
      * Test: trimConsumedLedgersBefore(ledgerId)
-     * Expected: throw exception because ledgers are not fully consumed
+     * Expected: return empty list because ledgers are not fully consumed
      */
     @Test(invocationCount = 1)
     public void testTrimConsumedLedgersBeforeNotConsumed() throws Exception {
@@ -214,18 +214,13 @@ public class ManagedLedgerImplExtTest extends BookKeeperClusterTestCase {
         assertEquals(cursor.getMarkDeletedPosition(), initialPosition,
                 "Cursor should still be at initial position since we didn't call markDelete");
 
-        // Try to trim before the 2nd-to-last ledger - should fail because not all consumed
-        try {
-            ledger.asyncTrimConsumedLedgersBefore(trimBeforeLedgerId).get(10, TimeUnit.SECONDS);
-            fail("Should have thrown exception because ledgers are not fully consumed");
-        } catch (Exception e) {
-            assertTrue(e.getCause() instanceof ManagedLedgerException,
-                    "Expected ManagedLedgerException");
-        }
+        // Try to trim before the 2nd-to-last ledger - should return empty list because not all consumed
+        List<Long> deletedLedgerIds = ledger.asyncTrimConsumedLedgersBefore(trimBeforeLedgerId).get(10, TimeUnit.SECONDS);
+        assertTrue(deletedLedgerIds.isEmpty(), "Should return empty list when ledgers are not fully consumed");
 
         // Ledger count should remain unchanged
         assertEquals(ledger.getLedgersInfo().size(), initialLedgerCount,
-                "Ledger count should not change when trim fails");
+                "Ledger count should not change when nothing is trimmed");
     }
 
     /**
@@ -282,7 +277,8 @@ public class ManagedLedgerImplExtTest extends BookKeeperClusterTestCase {
         entries2.forEach(Entry::release);
 
         // Trim should succeed as all cursors have consumed
-        ledger.asyncTrimConsumedLedgersBefore(trimBeforeLedgerId).get(30, TimeUnit.SECONDS);
+        List<Long> deletedLedgerIds = ledger.asyncTrimConsumedLedgersBefore(trimBeforeLedgerId).get(30, TimeUnit.SECONDS);
+        assertTrue(deletedLedgerIds.size() >= 2, "Should have deleted at least 2 ledgers");
 
         // Should have 1 ledger left (only the last one, since we deleted boundary and all before it)
         Awaitility.await().atMost(10, TimeUnit.SECONDS).untilAsserted(() -> {
@@ -339,19 +335,14 @@ public class ManagedLedgerImplExtTest extends BookKeeperClusterTestCase {
         assertEquals(entries2.size(), 5);
         entries2.forEach(Entry::release);
 
-        // Trim should fail because cursor2 hasn't consumed all
-        try {
-            ledger.asyncTrimConsumedLedgersBefore(trimBeforeLedgerId).get(10, TimeUnit.SECONDS);
-            fail("Should have thrown exception because cursor2 is lagging");
-        } catch (Exception e) {
-            assertTrue(e.getCause() instanceof ManagedLedgerException,
-                    "Expected ManagedLedgerException");
-            log.info("Got expected exception: {}", e.getMessage());
-        }
+        // Trim should return empty list because cursor2 hasn't consumed all
+        List<Long> deletedLedgerIds = ledger.asyncTrimConsumedLedgersBefore(trimBeforeLedgerId).get(10, TimeUnit.SECONDS);
+        assertTrue(deletedLedgerIds.isEmpty(), "Should return empty list when cursor2 is lagging");
+        log.info("Got expected empty list because cursor2 is lagging");
 
         // Ledger count should remain unchanged
         assertEquals(ledger.getLedgersInfo().size(), initialLedgerCount,
-                "Ledger count should not change when trim fails due to lagging cursor");
+                "Ledger count should not change when nothing is trimmed due to lagging cursor");
     }
 
     /**
@@ -391,7 +382,8 @@ public class ManagedLedgerImplExtTest extends BookKeeperClusterTestCase {
         int initialLedgerCount = ledger.getLedgersInfo().size();
 
         // Try to trim before the first ledger ID (there's nothing before it)
-        ledger.asyncTrimConsumedLedgersBefore(firstLedgerId).get(10, TimeUnit.SECONDS);
+        List<Long> deletedLedgerIds = ledger.asyncTrimConsumedLedgersBefore(firstLedgerId).get(10, TimeUnit.SECONDS);
+        assertNotNull(deletedLedgerIds, "Deleted ledger IDs should not be null");
 
         // Ledger count should remain unchanged
         assertEquals(ledger.getLedgersInfo().size(), initialLedgerCount,
@@ -447,7 +439,8 @@ public class ManagedLedgerImplExtTest extends BookKeeperClusterTestCase {
 
         // Trim before the second ledger ID
         // This should delete the first AND second ledgers, keeping only ledgers after the boundary
-        ledger.asyncTrimConsumedLedgersBefore(secondLedgerId).get(30, TimeUnit.SECONDS);
+        List<Long> deletedLedgerIds = ledger.asyncTrimConsumedLedgersBefore(secondLedgerId).get(30, TimeUnit.SECONDS);
+        assertTrue(deletedLedgerIds.size() >= 2, "Should have deleted at least 2 ledgers");
 
         // Should have 2 less ledgers (first and second are deleted)
         Awaitility.await().atMost(10, TimeUnit.SECONDS).untilAsserted(() -> {
@@ -510,7 +503,8 @@ public class ManagedLedgerImplExtTest extends BookKeeperClusterTestCase {
         // Trim with a very large ledger ID (999999)
         // Since this is greater than any existing ledger, it should use current ledger as boundary
         // and delete all consumed ledgers before the current one
-        ledger.asyncTrimConsumedLedgersBefore(999999L).get(30, TimeUnit.SECONDS);
+        List<Long> deletedLedgerIds = ledger.asyncTrimConsumedLedgersBefore(999999L).get(30, TimeUnit.SECONDS);
+        assertTrue(deletedLedgerIds.size() >= 1, "Should have deleted at least 1 ledger");
 
         // Give some time for async operations to complete
         Thread.sleep(1000);
@@ -584,7 +578,8 @@ public class ManagedLedgerImplExtTest extends BookKeeperClusterTestCase {
         // or testing with a value in between existing ledgers
         long gapLedgerId = lastLedgerId - 1;
         log.info("Trimming with gapLedgerId: {}", gapLedgerId);
-        ledger.asyncTrimConsumedLedgersBefore(gapLedgerId).get(30, TimeUnit.SECONDS);
+        List<Long> deletedLedgerIds = ledger.asyncTrimConsumedLedgersBefore(gapLedgerId).get(30, TimeUnit.SECONDS);
+        assertTrue(deletedLedgerIds.size() >= 1, "Should have deleted at least 1 ledger");
 
         // Should have fewer ledgers after trimming
         Awaitility.await().atMost(10, TimeUnit.SECONDS).untilAsserted(() -> {
@@ -649,7 +644,8 @@ public class ManagedLedgerImplExtTest extends BookKeeperClusterTestCase {
         // Trim with a ledgerId smaller than the first ledger (e.g., 0 when first is 2)
         // Should return successfully with nothing trimmed
         long smallLedgerId = Math.max(0, firstLedgerId - 1);
-        ledger.asyncTrimConsumedLedgersBefore(smallLedgerId).get(10, TimeUnit.SECONDS);
+        List<Long> deletedLedgerIds = ledger.asyncTrimConsumedLedgersBefore(smallLedgerId).get(10, TimeUnit.SECONDS);
+        assertNotNull(deletedLedgerIds, "Deleted ledger IDs should not be null");
 
         // Ledger count should remain unchanged
         assertEquals(ledger.getLedgersInfo().size(), initialLedgerCount,

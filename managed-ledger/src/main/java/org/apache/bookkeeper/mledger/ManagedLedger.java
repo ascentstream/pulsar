@@ -19,6 +19,7 @@
 package org.apache.bookkeeper.mledger;
 
 import io.netty.buffer.ByteBuf;
+import java.util.List;
 import java.util.Map;
 import java.util.NavigableMap;
 import java.util.Optional;
@@ -755,17 +756,32 @@ public interface ManagedLedger {
     }
 
     /**
-     * Trim consumed ledgers before the specified ledgerId.
-     * This method will delete all ledgers that are strictly before the specified ledgerId,
-     * but only if they have been fully consumed by all cursors.
+     * Async trim consumed ledgers before the specified ledger ID.
      *
-     * @param ledgerId the ledger id before which ledgers will be trimmed
-     * @return a future that completes when the trim operation is complete
-     * @throws ManagedLedgerException if ledgers before the specified ledgerId are not fully consumed
+     * <p>This method deletes all ledgers up to and including the specified ledger ID,
+     * as long as they have been fully consumed by all cursors.
+     *
+     * <p>Semantics:
+     * <ul>
+     *   <li>For current ledger: delete all ledgers BEFORE it (keep current ledger)</li>
+     *   <li>For middle ledger: delete the ledger AND all BEFORE it (do NOT keep boundary)</li>
+     *   <li>If ledgerId doesn't exist: use next lower existing ledger as boundary</li>
+     * </ul>
+     *
+     * <p>Example:
+     * <pre>
+     *   trimConsumedLedgersBefore(L4) where L4 is current: delete L1, L2, L3, keep L4 → returns [L1, L2, L3]
+     *   trimConsumedLedgersBefore(L3) where L3 is middle: delete L1, L2, L3, keep L4 → returns [L1, L2, L3]
+     *   trimConsumedLedgersBefore(L2) where L2 is middle: delete L1, L2, keep L3, L4 → returns [L1, L2]
+     * </pre>
+     *
+     * @param ledgerId the ledger ID to trim before
+     * @return a future that completes with the list of deleted ledger IDs
+     * @throws ManagedLedgerException if ledgers are not fully consumed or operation fails
      */
-    default CompletableFuture<Void> asyncTrimConsumedLedgersBefore(long ledgerId) {
+    default CompletableFuture<List<Long>> asyncTrimConsumedLedgersBefore(long ledgerId) {
         // Default implementation returns a failed future for unsupported operations
-        CompletableFuture<Void> future = new CompletableFuture<>();
+        CompletableFuture<List<Long>> future = new CompletableFuture<>();
         future.completeExceptionally(new ManagedLedgerException(
                 "asyncTrimConsumedLedgersBefore is not supported."));
         return future;

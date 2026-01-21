@@ -5033,14 +5033,14 @@ public class PersistentTopicsBase extends AdminResource {
         return FutureUtil.waitForAll(futures).thenAccept(asyncResponse::resume);
     }
 
-    protected CompletableFuture<Void> internalTrimConsumedLedgersBefore(
+    protected CompletableFuture<List<Long>> internalTrimConsumedLedgersBefore(
             AsyncResponse asyncResponse, long ledgerId, boolean authoritative) {
         if (!topicName.isPersistent()) {
             log.info("[{}] TrimConsumedLedgersBefore on a non-persistent topic {} is not allowed",
                     clientAppId(), topicName);
             asyncResponse.resume(new RestException(Status.METHOD_NOT_ALLOWED,
                     "TrimConsumedLedgersBefore on a non-persistent topic is not allowed"));
-            return CompletableFuture.completedFuture(null);
+            return CompletableFuture.completedFuture(Collections.emptyList());
         }
         CompletableFuture<Void> future = validateTopicOperationAsync(topicName, TopicOperation.TRIM_TOPIC);
         if (topicName.isPartitioned()) {
@@ -5059,7 +5059,7 @@ public class PersistentTopicsBase extends AdminResource {
                 });
     }
 
-    private CompletableFuture<Void> trimConsumedLedgersBeforeNonPartitionedTopic(
+    private CompletableFuture<List<Long>> trimConsumedLedgersBeforeNonPartitionedTopic(
             AsyncResponse asyncResponse, TopicName topicName, long ledgerId, boolean authoritative) {
         return validateTopicOwnershipAsync(topicName, authoritative)
                 .thenCompose(__ -> getTopicReferenceAsync(topicName))
@@ -5069,16 +5069,16 @@ public class PersistentTopicsBase extends AdminResource {
                                 clientAppId(), topicName);
                         asyncResponse.resume(new RestException(Status.METHOD_NOT_ALLOWED,
                                 "TrimConsumedLedgersBefore on a non-persistent topic is not allowed"));
-                        return CompletableFuture.completedFuture(null);
+                        return CompletableFuture.completedFuture(Collections.emptyList());
                     }
                     ManagedLedger managedLedger = persistentTopic.getManagedLedger();
                     if (managedLedger == null) {
-                        asyncResponse.resume(null);
-                        return CompletableFuture.completedFuture(null);
+                        asyncResponse.resume(Collections.emptyList());
+                        return CompletableFuture.completedFuture(Collections.emptyList());
                     }
 
                     // Directly call asyncTrimConsumedLedgersBefore on the ManagedLedger interface
-                    CompletableFuture<Void> result = managedLedger.asyncTrimConsumedLedgersBefore(ledgerId);
+                    CompletableFuture<List<Long>> result = managedLedger.asyncTrimConsumedLedgersBefore(ledgerId);
                     return result.whenComplete((res, e) -> {
                         if (e != null) {
                             asyncResponse.resume(e);
@@ -5089,9 +5089,9 @@ public class PersistentTopicsBase extends AdminResource {
                 });
     }
 
-    private CompletableFuture<Void> trimConsumedLedgersBeforePartitionedTopic(
+    private CompletableFuture<List<Long>> trimConsumedLedgersBeforePartitionedTopic(
             AsyncResponse asyncResponse, PartitionedTopicMetadata metadata, long ledgerId) {
-        List<CompletableFuture<Void>> futures = new ArrayList<>(metadata.partitions);
+        List<CompletableFuture<List<Long>>> futures = new ArrayList<>(metadata.partitions);
         for (int i = 0; i < metadata.partitions; i++) {
             TopicName topicNamePartition = topicName.getPartition(i);
             try {
@@ -5103,7 +5103,14 @@ public class PersistentTopicsBase extends AdminResource {
                 throw new RestException(e);
             }
         }
-        return FutureUtil.waitForAll(futures).thenAccept(asyncResponse::resume);
+        return FutureUtil.waitForAll(futures)
+                .thenApply(v -> {
+                    List<Long> allDeletedLedgerIds = futures.stream()
+                            .flatMap(f -> f.join().stream())
+                            .collect(Collectors.toList());
+                    asyncResponse.resume(allDeletedLedgerIds);
+                    return allDeletedLedgerIds;
+                });
     }
 
     protected CompletableFuture<DispatchRateImpl> internalGetDispatchRate(boolean applied, boolean isGlobal) {

@@ -3175,8 +3175,15 @@ public class CmdTopics extends CmdBase {
             } catch (NumberFormatException e) {
                 throw new ParameterException("Invalid ledger ID: " + params.get(1));
             }
-            getAdmin().topics().trimConsumedLedgersBefore(topic, ledgerId);
-            System.out.println("Trim consumed ledgers before " + ledgerId + " successfully");
+            List<Long> deletedLedgerIds = getAdmin().topics().trimConsumedLedgersBefore(topic, ledgerId);
+            if (deletedLedgerIds.isEmpty()) {
+                System.out.println("No ledgers were deleted");
+            } else {
+                System.out.println("Deleted " + deletedLedgerIds.size() + " ledger(s):");
+                for (Long id : deletedLedgerIds) {
+                    System.out.println("  " + id);
+                }
+            }
         }
     }
 }

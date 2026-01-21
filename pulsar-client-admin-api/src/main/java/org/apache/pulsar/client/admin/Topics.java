@@ -2091,16 +2091,16 @@ public interface Topics {
      * @param ledgerId The ledger ID to trim before
      * @throws PulsarAdminException if the operation fails
      */
-    void trimConsumedLedgersBefore(String topic, long ledgerId) throws PulsarAdminException;
+    List<Long> trimConsumedLedgersBefore(String topic, long ledgerId) throws PulsarAdminException;
 
     /**
      * Trim consumed ledgers before a specific ledger ID asynchronously.
      *
      * @param topic The topic name
      * @param ledgerId The ledger ID to trim before
-     * @return A CompletableFuture that completes when the operation is done
+     * @return A CompletableFuture that completes with the list of deleted ledger IDs
      */
-    CompletableFuture<Void> trimConsumedLedgersBeforeAsync(String topic, long ledgerId);
+    CompletableFuture<List<Long>> trimConsumedLedgersBeforeAsync(String topic, long ledgerId);
 
     /**
      * Check the status of an ongoing compaction for a topic.

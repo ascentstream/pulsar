@@ -1167,15 +1167,46 @@ public class TopicsImpl extends BaseResource implements Topics {
     }
 
     @Override
-    public void trimConsumedLedgersBefore(String topic, long ledgerId) throws PulsarAdminException {
-        sync(() -> trimConsumedLedgersBeforeAsync(topic, ledgerId));
+    public List<Long> trimConsumedLedgersBefore(String topic, long ledgerId) throws PulsarAdminException {
+        return sync(() -> trimConsumedLedgersBeforeAsync(topic, ledgerId));
     }
 
     @Override
-    public CompletableFuture<Void> trimConsumedLedgersBeforeAsync(String topic, long ledgerId) {
+    public CompletableFuture<List<Long>> trimConsumedLedgersBeforeAsync(String topic, long ledgerId) {
         TopicName tn = validateTopic(topic);
         WebTarget path = topicPath(tn, "trimConsumedLedgersBefore", String.valueOf(ledgerId));
-        return asyncPostRequest(path, Entity.entity("", MediaType.APPLICATION_JSON));
+        final CompletableFuture<List<Long>> future = new CompletableFuture<>();
+        try {
+            request(path).async().post(Entity.entity("", MediaType.APPLICATION_JSON),
+                    new InvocationCallback<Response>() {
+                        @Override
+                        public void completed(Response response) {
+                            int status = response.getStatus();
+                            if (status != Response.Status.OK.getStatusCode()
+                                    && status != Response.Status.NO_CONTENT.getStatusCode()) {
+                                future.completeExceptionally(getApiException(response));
+                            } else {
+                                try {
+                                    if (status == Response.Status.NO_CONTENT.getStatusCode()) {
+                                        future.complete(Collections.emptyList());
+                                    } else {
+                                        future.complete(response.readEntity(new GenericType<List<Long>>() {}));
+                                    }
+                                } catch (Exception e) {
+                                    future.completeExceptionally(getApiException(e));
+                                }
+                            }
+                        }
+
+                        @Override
+                        public void failed(Throwable throwable) {
+                            future.completeExceptionally(getApiException(throwable.getCause()));
+                        }
+                    });
+        } catch (PulsarAdminException cae) {
+            future.completeExceptionally(cae);
+        }
+        return future;
     }
 
     @Override

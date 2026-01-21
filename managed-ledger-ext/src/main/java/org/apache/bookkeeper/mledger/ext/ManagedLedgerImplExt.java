@@ -20,6 +20,7 @@ package org.apache.bookkeeper.mledger.ext;
 
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -70,8 +71,8 @@ public class ManagedLedgerImplExt extends ManagedLedgerImpl {
     }
 
     @Override
-    public CompletableFuture<Void> asyncTrimConsumedLedgersBefore(long ledgerId) {
-        CompletableFuture<Void> future = new CompletableFuture<>();
+    public CompletableFuture<List<Long>> asyncTrimConsumedLedgersBefore(long ledgerId) {
+        CompletableFuture<List<Long>> future = new CompletableFuture<>();
         executor.execute(() -> internalTrimConsumedLedgersBefore(ledgerId, future));
         return future;
     }
@@ -91,7 +92,7 @@ public class ManagedLedgerImplExt extends ManagedLedgerImpl {
      * If ledgerId doesn't exist, use the next lower existing ledger as boundary.
      */
     @SuppressWarnings("unchecked")
-    private void internalTrimConsumedLedgersBefore(long ledgerId, CompletableFuture<Void> future) {
+    private void internalTrimConsumedLedgersBefore(long ledgerId, CompletableFuture<List<Long>> future) {
         // Evict inactive offloaded ledgers (same as internalTrimLedgers)
         internalEvictOffloadedLedgers();
 
@@ -140,10 +141,10 @@ public class ManagedLedgerImplExt extends ManagedLedgerImpl {
                                 name, ledgerId, effectiveLedgerId);
                     } else {
                         // No ledger is less than ledgerId (e.g., ledgerId < first ledger)
-                        // Nothing to trim, return successfully
+                        // Nothing to trim, return successfully with empty list
                         log.info("[{}] Ledger {} is less than first ledger, nothing to trim", name, ledgerId);
                         trimmerMutex.unlock();
-                        future.complete(null);
+                        future.complete(Collections.emptyList());
                         return;
                     }
                 }
@@ -195,12 +196,10 @@ public class ManagedLedgerImplExt extends ManagedLedgerImpl {
             }
 
             if (slowestReaderLedgerId < trimBoundaryLedgerId) {
-                log.debug("[{}] Cannot trim before {}: slowest reader is at {}",
+                log.debug("[{}] Cannot trim before {}: slowest reader is at {}, returning empty list",
                         name, trimBoundaryLedgerId, slowestReaderLedgerId);
                 trimmerMutex.unlock();
-                future.completeExceptionally(new ManagedLedgerException(
-                        "Cannot trim: ledgers before " + trimBoundaryLedgerId + " are not fully consumed. "
-                        + "Slowest reader is at ledger " + slowestReaderLedgerId));
+                future.complete(Collections.emptyList());
                 return;
             }
 
@@ -208,6 +207,7 @@ public class ManagedLedgerImplExt extends ManagedLedgerImpl {
             // - If targeting current ledger: delete all BEFORE boundary (keep boundary)
             // - If targeting middle ledger: delete boundary AND all BEFORE it (do not keep boundary)
             // headMap(toKey, inclusive): true=include toKey, false=exclude toKey
+            List<Long> deletedLedgerIds = new ArrayList<>();
             Iterator<LedgerInfo> ledgerInfoIterator = ledgersMap.headMap(
                     trimBoundaryLedgerId, !isTargetingCurrentLedger).values().iterator();
             while (ledgerInfoIterator.hasNext()) {
@@ -224,6 +224,7 @@ public class ManagedLedgerImplExt extends ManagedLedgerImpl {
                             name, ls.getLedgerId(), trimBoundaryLedgerId);
                 }
                 ledgersToDelete.add(ls);
+                deletedLedgerIds.add(ls.getLedgerId());
             }
 
             // Collect offloaded ledgers to delete
@@ -238,7 +239,7 @@ public class ManagedLedgerImplExt extends ManagedLedgerImpl {
 
             if (ledgersToDelete.isEmpty() && offloadedLedgersToDelete.isEmpty()) {
                 trimmerMutex.unlock();
-                future.complete(null);
+                future.complete(Collections.emptyList());
                 return;
             }
 
@@ -311,7 +312,7 @@ public class ManagedLedgerImplExt extends ManagedLedgerImpl {
                         });
                     }
 
-                    future.complete(null);
+                    future.complete(deletedLedgerIds);
                 }
 
                 @Override
@@ -327,7 +328,7 @@ public class ManagedLedgerImplExt extends ManagedLedgerImpl {
         }
     }
 
-    private void scheduleDeferredTrimmingBefore(long ledgerId, CompletableFuture<Void> future) {
+    private void scheduleDeferredTrimmingBefore(long ledgerId, CompletableFuture<List<Long>> future) {
         scheduledExecutorForRetry.schedule(
                 () -> executor.execute(() -> internalTrimConsumedLedgersBefore(ledgerId, future)),
                 TRIM_RETRY_DELAY_MS, TimeUnit.MILLISECONDS);

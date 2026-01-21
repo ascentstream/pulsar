@@ -23,13 +23,12 @@ import static org.testng.Assert.assertNotNull;
 import static org.testng.Assert.assertTrue;
 import static org.testng.Assert.fail;
 
+import java.util.List;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
-
 import org.apache.bookkeeper.mledger.ManagedLedgerInfo;
 import org.apache.pulsar.broker.auth.MockedPulsarServiceBaseTest;
 import org.apache.pulsar.broker.service.persistent.PersistentTopic;
-import org.apache.pulsar.client.admin.PulsarAdminException;
 import org.apache.pulsar.client.api.Consumer;
 import org.apache.pulsar.client.api.Message;
 import org.apache.pulsar.client.api.Producer;
@@ -135,7 +134,9 @@ public class AdminApiTrimConsumedLedgersBeforeTest extends MockedPulsarServiceBa
 
         // Trim consumed ledgers before the last ledger
         // This should delete all ledgers before lastLedgerId, keeping only lastLedgerId
-        admin.topics().trimConsumedLedgersBefore(topicName, lastLedgerId);
+        List<Long> deletedLedgerIds = admin.topics().trimConsumedLedgersBefore(topicName, lastLedgerId);
+        assertNotNull(deletedLedgerIds, "Deleted ledger IDs should not be null");
+        assertTrue(deletedLedgerIds.size() >= 1, "Should have deleted at least 1 ledger");
 
         // Wait for trimming to complete and verify ledger count reduced
         Awaitility.await().atMost(10, TimeUnit.SECONDS).untilAsserted(() -> {
@@ -198,7 +199,9 @@ public class AdminApiTrimConsumedLedgersBeforeTest extends MockedPulsarServiceBa
 
         // Trim consumed ledgers with a middle ledger ID as boundary
         // This should delete the middle ledger and all before it, keeping only the last one
-        admin.topics().trimConsumedLedgersBefore(topicName, secondToLastLedgerId);
+        List<Long> deletedLedgerIds = admin.topics().trimConsumedLedgersBefore(topicName, secondToLastLedgerId);
+        assertNotNull(deletedLedgerIds, "Deleted ledger IDs should not be null");
+        assertTrue(deletedLedgerIds.size() >= 1, "Should have deleted at least 1 ledger");
 
         // Wait for trimming to complete and verify ledger count
         Awaitility.await().atMost(10, TimeUnit.SECONDS).untilAsserted(() -> {
@@ -213,7 +216,7 @@ public class AdminApiTrimConsumedLedgersBeforeTest extends MockedPulsarServiceBa
     }
 
     /**
-     * Test that trimming fails when ledgers are not fully consumed.
+     * Test that trimming returns empty list when ledgers are not fully consumed.
      */
     @Test
     public void testTrimConsumedLedgersBeforeNotConsumed() throws Exception {
@@ -252,21 +255,10 @@ public class AdminApiTrimConsumedLedgersBeforeTest extends MockedPulsarServiceBa
                 .getManagedLedgerInfo(managedLedgerName);
         assertTrue(info.ledgers.size() >= 1, "Should have at least 1 ledger");
 
-        // Try to trim - should fail because not all messages are consumed
-        try {
-            long lastLedgerId = info.ledgers.get(info.ledgers.size() - 1).ledgerId;
-            admin.topics().trimConsumedLedgersBefore(topicName, lastLedgerId);
-            fail("Should have thrown exception because ledgers are not fully consumed");
-        } catch (PulsarAdminException e) {
-            // Expected exception - HTTP 500 or specific error messages are acceptable
-            assertTrue(e.getMessage() != null && (
-                    e.getMessage().contains("not fully consumed")
-                    || e.getMessage().contains("Cannot trim")
-                    || e.getMessage().contains("not supported")
-                    || e.getMessage().contains("Request failed")
-                    || e.getMessage().contains("HTTP 500")),
-                    "Expected 'not fully consumed' error, got: " + e.getMessage());
-        }
+        // Try to trim - should return empty list because not all messages are consumed
+        long lastLedgerId = info.ledgers.get(info.ledgers.size() - 1).ledgerId;
+        List<Long> deletedLedgerIds = admin.topics().trimConsumedLedgersBefore(topicName, lastLedgerId);
+        assertTrue(deletedLedgerIds.isEmpty(), "Should return empty list when ledgers are not fully consumed");
     }
 
     /**
@@ -305,7 +297,8 @@ public class AdminApiTrimConsumedLedgersBeforeTest extends MockedPulsarServiceBa
         long nonExistentLedgerId = 999999L;
 
         // Should still succeed - it will use the appropriate boundary
-        admin.topics().trimConsumedLedgersBefore(topicName, nonExistentLedgerId);
+        List<Long> deletedLedgerIds = admin.topics().trimConsumedLedgersBefore(topicName, nonExistentLedgerId);
+        assertNotNull(deletedLedgerIds, "Deleted ledger IDs should not be null");
 
         // Verify operation completed without error
         String managedLedgerName = ((PersistentTopic) pulsar.getBrokerService().getTopicReference(topicName).get())
@@ -358,8 +351,9 @@ public class AdminApiTrimConsumedLedgersBeforeTest extends MockedPulsarServiceBa
             long trimBeforeLedgerId = info.ledgers.get(info.ledgers.size() - 1).ledgerId;
 
             // Test async API
-            admin.topics().trimConsumedLedgersBeforeAsync(topicName, trimBeforeLedgerId)
+            List<Long> deletedLedgerIds = admin.topics().trimConsumedLedgersBeforeAsync(topicName, trimBeforeLedgerId)
                     .get(30, TimeUnit.SECONDS);
+            assertNotNull(deletedLedgerIds, "Deleted ledger IDs should not be null from async call");
 
             // Verify operation completed
             ManagedLedgerInfo infoAfter = pulsar.getManagedLedgerFactory()
