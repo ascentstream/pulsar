@@ -24,16 +24,22 @@ import static org.testng.Assert.assertNotNull;
 import static org.testng.Assert.assertTrue;
 
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import lombok.Cleanup;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.bookkeeper.client.BookKeeper;
 import org.apache.bookkeeper.mledger.Entry;
 import org.apache.bookkeeper.mledger.ManagedCursor;
+import org.apache.bookkeeper.mledger.ManagedLedger;
 import org.apache.bookkeeper.mledger.ManagedLedgerConfig;
 import org.apache.bookkeeper.mledger.ManagedLedgerFactoryConfig;
 import org.apache.bookkeeper.mledger.impl.ManagedLedgerFactoryImpl;
@@ -650,5 +656,209 @@ public class ManagedLedgerImplExtTest extends BookKeeperClusterTestCase {
         // Ledger count should remain unchanged
         assertEquals(ledger.getLedgersInfo().size(), initialLedgerCount,
                 "Ledger count should not change when trimming with small ledger ID");
+    }
+
+    /**
+     * Test concurrent trim operations from multiple threads.
+     *
+     * Scenario: Multiple threads concurrently call trimConsumedLedgersBefore
+     * Test: Verify that only one operation proceeds at a time and others are retried
+     * Expected: All operations complete successfully without deadlock
+     */
+    @Test
+    public void testConcurrentTrimOperations() throws Exception {
+        ManagedLedgerFactoryConfig factoryConf = new ManagedLedgerFactoryConfig();
+        factoryConf.setMaxCacheSize(0);
+
+        @Cleanup("shutdown")
+        ManagedLedgerFactoryImplExt factory = createFactory(factoryConf);
+        ManagedLedgerConfig config = new ManagedLedgerConfig();
+        config.setEnsembleSize(1).setWriteQuorumSize(1).setAckQuorumSize(1)
+                .setMetadataEnsembleSize(1).setMetadataAckQuorumSize(1)
+                .setMaxEntriesPerLedger(3)
+                .setRetentionTime(-1, TimeUnit.MILLISECONDS)
+                .setRetentionSizeInMB(-1);
+
+        ManagedLedger ledger = factory.open("test-ledger-" + UUID.randomUUID(), config);
+        ManagedCursor cursor = ledger.openCursor("cursor-" + UUID.randomUUID());
+
+        // Write enough entries to create multiple ledgers
+        for (int i = 0; i < 20; i++) {
+            ledger.addEntry(("entry-" + i).getBytes(StandardCharsets.UTF_8));
+        }
+
+        // Consume all entries
+        while (cursor.hasMoreEntries()) {
+            List<Entry> entries = cursor.readEntries(100);
+            if (!entries.isEmpty()) {
+                cursor.markDelete(entries.get(entries.size() - 1).getPosition());
+            }
+            entries.forEach(Entry::release);
+        }
+
+        int initialLedgerCount = ledger.getLedgersInfo().size();
+        assertTrue(initialLedgerCount >= 4, "Should have at least 4 ledgers for concurrent test");
+
+        // Get the 2nd-to-last ledger ID as trim boundary
+        Long[] ledgerIds = ledger.getLedgersInfo().keySet().toArray(new Long[0]);
+        long trimBeforeLedgerId = ledgerIds[ledgerIds.length - 2];
+
+        // Create a thread pool for concurrent operations
+        int numThreads = 5;
+        ExecutorService executorService = Executors.newFixedThreadPool(numThreads);
+        CountDownLatch startLatch = new CountDownLatch(1);
+        CountDownLatch completionLatch = new CountDownLatch(numThreads);
+        AtomicInteger successCount = new AtomicInteger(0);
+        AtomicInteger failureCount = new AtomicInteger(0);
+
+        // Submit multiple trim operations concurrently
+        for (int i = 0; i < numThreads; i++) {
+            final int threadId = i;
+            executorService.submit(() -> {
+                try {
+                    // Wait for all threads to be ready
+                    startLatch.await();
+                    log.info("Thread {} starting trim operation", threadId);
+
+                    // Perform trim operation
+                    List<Long> deletedLedgerIds = ledger.asyncTrimConsumedLedgersBefore(trimBeforeLedgerId)
+                            .get(30, TimeUnit.SECONDS);
+
+                    log.info("Thread {} completed trim, deleted ledgers: {}", threadId, deletedLedgerIds);
+                    successCount.incrementAndGet();
+                } catch (Exception e) {
+                    log.error("Thread {} failed during trim", threadId, e);
+                    failureCount.incrementAndGet();
+                } finally {
+                    completionLatch.countDown();
+                }
+            });
+        }
+
+        // Start all threads at once
+        startLatch.countDown();
+
+        // Wait for all threads to complete (with timeout)
+        boolean completed = completionLatch.await(60, TimeUnit.SECONDS);
+        assertTrue(completed, "All concurrent trim operations should complete within timeout");
+
+        executorService.shutdown();
+        executorService.awaitTermination(5, TimeUnit.SECONDS);
+
+        // Verify results
+        log.info("Concurrent trim test results: success={}, failure={}", successCount.get(), failureCount.get());
+        assertEquals(successCount.get(), numThreads,
+                "All concurrent trim operations should succeed (some may return empty list after first)");
+        assertEquals(failureCount.get(), 0, "No operations should fail");
+
+        // Final ledger count should be reduced (only first operation deletes ledgers)
+        Awaitility.await().atMost(10, TimeUnit.SECONDS).untilAsserted(() -> {
+            int finalLedgerCount = ledger.getLedgersInfo().size();
+            assertTrue(finalLedgerCount < initialLedgerCount,
+                    "Final ledger count should be less than initial. Initial: " + initialLedgerCount
+                            + ", Final: " + finalLedgerCount);
+        });
+    }
+
+    /**
+     * Test high contention scenario with rapid successive trim calls.
+     *
+     * Scenario: Rapidly submit many trim operations to trigger mutex contention and retry logic
+     * Test: Verify retry mechanism works correctly under high contention
+     * Expected: All operations complete, no deadlocks, no mutex leaks
+     */
+    @Test(invocationCount = 1)
+    public void testHighContentionTrimOperations() throws Exception {
+        ManagedLedgerFactoryConfig factoryConf = new ManagedLedgerFactoryConfig();
+        factoryConf.setMaxCacheSize(0);
+
+        @Cleanup("shutdown")
+        ManagedLedgerFactoryImplExt factory = createFactory(factoryConf);
+        ManagedLedgerConfig config = new ManagedLedgerConfig();
+        config.setEnsembleSize(1).setWriteQuorumSize(1).setAckQuorumSize(1)
+                .setMetadataEnsembleSize(1).setMetadataAckQuorumSize(1)
+                .setMaxEntriesPerLedger(3)
+                .setRetentionTime(-1, TimeUnit.MILLISECONDS)
+                .setRetentionSizeInMB(-1);
+
+        ManagedLedgerImplExt ledger = (ManagedLedgerImplExt) factory.open("test-ledger-" + UUID.randomUUID(), config);
+        ManagedCursor cursor = ledger.openCursor("cursor-" + UUID.randomUUID());
+
+        // Write entries to create multiple ledgers
+        for (int i = 0; i < 15; i++) {
+            ledger.addEntry(("entry-" + i).getBytes(StandardCharsets.UTF_8));
+        }
+
+        // Consume all entries
+        while (cursor.hasMoreEntries()) {
+            List<Entry> entries = cursor.readEntries(100);
+            if (!entries.isEmpty()) {
+                cursor.markDelete(entries.get(entries.size() - 1).getPosition());
+            }
+            entries.forEach(Entry::release);
+        }
+
+        Long[] ledgerIds = ledger.getLedgersInfo().keySet().toArray(new Long[0]);
+        assertTrue(ledgerIds.length >= 3, "Should have at least 3 ledgers");
+        long trimBeforeLedgerId = ledgerIds[ledgerIds.length - 2];
+
+        // Rapidly submit many trim operations to create contention
+        int numOperations = 20;
+        List<CompletableFuture<List<Long>>> futures = new ArrayList<>();
+
+        long startTime = System.currentTimeMillis();
+        for (int i = 0; i < numOperations; i++) {
+            final int opId = i;
+            // Submit without waiting - create maximum contention
+            CompletableFuture<List<Long>> future = ledger.asyncTrimConsumedLedgersBefore(trimBeforeLedgerId);
+            future.thenAccept(deletedIds -> {
+                log.info("Operation {} completed, deleted: {}", opId, deletedIds);
+            }).exceptionally(ex -> {
+                log.warn("Operation {} failed: {}", opId, ex.getMessage());
+                return null;
+            });
+            futures.add(future);
+
+            // Small delay to ensure they overlap
+            Thread.sleep(5);
+        }
+
+        // Wait for all operations to complete
+        AtomicInteger successCount = new AtomicInteger(0);
+        AtomicInteger emptyResultCount = new AtomicInteger(0);
+        AtomicInteger failureCount = new AtomicInteger(0);
+
+        for (CompletableFuture<List<Long>> future : futures) {
+            try {
+                List<Long> result = future.get(60, TimeUnit.SECONDS);
+                successCount.incrementAndGet();
+                if (result.isEmpty()) {
+                    emptyResultCount.incrementAndGet();
+                }
+            } catch (Exception e) {
+                log.error("Operation failed", e);
+                failureCount.incrementAndGet();
+            }
+        }
+
+        long duration = System.currentTimeMillis() - startTime;
+        log.info("High contention test completed in {}ms: success={}, empty={}, failure={}",
+                duration, successCount.get(), emptyResultCount.get(), failureCount.get());
+
+        // All operations should complete without exception
+        assertEquals(successCount.get(), numOperations,
+                "All operations should complete successfully");
+        assertEquals(failureCount.get(), 0, "No operations should fail");
+
+        // After the first successful trim, subsequent operations should return empty list
+        // (because ledgers are already deleted)
+        assertTrue(emptyResultCount.get() >= numOperations - 1,
+                "At least " + (numOperations - 1) + " operations should return empty list after first trim");
+
+        // Verify final state
+        int finalLedgerCount = ledger.getLedgersInfo().size();
+        assertTrue(finalLedgerCount >= 1 && finalLedgerCount < ledgerIds.length,
+                "Final ledger count should be reduced but not zero. Initial: " + ledgerIds.length
+                        + ", Final: " + finalLedgerCount);
     }
 }

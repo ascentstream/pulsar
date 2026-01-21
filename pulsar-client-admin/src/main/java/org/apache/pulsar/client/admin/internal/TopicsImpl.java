@@ -1182,16 +1182,11 @@ public class TopicsImpl extends BaseResource implements Topics {
                         @Override
                         public void completed(Response response) {
                             int status = response.getStatus();
-                            if (status != Response.Status.OK.getStatusCode()
-                                    && status != Response.Status.NO_CONTENT.getStatusCode()) {
+                            if (status != Response.Status.OK.getStatusCode()) {
                                 future.completeExceptionally(getApiException(response));
                             } else {
                                 try {
-                                    if (status == Response.Status.NO_CONTENT.getStatusCode()) {
-                                        future.complete(Collections.emptyList());
-                                    } else {
-                                        future.complete(response.readEntity(new GenericType<List<Long>>() {}));
-                                    }
+                                    future.complete(response.readEntity(new GenericType<List<Long>>() {}));
                                 } catch (Exception e) {
                                     future.completeExceptionally(getApiException(e));
                                 }
