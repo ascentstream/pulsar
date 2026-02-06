@@ -90,7 +90,6 @@ class AdminProxyHandler extends ProxyServlet {
         this.functionWorkerWebServiceUrl = config.isTlsEnabledWithBroker() ? config.getFunctionWorkerWebServiceURLTLS()
                 : config.getFunctionWorkerWebServiceURL();
 
-        super.setTimeout(config.getHttpProxyTimeout());
     }
 
     @Override
@@ -100,10 +99,15 @@ class AdminProxyHandler extends ProxyServlet {
         return httpClient;
     }
 
-    private void customizeHttpClient(HttpClient httpClient) {
+    protected void customizeHttpClient(HttpClient httpClient) {
         httpClient.setFollowRedirects(true);
+
         ProtocolHandlers protocolHandlers = httpClient.getProtocolHandlers();
-        protocolHandlers.put(new RedirectProtocolHandler(httpClient));
+        if (protocolHandlers != null) {
+            protocolHandlers.put(new RedirectProtocolHandler(httpClient));
+        }
+
+        setTimeout(config.getHttpProxyTimeout());
     }
 
     // This class allows the request body to be replayed, the default implementation
