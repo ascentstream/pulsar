@@ -103,6 +103,7 @@ public class WebService implements AutoCloseable {
         if (config.isWebServiceTrustXForwardedFor()) {
             httpConfig.addCustomizer(new ForwardedRequestCustomizer());
         }
+        httpConfig.setIdleTimeout(pulsar.getConfig().getHttpServerIdleTimeout());
         HttpConnectionFactory httpConnectionFactory = new HttpConnectionFactory(httpConfig);
         if (port.isPresent()) {
             List<ConnectionFactory> connectionFactories = new ArrayList<>();
@@ -172,7 +173,10 @@ public class WebService implements AutoCloseable {
         }
 
         // Limit number of concurrent HTTP connections to avoid getting out of file descriptors
-        connectors.forEach(c -> c.setAcceptQueueSize(config.getHttpServerAcceptQueueSize()));
+        connectors.forEach(c -> {
+            c.setAcceptQueueSize(config.getHttpServerAcceptQueueSize());
+            c.setIdleTimeout(pulsar.getConfig().getHttpServerIdleTimeout());
+        });
         server.setConnectors(connectors.toArray(new ServerConnector[connectors.size()]));
 
         filterInitializer = new FilterInitializer(pulsar);

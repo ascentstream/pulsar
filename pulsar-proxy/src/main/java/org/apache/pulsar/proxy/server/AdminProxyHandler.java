@@ -107,6 +107,8 @@ class AdminProxyHandler extends ProxyServlet {
             protocolHandlers.put(new RedirectProtocolHandler(httpClient));
         }
 
+        httpClient.setIdleTimeout(config.getHttpProxyIdleTimeout());
+
         setTimeout(config.getHttpProxyTimeout());
     }
 
