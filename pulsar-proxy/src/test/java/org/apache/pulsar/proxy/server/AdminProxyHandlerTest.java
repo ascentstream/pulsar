@@ -65,8 +65,7 @@ public class AdminProxyHandlerTest {
         ProxyConfiguration proxyConfiguration = spy(new ProxyConfiguration());
         proxyConfiguration.setHttpProxyTimeout(120 * 1000);
 
-        adminProxyHandler = new AdminProxyHandler(proxyConfiguration,
-                mock(BrokerDiscoveryProvider.class), mock(Authentication.class));
+        adminProxyHandler = new AdminProxyHandler(proxyConfiguration, mock(BrokerDiscoveryProvider.class));
 
         HttpClient httpClient = mock(HttpClient.class);
         adminProxyHandler.customizeHttpClient(httpClient);
