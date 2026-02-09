@@ -755,8 +755,10 @@ public class PersistentTopicsBase extends AdminResource {
         pulsar().getBrokerService().getTopicIfExists(topicName.toString())
             .thenAccept(opt -> {
                 if (!opt.isPresent()) {
-                    throw new RestException(Status.NOT_FOUND,
-                        getTopicNotFoundErrorMessage(topicName.toString()));
+                    future.completeExceptionally(
+                            new WebApplicationException(getTopicNotFoundErrorMessage(topicName.toString()),
+                                    Status.NOT_FOUND));
+                    return;
                 }
                 ManagedLedger managedLedger = ((PersistentTopic) opt.get()).getManagedLedger();
                 managedLedger.asyncSetProperties(properties, new UpdatePropertiesCallback() {
@@ -776,6 +778,9 @@ public class PersistentTopicsBase extends AdminResource {
                         future.completeExceptionally(exception);
                     }
                 }, null);
+            }).exceptionally(ex -> {
+                future.completeExceptionally(ex);
+                return null;
             });
         return future;
     }
@@ -812,8 +817,10 @@ public class PersistentTopicsBase extends AdminResource {
         pulsar().getBrokerService().getTopicIfExists(topicName.toString())
                 .thenAccept(opt -> {
                     if (!opt.isPresent()) {
-                        throw new RestException(Status.NOT_FOUND,
-                                getTopicNotFoundErrorMessage(topicName.toString()));
+                        future.completeExceptionally(
+                                new WebApplicationException(getTopicNotFoundErrorMessage(topicName.toString()),
+                                        Status.NOT_FOUND));
+                        return;
                     }
                     ManagedLedger managedLedger = ((PersistentTopic) opt.get()).getManagedLedger();
                     managedLedger.asyncDeleteProperty(key, new UpdatePropertiesCallback() {
@@ -828,6 +835,9 @@ public class PersistentTopicsBase extends AdminResource {
                             future.completeExceptionally(exception);
                         }
                     }, null);
+                }).exceptionally(ex -> {
+                    future.completeExceptionally(ex);
+                    return null;
                 });
         return future;
     }
