@@ -265,6 +265,7 @@ public class CmdTopics extends CmdBase {
         jcommander.addCommand("set-schema-validation-enforce", new SetSchemaValidationEnforced());
 
         jcommander.addCommand("trim-topic", new TrimTopic());
+        jcommander.addCommand("trim-consumed-ledgers-before", new TrimConsumedLedgersBefore());
 
         initDeprecatedCommands();
     }
@@ -3154,6 +3155,35 @@ public class CmdTopics extends CmdBase {
         void run() throws PulsarAdminException {
             String topic = validateTopicName(params);
             getAdmin().topics().trimTopic(topic);
+        }
+    }
+
+    @Parameters(commandDescription = "Trim consumed ledgers before a specific ledger ID")
+    private class TrimConsumedLedgersBefore extends CliCommand {
+        @Parameter(description = "persistent://tenant/namespace/topic ledgerId", required = true)
+        private java.util.List<String> params;
+
+        @Override
+        void run() throws PulsarAdminException {
+            if (params.size() < 2) {
+                throw new ParameterException("Topic name and ledger ID are required");
+            }
+            String topic = validateTopicName(params.subList(0, 1));
+            long ledgerId;
+            try {
+                ledgerId = Long.parseLong(params.get(1));
+            } catch (NumberFormatException e) {
+                throw new ParameterException("Invalid ledger ID: " + params.get(1));
+            }
+            List<Long> deletedLedgerIds = getAdmin().topics().trimConsumedLedgersBefore(topic, ledgerId);
+            if (deletedLedgerIds.isEmpty()) {
+                System.out.println("No ledgers were deleted");
+            } else {
+                System.out.println("Deleted " + deletedLedgerIds.size() + " ledger(s):");
+                for (Long id : deletedLedgerIds) {
+                    System.out.println("  " + id);
+                }
+            }
         }
     }
 }
