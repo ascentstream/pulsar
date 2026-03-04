@@ -29,15 +29,15 @@
     <version>29</version>
   </parent>
 
-  <groupId>org.apache.pulsar</groupId>
+  <groupId>com.ascentstream.pulsar</groupId>
   <artifactId>pulsar</artifactId>
 
-  <version>2.10.7-SNAPSHOT</version>
+  <version>2.10.7.17-8ab33f8-20260304183526-SNAPSHOT</version>
 
   <name>Pulsar</name>
   <description>Pulsar is a distributed pub-sub messaging platform with a very
 flexible messaging model and an intuitive client API.</description>
-  <url>https://github.com/apache/pulsar</url>
+  <url>https://github.com/ascentstream/pulsar</url>
 
   <organization>
     <name>Apache Software Foundation</name>
@@ -61,9 +61,9 @@ flexible messaging model and an intuitive client API.</description>
   </licenses>
 
   <scm>
-    <url>https://github.com/apache/pulsar</url>
-    <connection>scm:git:https://github.com/apache/pulsar.git</connection>
-    <developerConnection>scm:git:ssh://git@github.com:apache/pulsar.git</developerConnection>
+    <url>https://github.com/ascentstream/pulsar</url>
+    <connection>scm:git:https://github.com/ascentstream/pulsar.git</connection>
+    <developerConnection>scm:git:ssh://git@github.com:ascentstream/pulsar.git</developerConnection>
   </scm>
 
   <ciManagement>
@@ -1458,7 +1458,7 @@ flexible messaging model and an intuitive client API.</description>
   <dependencies>
     <!-- These dependencies are common to all the submodules -->
     <dependency>
-      <groupId>org.apache.pulsar</groupId>
+      <groupId>com.ascentstream.pulsar</groupId>
       <artifactId>buildtools</artifactId>
       <version>${project.version}</version>
       <scope>test</scope>
@@ -1552,7 +1552,7 @@ flexible messaging model and an intuitive client API.</description>
         <artifactId>maven-checkstyle-plugin</artifactId>
         <dependencies>
           <dependency>
-            <groupId>org.apache.pulsar</groupId>
+            <groupId>com.ascentstream.pulsar</groupId>
             <artifactId>buildtools</artifactId>
             <version>${project.version}</version>
           </dependency>
@@ -1638,7 +1638,7 @@ flexible messaging model and an intuitive client API.</description>
             <configuration>
               <property>pulsar.basedir</property>
               <project>
-                <groupId>org.apache.pulsar</groupId>
+                <groupId>com.ascentstream.pulsar</groupId>
                 <artifactId>pulsar</artifactId>
               </project>
             </configuration>
@@ -2661,6 +2661,84 @@ flexible messaging model and an intuitive client API.</description>
         <module>pulsar-sql</module>
       </modules>
     </profile>
+    <profile>
+      <id>ascentstream-release</id>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-source-plugin</artifactId>
+            <version>3.2.1</version>
+            <executions>
+              <execution>
+                <id>attach-sources</id>
+                <goals>
+                  <goal>jar-no-fork</goal>
+                </goals>
+              </execution>
+            </executions>
+          </plugin>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-javadoc-plugin</artifactId>
+            <version>3.5.0</version>
+            <configuration>
+              <doclint>none</doclint>
+              <failOnError>false</failOnError>
+            </configuration>
+            <executions>
+              <execution>
+                <id>attach-javadocs</id>
+                <goals>
+                  <goal>jar</goal>
+                </goals>
+              </execution>
+            </executions>
+          </plugin>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-gpg-plugin</artifactId>
+            <version>3.1.0</version>
+            <executions>
+              <execution>
+                <id>sign-artifacts</id>
+                <phase>verify</phase>
+                <goals>
+                  <goal>sign</goal>
+                </goals>
+              </execution>
+            </executions>
+          </plugin>
+          <plugin>
+            <groupId>io.github.nodece</groupId>
+            <artifactId>sonatype-central-publish-maven-plugin</artifactId>
+            <version>0.0.7</version>
+            <extensions>true</extensions>
+            <configuration>
+              <skip>false</skip>
+              <serverId>central</serverId>
+              <publishingType>AUTOMATIC</publishingType>
+            </configuration>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+    <profile>
+      <id>ascentstream-github</id>
+      <distributionManagement>
+        <repository>
+          <id>apache.releases.https</id>
+          <name>${distMgmtReleasesName}</name>
+          <url>${distMgmtReleasesUrl}</url>
+        </repository>
+        <snapshotRepository>
+          <id>apache.snapshots.https</id>
+          <name>${distMgmtSnapshotsName}</name>
+          <url>${distMgmtSnapshotsUrl}</url>
+        </snapshotRepository>
+      </distributionManagement>
+    </profile>
+
   </profiles>
 
   <repositories>

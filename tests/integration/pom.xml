@@ -23,9 +23,9 @@
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
   <modelVersion>4.0.0</modelVersion>
   <parent>
-    <groupId>org.apache.pulsar.tests</groupId>
+    <groupId>com.ascentstream.pulsar.tests</groupId>
     <artifactId>tests-parent</artifactId>
-    <version>2.10.7-SNAPSHOT</version>
+    <version>2.10.7.17-8ab33f8-20260304183526-SNAPSHOT</version>
   </parent>
 
   <artifactId>integration</artifactId>
@@ -43,37 +43,37 @@
       <scope>test</scope>
     </dependency>
     <dependency>
-      <groupId>org.apache.pulsar</groupId>
+      <groupId>com.ascentstream.pulsar</groupId>
       <artifactId>pulsar-functions-api-examples</artifactId>
       <version>${project.version}</version>
       <scope>test</scope>
     </dependency>
     <dependency>
-      <groupId>org.apache.pulsar</groupId>
+      <groupId>com.ascentstream.pulsar</groupId>
       <artifactId>pulsar-broker</artifactId>
       <version>${project.version}</version>
       <scope>test</scope>
     </dependency>
     <dependency>
-      <groupId>org.apache.pulsar</groupId>
+      <groupId>com.ascentstream.pulsar</groupId>
       <artifactId>pulsar-common</artifactId>
       <version>${project.version}</version>
       <scope>test</scope>
     </dependency>
     <dependency>
-      <groupId>org.apache.pulsar</groupId>
+      <groupId>com.ascentstream.pulsar</groupId>
       <artifactId>pulsar-client</artifactId>
       <version>${project.version}</version>
       <scope>test</scope>
     </dependency>
     <dependency>
-      <groupId>org.apache.pulsar</groupId>
+      <groupId>com.ascentstream.pulsar</groupId>
       <artifactId>pulsar-client-admin</artifactId>
       <version>${project.version}</version>
       <scope>test</scope>
     </dependency>
     <dependency>
-      <groupId>org.apache.pulsar</groupId>
+      <groupId>com.ascentstream.pulsar</groupId>
       <artifactId>managed-ledger</artifactId>
       <version>${project.version}</version>
       <scope>test</scope>
@@ -95,7 +95,7 @@
       <scope>test</scope>
     </dependency>
     <dependency>
-      <groupId>org.apache.pulsar</groupId>
+      <groupId>com.ascentstream.pulsar</groupId>
       <artifactId>pulsar-io-kafka</artifactId>
       <version>${project.version}</version>
       <scope>test</scope>
@@ -133,7 +133,7 @@
     </dependency>
 
     <dependency>
-      <groupId>org.apache.pulsar</groupId>
+      <groupId>com.ascentstream.pulsar</groupId>
       <artifactId>pulsar-io-jdbc-postgres</artifactId>
       <version>${project.version}</version>
       <scope>test</scope>
