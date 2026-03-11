@@ -25,9 +25,9 @@
     <modelVersion>4.0.0</modelVersion>
 
     <parent>
-        <groupId>org.apache.pulsar</groupId>
+        <groupId>com.ascentstream.pulsar</groupId>
         <artifactId>pulsar-functions</artifactId>
-        <version>4.0.9</version>
+        <version>4.2.0.0-493d9c9-20260311024656-SNAPSHOT</version>
     </parent>
 
     <artifactId>pulsar-functions-proto</artifactId>
