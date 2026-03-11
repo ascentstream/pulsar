@@ -24,8 +24,8 @@
     <modelVersion>4.0.0</modelVersion>
     <parent>
         <artifactId>pulsar-io</artifactId>
-        <groupId>org.apache.pulsar</groupId>
-        <version>4.0.9</version>
+        <groupId>com.ascentstream.pulsar</groupId>
+        <version>4.2.0.0-086aa6f-20260311103625-SNAPSHOT</version>
     </parent>
 
     <artifactId>pulsar-io-influxdb</artifactId>
