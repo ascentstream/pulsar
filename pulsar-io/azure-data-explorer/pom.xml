@@ -23,9 +23,9 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
     <parent>
-        <groupId>org.apache.pulsar</groupId>
+        <groupId>com.ascentstream.pulsar</groupId>
         <artifactId>pulsar-io</artifactId>
-        <version>4.0.9</version>
+        <version>4.0.9.0-a8596c1-20260313155405-SNAPSHOT</version>
     </parent>
 
     <artifactId>pulsar-io-azuredataexplorer</artifactId>
@@ -46,7 +46,7 @@
             <version>${project.version}</version>
         </dependency>
         <dependency>
-            <groupId>org.apache.pulsar</groupId>
+            <groupId>com.ascentstream.pulsar</groupId>
             <artifactId>pulsar-functions-instance</artifactId>
             <version>${project.version}</version>
             <scope>test</scope>

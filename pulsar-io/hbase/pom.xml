@@ -24,8 +24,8 @@
     <modelVersion>4.0.0</modelVersion>
     <parent>
         <artifactId>pulsar-io</artifactId>
-        <groupId>org.apache.pulsar</groupId>
-        <version>4.0.9</version>
+        <groupId>com.ascentstream.pulsar</groupId>
+        <version>4.0.9.0-a8596c1-20260313155405-SNAPSHOT</version>
     </parent>
     <artifactId>pulsar-io-hbase</artifactId>
     <name>Pulsar IO :: Hbase</name>
