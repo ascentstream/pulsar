@@ -24,8 +24,8 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <parent>
         <artifactId>pulsar-package-management</artifactId>
-        <groupId>org.apache.pulsar</groupId>
-        <version>4.0.9</version>
+        <groupId>com.ascentstream.pulsar</groupId>
+        <version>4.0.9.0-978ff71-20260313101827-SNAPSHOT</version>
     </parent>
     <modelVersion>4.0.0</modelVersion>
 

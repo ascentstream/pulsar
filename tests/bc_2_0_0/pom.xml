@@ -23,9 +23,9 @@
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
     <modelVersion>4.0.0</modelVersion>
     <parent>
-        <groupId>org.apache.pulsar.tests</groupId>
+        <groupId>com.ascentstream.pulsar.tests</groupId>
         <artifactId>tests-parent</artifactId>
-        <version>4.0.9</version>
+        <version>4.0.9.0-978ff71-20260313101827-SNAPSHOT</version>
     </parent>
 
     <artifactId>bc_2_0_0</artifactId>
