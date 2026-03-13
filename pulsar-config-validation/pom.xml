@@ -26,7 +26,7 @@
     <parent>
         <groupId>com.ascentstream.pulsar</groupId>
         <artifactId>pulsar</artifactId>
-        <version>4.0.9.0-978ff71-20260313101827-SNAPSHOT</version>
+        <version>4.0.9.0-a8596c1-20260313151952-SNAPSHOT</version>
     </parent>
 
     <artifactId>pulsar-config-validation</artifactId>

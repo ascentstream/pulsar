@@ -32,7 +32,7 @@
   <groupId>com.ascentstream.pulsar</groupId>
   <artifactId>pulsar</artifactId>
 
-  <version>4.0.9.0-978ff71-20260313101827-SNAPSHOT</version>
+  <version>4.0.9.0-a8596c1-20260313151952-SNAPSHOT</version>
 
   <name>Pulsar</name>
   <description>Pulsar is a distributed pub-sub messaging platform with a very
@@ -94,7 +94,7 @@ flexible messaging model and an intuitive client API.</description>
 
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
-    <project.build.outputTimestamp>2026-03-13T10:18:36Z</project.build.outputTimestamp>
+    <project.build.outputTimestamp>2026-03-13T15:19:58Z</project.build.outputTimestamp>
     <redirectTestOutputToFile>true</redirectTestOutputToFile>
 
     <!-- By default build for local Docker platform.
