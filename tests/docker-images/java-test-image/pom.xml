@@ -21,9 +21,9 @@
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
   <parent>
-    <groupId>org.apache.pulsar.tests</groupId>
+    <groupId>com.ascentstream.pulsar.tests</groupId>
     <artifactId>docker-images</artifactId>
-    <version>4.0.9</version>
+    <version>4.0.9.0-89c2e77-20260313095555-SNAPSHOT</version>
   </parent>
   <modelVersion>4.0.0</modelVersion>
   <artifactId>java-test-image</artifactId>
@@ -40,12 +40,12 @@
       </activation>
       <dependencies>
         <dependency>
-          <groupId>org.apache.pulsar.tests</groupId>
+          <groupId>com.ascentstream.pulsar.tests</groupId>
           <artifactId>java-test-functions</artifactId>
           <version>${project.parent.version}</version>
         </dependency>
         <dependency>
-          <groupId>org.apache.pulsar</groupId>
+          <groupId>com.ascentstream.pulsar</groupId>
           <artifactId>pulsar-server-distribution</artifactId>
           <version>${project.parent.version}</version>
           <classifier>bin</classifier>
@@ -73,7 +73,7 @@
                 <configuration>
                   <artifactItems>
                     <artifactItem>
-                      <groupId>org.apache.pulsar.tests</groupId>
+                      <groupId>com.ascentstream.pulsar.tests</groupId>
                       <artifactId>java-test-functions</artifactId>
                       <version>${project.parent.version}</version>
                       <type>jar</type>
@@ -82,7 +82,7 @@
                       <destFileName>java-test-functions.jar</destFileName>
                     </artifactItem>
                     <artifactItem>
-                      <groupId>org.apache.pulsar</groupId>
+                      <groupId>com.ascentstream.pulsar</groupId>
                       <artifactId>pulsar-server-distribution</artifactId>
                       <version>${project.parent.version}</version>
                       <classifier>bin</classifier>
@@ -92,7 +92,7 @@
                       <destFileName>pulsar-server-distribution-bin.tar.gz</destFileName>
                     </artifactItem>
                     <artifactItem>
-                      <groupId>org.apache.pulsar</groupId>
+                      <groupId>com.ascentstream.pulsar</groupId>
                       <artifactId>buildtools</artifactId>
                       <version>${project.parent.version}</version>
                       <type>jar</type>

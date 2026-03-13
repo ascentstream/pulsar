@@ -24,9 +24,9 @@
         xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
   <modelVersion>4.0.0</modelVersion>
   <parent>
-    <groupId>org.apache.pulsar</groupId>
+    <groupId>com.ascentstream.pulsar</groupId>
     <artifactId>pulsar</artifactId>
-    <version>4.0.9</version>
+    <version>4.0.9.0-89c2e77-20260313095555-SNAPSHOT</version>
   </parent>
 
   <artifactId>pulsar-client-dependencies-minimized</artifactId>
@@ -71,7 +71,7 @@
               <artifactSet>
                 <includes>
                   <!-- The Pulsar module that references the library being minimized -->
-                  <include>org.apache.pulsar:pulsar-client-original</include>
+                  <include>com.ascentstream.pulsar:pulsar-client-original</include>
                   <!-- Currently, only fastutil is minimized -->
                   <include>it.unimi.dsi:fastutil</include>
                 </includes>
@@ -82,7 +82,7 @@
                 Both includes and excludes are set to **.
                 -->
                 <filter>
-                  <artifact>org.apache.pulsar:pulsar-client-original</artifact>
+                  <artifact>com.ascentstream.pulsar:pulsar-client-original</artifact>
                   <includes>
                     <include>**</include>
                   </includes>

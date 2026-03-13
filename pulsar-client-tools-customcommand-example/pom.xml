@@ -20,9 +20,9 @@
 -->
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
   <parent>
-    <groupId>org.apache.pulsar</groupId>
+    <groupId>com.ascentstream.pulsar</groupId>
     <artifactId>pulsar</artifactId>
-    <version>4.0.9</version>
+    <version>4.0.9.0-89c2e77-20260313095555-SNAPSHOT</version>
   </parent>
   <modelVersion>4.0.0</modelVersion>
   <artifactId>pulsar-client-tools-customcommand-example</artifactId>
@@ -30,7 +30,7 @@
   <name>Pulsar CLI Custom command example</name>
   <dependencies>
     <dependency>
-      <groupId>org.apache.pulsar</groupId>
+      <groupId>com.ascentstream.pulsar</groupId>
       <artifactId>pulsar-client-tools-api</artifactId>
       <version>${project.version}</version>
       <scope>provided</scope>

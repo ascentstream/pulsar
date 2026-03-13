@@ -23,9 +23,9 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
   <parent>
-    <groupId>org.apache.pulsar</groupId>
+    <groupId>com.ascentstream.pulsar</groupId>
     <artifactId>pulsar</artifactId>
-    <version>4.0.9</version>
+    <version>4.0.9.0-89c2e77-20260313095555-SNAPSHOT</version>
   </parent>
   <artifactId>pulsar-client-all</artifactId>
   <name>Pulsar Client All</name>
@@ -194,11 +194,11 @@
                   <include>org.apache.bookkeeper:*</include>
                   <include>org.apache.commons:commons-compress</include>
                   <include>org.apache.commons:commons-lang3</include>
-                  <include>org.apache.pulsar:pulsar-client-admin-original</include>
+                  <include>com.ascentstream.pulsar:pulsar-client-admin-original</include>
                   <!-- Issue #6834, Since Netty ByteBuf shaded, we need also shade this module -->
-                  <include>org.apache.pulsar:pulsar-client-messagecrypto-bc</include>
-                  <include>org.apache.pulsar:pulsar-client-original</include>
-                  <include>org.apache.pulsar:pulsar-common</include>
+                  <include>com.ascentstream.pulsar:pulsar-client-messagecrypto-bc</include>
+                  <include>com.ascentstream.pulsar:pulsar-client-original</include>
+                  <include>com.ascentstream.pulsar:pulsar-common</include>
                   <include>org.asynchttpclient:*</include>
                   <include>org.checkerframework:*</include>
                   <include>org.eclipse.jetty:*</include>
@@ -210,7 +210,7 @@
                   <include>org.reactivestreams:reactive-streams</include>
                   <include>org.tukaani:xz</include>
                   <include>org.yaml:snakeyaml</include>
-                  <include>org.apache.pulsar:pulsar-client-dependencies-minimized</include>
+                  <include>com.ascentstream.pulsar:pulsar-client-dependencies-minimized</include>
                   <include>org.roaringbitmap:RoaringBitmap</include>
                 </includes>
                 <excludes>
@@ -220,7 +220,7 @@
               </artifactSet>
               <filters>
                 <filter>
-                  <artifact>org.apache.pulsar:pulsar-client-original</artifact>
+                  <artifact>com.ascentstream.pulsar:pulsar-client-original</artifact>
                   <includes>
                     <include>**</include>
                   </includes>
