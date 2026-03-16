@@ -26,7 +26,7 @@
   <parent>
     <groupId>com.ascentstream.pulsar</groupId>
     <artifactId>pulsar</artifactId>
-    <version>4.0.9.0-0236aac-20260316085046-SNAPSHOT</version>
+    <version>4.0.9.0-0236aac-20260316085504-SNAPSHOT</version>
   </parent>
 
   <artifactId>jetcd-core-shaded</artifactId>
