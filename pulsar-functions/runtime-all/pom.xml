@@ -26,7 +26,7 @@
   <parent>
     <groupId>com.ascentstream.pulsar</groupId>
     <artifactId>pulsar-functions</artifactId>
-    <version>4.0.9.0-524c436-20260316095256-SNAPSHOT</version>
+    <version>4.0.9.0-09bad76-20260316102910-SNAPSHOT</version>
   </parent>
 
   <!--
