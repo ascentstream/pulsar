@@ -164,6 +164,7 @@ CLOSE:
 		case cm := <-channel:
 			msgInput := cm.Message
 			atMostOnce := gi.context.instanceConf.funcDetails.ProcessingGuarantees == pb.ProcessingGuarantees_ATMOST_ONCE
+			atLeastOnce := gi.context.instanceConf.funcDetails.ProcessingGuarantees == pb.ProcessingGuarantees_ATLEAST_ONCE
 			autoAck := gi.context.instanceConf.funcDetails.AutoAck //nolint:staticcheck
 			if autoAck && atMostOnce {
 				gi.ackInputMessage(msgInput)
@@ -176,8 +177,12 @@ CLOSE:
 
 			output, err := gi.handlerMsg(msgInput)
 			if err != nil {
-				gi.handleUserError(msgInput, err)
-				continue
+				log.Errorf("handler message error:%v", err)
+				if autoAck && atLeastOnce {
+					gi.nackInputMessage(msgInput)
+				}
+				gi.stats.incrTotalUserExceptions(err)
+				return err
 			}
 
 			gi.stats.processTimeEnd()
@@ -303,50 +308,11 @@ func (gi *goInstance) getProducer(topicName string) (pulsar.Producer, error) {
 	return producer, err
 }
 
-// resolveSubscriptionType picks the consumer subscription type for the function.
-//
-// The ordering flags are applied after the explicit SubscriptionType, matching the Java and Python
-// runtimes: retainOrdering requires a single consumer per partition, so it selects Failover, and
-// retainKeyOrdering selects KeyShared. Ordering wins when both are set, which is the precedence
-// python_instance.py applies.
-//
-// EFFECTIVELY_ONCE needs no arm here: instanceConf.go refuses it before an instance is built.
-func resolveSubscriptionType(configured pb.SubscriptionType, retainOrdering,
-	retainKeyOrdering bool) pulsar.SubscriptionType {
-	subscriptionType := pulsar.Shared
-	if int32(configured) == pb.SubscriptionType_value["FAILOVER"] {
-		subscriptionType = pulsar.Failover
-	}
-
-	if retainOrdering {
-		subscriptionType = pulsar.Failover
-	} else if retainKeyOrdering {
-		subscriptionType = pulsar.KeyShared
-	}
-
-	return subscriptionType
-}
-
-// resolveNackRedeliveryDelay returns the negative-ack redelivery delay to apply, or zero to leave
-// the client default in place.
-//
-// SourceSpec.NegativeAckRedeliveryDelayMs is a proto3 scalar with no presence, so an unset field
-// reads as 0. Only a positive value is applied, matching the guard the Java runtime uses in
-// JavaInstanceRunnable; a zero left in ConsumerOptions is treated by the client as unset, so the
-// default applies either way.
-func resolveNackRedeliveryDelay(delayMs uint64) time.Duration {
-	if delayMs == 0 {
-		return 0
-	}
-
-	return time.Duration(delayMs) * time.Millisecond
-}
-
 func (gi *goInstance) setupConsumer() (chan pulsar.ConsumerMessage, error) {
-	subscriptionType := resolveSubscriptionType(
-		gi.context.instanceConf.funcDetails.Source.SubscriptionType,
-		gi.context.instanceConf.funcDetails.RetainOrdering,
-		gi.context.instanceConf.funcDetails.RetainKeyOrdering)
+	subscriptionType := pulsar.Shared
+	if int32(gi.context.instanceConf.funcDetails.Source.SubscriptionType) == pb.SubscriptionType_value["FAILOVER"] {
+		subscriptionType = pulsar.Failover
+	}
 
 	funcDetails := gi.context.instanceConf.funcDetails
 	subscriptionName := funcDetails.Tenant + "/" + funcDetails.Namespace + "/" + funcDetails.Name
@@ -358,8 +324,6 @@ func (gi *goInstance) setupConsumer() (chan pulsar.ConsumerMessage, error) {
 		funcDetails.Tenant,
 		funcDetails.Namespace,
 		funcDetails.Name), gi.context.instanceConf.instanceID)
-
-	nackRedeliveryDelay := resolveNackRedeliveryDelay(funcDetails.Source.NegativeAckRedeliveryDelayMs)
 
 	channel := make(chan pulsar.ConsumerMessage)
 
@@ -379,43 +343,39 @@ func (gi *goInstance) setupConsumer() (chan pulsar.ConsumerMessage, error) {
 		if consumerConf.ReceiverQueueSize != nil {
 			if consumerConf.IsRegexPattern {
 				consumer, err = gi.client.Subscribe(pulsar.ConsumerOptions{
-					TopicsPattern:       topicName.Name,
-					ReceiverQueueSize:   int(consumerConf.ReceiverQueueSize.Value),
-					SubscriptionName:    subscriptionName,
-					Properties:          properties,
-					Type:                subscriptionType,
-					MessageChannel:      channel,
-					NackRedeliveryDelay: nackRedeliveryDelay,
+					TopicsPattern:     topicName.Name,
+					ReceiverQueueSize: int(consumerConf.ReceiverQueueSize.Value),
+					SubscriptionName:  subscriptionName,
+					Properties:        properties,
+					Type:              subscriptionType,
+					MessageChannel:    channel,
 				})
 			} else {
 				consumer, err = gi.client.Subscribe(pulsar.ConsumerOptions{
-					Topic:               topicName.Name,
-					SubscriptionName:    subscriptionName,
-					Properties:          properties,
-					Type:                subscriptionType,
-					ReceiverQueueSize:   int(consumerConf.ReceiverQueueSize.Value),
-					MessageChannel:      channel,
-					NackRedeliveryDelay: nackRedeliveryDelay,
+					Topic:             topicName.Name,
+					SubscriptionName:  subscriptionName,
+					Properties:        properties,
+					Type:              subscriptionType,
+					ReceiverQueueSize: int(consumerConf.ReceiverQueueSize.Value),
+					MessageChannel:    channel,
 				})
 			}
 		} else {
 			if consumerConf.IsRegexPattern {
 				consumer, err = gi.client.Subscribe(pulsar.ConsumerOptions{
-					TopicsPattern:       topicName.Name,
-					SubscriptionName:    subscriptionName,
-					Properties:          properties,
-					Type:                subscriptionType,
-					MessageChannel:      channel,
-					NackRedeliveryDelay: nackRedeliveryDelay,
+					TopicsPattern:    topicName.Name,
+					SubscriptionName: subscriptionName,
+					Properties:       properties,
+					Type:             subscriptionType,
+					MessageChannel:   channel,
 				})
 			} else {
 				consumer, err = gi.client.Subscribe(pulsar.ConsumerOptions{
-					Topic:               topicName.Name,
-					SubscriptionName:    subscriptionName,
-					Properties:          properties,
-					Type:                subscriptionType,
-					MessageChannel:      channel,
-					NackRedeliveryDelay: nackRedeliveryDelay,
+					Topic:            topicName.Name,
+					SubscriptionName: subscriptionName,
+					Properties:       properties,
+					Type:             subscriptionType,
+					MessageChannel:   channel,
 				})
 
 			}
@@ -429,29 +389,6 @@ func (gi *goInstance) setupConsumer() (chan pulsar.ConsumerMessage, error) {
 		gi.consumers[topicName.Name] = consumer
 	}
 	return channel, nil
-}
-
-func (gi *goInstance) shouldNackInputOnFailure() bool {
-	guarantee := gi.context.instanceConf.funcDetails.ProcessingGuarantees
-	return guarantee == pb.ProcessingGuarantees_ATLEAST_ONCE ||
-		guarantee == pb.ProcessingGuarantees_MANUAL
-}
-
-func (gi *goInstance) handleUserError(msgInput pulsar.Message, err error) {
-	log.Errorf("handler message error:%v", err)
-	if gi.shouldNackInputOnFailure() {
-		gi.nackInputMessage(msgInput)
-	}
-	gi.stats.incrTotalUserExceptions(err)
-	gi.stats.processTimeEnd()
-}
-
-func (gi *goInstance) handlePublishError(msgInput pulsar.Message, err error) {
-	if gi.context.instanceConf.funcDetails.ProcessingGuarantees == pb.ProcessingGuarantees_ATLEAST_ONCE {
-		gi.nackInputMessage(msgInput)
-	}
-	gi.stats.incrTotalSysExceptions(err)
-	log.Errorf("failed to publish output message: %v", err)
 }
 
 func (gi *goInstance) handlerMsg(input pulsar.Message) (output []byte, err error) {
@@ -483,8 +420,11 @@ func (gi *goInstance) processResult(msgInput pulsar.Message, output []byte) {
 				// semantics, ensure we nack so someone else can get it, in case we are the only handler. Then mark
 				// exception and fail out.
 				if err != nil {
-					gi.handlePublishError(msgInput, err)
-					return
+					if autoAck && atLeastOnce {
+						gi.nackInputMessage(msgInput)
+					}
+					gi.stats.incrTotalSysExceptions(err)
+					log.Fatal(err)
 				}
 				// Otherwise the message succeeded. If the SDK is entrusted with responding and we are using
 				// atLeastOnce delivery semantics, ack the message.
@@ -497,7 +437,7 @@ func (gi *goInstance) processResult(msgInput pulsar.Message, output []byte) {
 		return
 	}
 
-	// No output from the function or no output topic. Ack if we need to and mark the success before returning.
+	// No output from the function or no output topic. Ack if we need to and mark the success before rturning.
 	if autoAck && atLeastOnce {
 		gi.ackInputMessage(msgInput)
 	}
