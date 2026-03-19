@@ -173,6 +173,14 @@ public class CmdTopicPolicies extends CmdBase {
         addCommand("get-replication-clusters", new GetReplicationClusters());
         addCommand("set-replication-clusters", new SetReplicationClusters());
         addCommand("remove-replication-clusters", new RemoveReplicationClusters());
+
+        addCommand("set-resource-group", new SetResourceGroup());
+        addCommand("get-resource-group", new GetResourceGroup());
+        addCommand("remove-resource-group", new RemoveResourceGroup());
+
+        addCommand("set-replicate-subscription-state", new SetReplicateSubscriptionState());
+        addCommand("get-replicate-subscription-state", new GetReplicateSubscriptionState());
+        addCommand("remove-replicate-subscription-state", new RemoveReplicateSubscriptionState());
     }
 
     @Command(description = "Get entry filters for a topic")
@@ -2070,6 +2078,116 @@ public class CmdTopicPolicies extends CmdBase {
         void run() throws PulsarAdminException {
             String persistentTopic = validatePersistentTopic(topicName);
             getTopicPolicies(false).deleteTopicPolicies(persistentTopic);
+        }
+    }
+
+    @Command(description = "Get ResourceGroup for a topic")
+    private class GetResourceGroup extends CliCommand {
+        @Parameters(description = "persistent://tenant/namespace/topic", arity = "1")
+        private String topicName;
+
+        @Option(names = {"--applied", "-a"}, description = "Get the applied policy of the topic")
+        private boolean applied = false;
+
+        @Option(names = {"--global", "-g"}, description = "Whether to get this policy globally. "
+                + "If set to true, broker returned global topic policies")
+        private boolean isGlobal = false;
+
+        @Override
+        void run() throws PulsarAdminException {
+            String persistentTopic = validatePersistentTopic(topicName);
+            print(getTopicPolicies(isGlobal).getResourceGroup(persistentTopic, applied));
+        }
+    }
+
+    @Command(description = "Set ResourceGroup for a topic")
+    private class SetResourceGroup extends CliCommand {
+        @Parameters(description = "persistent://tenant/namespace/topic", arity = "1")
+        private String topicName;
+
+        @Option(names = {"--global", "-g"}, description = "Whether to get this policy globally. "
+                + "If set to true, broker returned global topic policies")
+        private boolean isGlobal = false;
+
+        @Option(names = {"--resource-group-name", "-rgn"}, description = "ResourceGroup name", required = true)
+        private String rgName;
+
+        @Override
+        void run() throws PulsarAdminException {
+            String persistentTopic = validatePersistentTopic(topicName);
+            getTopicPolicies(isGlobal).setResourceGroup(persistentTopic, rgName);
+        }
+    }
+
+    @Command(description = "Remove ResourceGroup from a topic")
+    private class RemoveResourceGroup extends CliCommand {
+        @Parameters(description = "persistent://tenant/namespace/topic", arity = "1")
+        private String topicName;
+
+        @Option(names = {"--global", "-g"}, description = "Whether to get this policy globally. "
+                + "If set to true, broker returned global topic policies")
+        private boolean isGlobal = false;
+
+
+        @Override
+        void run() throws PulsarAdminException {
+            String persistentTopic = validatePersistentTopic(topicName);
+            getTopicPolicies(isGlobal).removeResourceGroup(persistentTopic);
+        }
+    }
+
+    @Command(description = "Set replicate subscription state from a topic")
+    private class SetReplicateSubscriptionState extends CliCommand {
+        @Parameters(description = "persistent://tenant/namespace/topic", arity = "1")
+        private String topicName;
+
+        @Option(names = {"--global", "-g"}, description = "Whether to get this policy globally. "
+                + "If set to true, broker returned global topic policies")
+        private boolean isGlobal = false;
+
+        @Option(names = "--enabled", arity = "1", required = true, description = "Whether to replicate subscription"
+                + " state")
+        private boolean enabled = true;
+
+        @Override
+        void run() throws PulsarAdminException {
+            String topic = validateTopicName(topicName);
+            getTopicPolicies(isGlobal).setReplicateSubscriptionState(topic, enabled);
+        }
+    }
+
+    @Command(description = "Get replicate subscription state from a topic")
+    private class GetReplicateSubscriptionState extends CliCommand {
+        @Parameters(description = "persistent://tenant/namespace/topic", arity = "1")
+        private String topicName;
+
+        @Option(names = {"--global", "-g"}, description = "Whether to get this policy globally. "
+                + "If set to true, broker returned global topic policies")
+        private boolean isGlobal = false;
+
+        @Option(names = {"--applied", "-a"}, description = "Get the applied policy of the topic")
+        private boolean applied = false;
+
+        @Override
+        void run() throws PulsarAdminException {
+            String topic = validateTopicName(topicName);
+            print(getTopicPolicies(isGlobal).getReplicateSubscriptionState(topic, applied));
+        }
+    }
+
+    @Command(description = "Remove replicate subscription state from a topic")
+    private class RemoveReplicateSubscriptionState extends CliCommand {
+        @Parameters(description = "persistent://tenant/namespace/topic", arity = "1")
+        private String topicName;
+
+        @Option(names = {"--global", "-g"}, description = "Whether to get this policy globally. "
+                + "If set to true, broker returned global topic policies")
+        private boolean isGlobal = false;
+
+        @Override
+        void run() throws PulsarAdminException {
+            String topic = validateTopicName(topicName);
+            getTopicPolicies(isGlobal).setReplicateSubscriptionState(topic, null);
         }
     }
 

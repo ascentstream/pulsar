@@ -118,14 +118,13 @@ public class PersistentSubscription extends AbstractSubscription {
     // for connected subscriptions, message expiry will be checked if the backlog is greater than this threshold
     private static final int MINIMUM_BACKLOG_FOR_EXPIRY_CHECK = 1000;
 
-    private static final String REPLICATED_SUBSCRIPTION_PROPERTY = "pulsar.replicated.subscription";
+    static final String REPLICATED_SUBSCRIPTION_PROPERTY = "pulsar.replicated.subscription";
 
     // Map of properties that is used to mark this subscription as "replicated".
     // Since this is the only field at this point, we can just keep a static
     // instance of the map.
-    private static final Map<String, Long> REPLICATED_SUBSCRIPTION_CURSOR_PROPERTIES =
-            Map.of(REPLICATED_SUBSCRIPTION_PROPERTY, 1L);
-    private static final Map<String, Long> NON_REPLICATED_SUBSCRIPTION_CURSOR_PROPERTIES = Map.of();
+    private static final Map<String, Long> REPLICATED_SUBSCRIPTION_CURSOR_PROPERTIES = new TreeMap<>();
+    private static final Map<String, Long> NON_REPLICATED_SUBSCRIPTION_CURSOR_PROPERTIES = Collections.emptyMap();
 
     private volatile ReplicatedSubscriptionSnapshotCache replicatedSubscriptionSnapshotCache;
     @Getter
@@ -133,16 +132,21 @@ public class PersistentSubscription extends AbstractSubscription {
     private volatile Map<String, String> subscriptionProperties;
     private volatile CompletableFuture<Void> fenceFuture;
     private volatile CompletableFuture<Void> inProgressResetCursorFuture;
-    private volatile Boolean replicatedControlled;
+
     private final ServiceConfiguration config;
+
+    static {
+        REPLICATED_SUBSCRIPTION_CURSOR_PROPERTIES.put(REPLICATED_SUBSCRIPTION_PROPERTY, 1L);
+    }
 
     static Map<String, Long> getBaseCursorProperties(Boolean isReplicated) {
         return isReplicated != null && isReplicated ? REPLICATED_SUBSCRIPTION_CURSOR_PROPERTIES :
                 NON_REPLICATED_SUBSCRIPTION_CURSOR_PROPERTIES;
     }
 
-    static boolean isCursorFromReplicatedSubscription(ManagedCursor cursor) {
-        return cursor.getProperties().containsKey(REPLICATED_SUBSCRIPTION_PROPERTY);
+    public static boolean isCursorFromReplicatedSubscription(ManagedCursor cursor) {
+        Long v = cursor.getProperties().get(REPLICATED_SUBSCRIPTION_PROPERTY);
+        return v != null && v == 1L;
     }
 
     public PersistentSubscription(PersistentTopic topic, String subscriptionName, ManagedCursor cursor,
@@ -159,9 +163,7 @@ public class PersistentSubscription extends AbstractSubscription {
         this.subName = subscriptionName;
         this.fullName = MoreObjects.toStringHelper(this).add("topic", topicName).add("name", subName).toString();
         this.expiryMonitor = new PersistentMessageExpiryMonitor(topic, subscriptionName, cursor, this);
-        if (replicated != null) {
-            this.setReplicated(replicated);
-        }
+        this.setReplicated(replicated);
         this.subscriptionProperties = MapUtils.isEmpty(subscriptionProperties)
                 ? Collections.emptyMap() : Collections.unmodifiableMap(subscriptionProperties);
         if (config.isTransactionCoordinatorEnabled()
@@ -199,10 +201,19 @@ public class PersistentSubscription extends AbstractSubscription {
         return replicatedSubscriptionSnapshotCache != null;
     }
 
-    public boolean setReplicated(boolean replicated) {
-        replicatedControlled = replicated;
+    public boolean setReplicated(Boolean replicated) {
+        return setReplicated(replicated, true);
+    }
 
-        if (!replicated || !config.isEnableReplicatedSubscriptions()) {
+    protected boolean setReplicated(Boolean replicated, boolean isPersistent) {
+        ServiceConfiguration config = topic.getBrokerService().getPulsar().getConfig();
+        if (!config.isEnableReplicatedSubscriptions()) {
+            log.warn("[{}][{}] Failed set replicated subscription status to {}, please enable the "
+                    + "configuration enableReplicatedSubscriptions", topicName, subName, replicated);
+            return false;
+        }
+
+        if (replicated == null || !replicated) {
             this.replicatedSubscriptionSnapshotCache = null;
         } else if (this.replicatedSubscriptionSnapshotCache == null) {
             this.replicatedSubscriptionSnapshotCache = new ReplicatedSubscriptionSnapshotCache(subName,
@@ -210,20 +221,18 @@ public class PersistentSubscription extends AbstractSubscription {
                     getCursor().getManagedLedger()::getNumberOfEntries);
         }
 
-        if (this.cursor != null) {
-            if (replicated) {
-                if (!config.isEnableReplicatedSubscriptions()) {
-                    log.warn("[{}][{}] Failed set replicated subscription status to {}, please enable the "
-                            + "configuration enableReplicatedSubscriptions", topicName, subName, replicated);
-                } else {
-                    return this.cursor.putProperty(REPLICATED_SUBSCRIPTION_PROPERTY, 1L);
-                }
-            } else {
-                return this.cursor.removeProperty(REPLICATED_SUBSCRIPTION_PROPERTY);
-            }
+        if (!isPersistent) {
+            return true;
         }
 
-        return false;
+        if (this.cursor == null) {
+            return false;
+        }
+        if (replicated != null && replicated) {
+            return this.cursor.putProperty(REPLICATED_SUBSCRIPTION_PROPERTY, 1L);
+        } else {
+            return this.cursor.removeProperty(REPLICATED_SUBSCRIPTION_PROPERTY);
+        }
     }
 
     @Override
@@ -1653,9 +1662,4 @@ public class PersistentSubscription extends AbstractSubscription {
     }
 
     private static final Logger log = LoggerFactory.getLogger(PersistentSubscription.class);
-
-    @VisibleForTesting
-    public Boolean getReplicatedControlled() {
-        return replicatedControlled;
-    }
 }

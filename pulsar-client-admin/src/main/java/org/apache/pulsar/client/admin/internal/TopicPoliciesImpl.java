@@ -1323,6 +1323,67 @@ public class TopicPoliciesImpl extends BaseResource implements TopicPolicies {
         return asyncDeleteRequest(path);
     }
 
+    @Override
+    public String getResourceGroup(String topic, boolean applied) throws PulsarAdminException {
+        return sync(() -> getResourceGroupAsync(topic, applied));
+    }
+
+    @Override
+    public CompletableFuture<String> getResourceGroupAsync(String topic, boolean applied) {
+        TopicName tn = validateTopic(topic);
+        WebTarget path = topicPath(tn, "resourceGroup");
+        path = path.queryParam("applied", applied);
+        return asyncGetRequest(path, String.class);
+    }
+
+    @Override
+    public void setResourceGroup(String topic, String resourceGroupName) throws PulsarAdminException {
+        sync(() -> setResourceGroupAsync(topic, resourceGroupName));
+    }
+
+    @Override
+    public CompletableFuture<Void> setResourceGroupAsync(String topic, String resourceGroupName) {
+        TopicName tn = validateTopic(topic);
+        WebTarget path = topicPath(tn, "resourceGroup");
+        return asyncPostRequest(path, Entity.entity(resourceGroupName, MediaType.APPLICATION_JSON_TYPE));
+    }
+
+    @Override
+    public void removeResourceGroup(String topic) throws PulsarAdminException {
+        sync(() -> removeResourceGroupAsync(topic));
+    }
+
+    @Override
+    public CompletableFuture<Void> removeResourceGroupAsync(String topic) {
+        return setResourceGroupAsync(topic, null);
+    }
+
+    @Override
+    public void setReplicateSubscriptionState(String topic, Boolean enabled) throws PulsarAdminException {
+        sync(() -> setReplicateSubscriptionStateAsync(topic, enabled));
+    }
+
+    @Override
+    public CompletableFuture<Void> setReplicateSubscriptionStateAsync(String topic, Boolean enabled) {
+        TopicName topicName = validateTopic(topic);
+        WebTarget path = topicPath(topicName, "replicateSubscriptionState");
+        return asyncPostRequest(path, Entity.entity(enabled, MediaType.APPLICATION_JSON));
+    }
+
+    @Override
+    public Boolean getReplicateSubscriptionState(String topic, boolean applied)
+            throws PulsarAdminException {
+        return sync(() -> getReplicateSubscriptionStateAsync(topic, applied));
+    }
+
+    @Override
+    public CompletableFuture<Boolean> getReplicateSubscriptionStateAsync(String topic, boolean applied) {
+        TopicName topicName = validateTopic(topic);
+        WebTarget path = topicPath(topicName, "replicateSubscriptionState");
+        path = path.queryParam("applied", applied);
+        return asyncGetRequest(path, Boolean.class);
+    }
+
     /*
      * returns topic name with encoded Local Name
      */

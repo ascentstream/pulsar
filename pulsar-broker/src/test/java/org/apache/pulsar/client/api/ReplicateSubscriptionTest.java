@@ -19,6 +19,7 @@
 package org.apache.pulsar.client.api;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.awaitility.Awaitility.await;
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertNotNull;
 import static org.testng.Assert.assertTrue;
@@ -35,6 +36,7 @@ import org.testng.annotations.BeforeClass;
 import org.testng.annotations.DataProvider;
 import org.testng.annotations.Test;
 
+@Test(groups = "broker-api")
 public class ReplicateSubscriptionTest extends ProducerConsumerBase {
 
     @BeforeClass
@@ -53,6 +55,9 @@ public class ReplicateSubscriptionTest extends ProducerConsumerBase {
     @Override
     protected void doInitConf() throws Exception {
         super.doInitConf();
+        conf.setTopicLevelPoliciesEnabled(true);
+        conf.setSystemTopicEnabled(true);
+        conf.setEnableReplicatedSubscriptions(true);
     }
 
     @DataProvider
@@ -87,10 +92,173 @@ public class ReplicateSubscriptionTest extends ProducerConsumerBase {
                     Topic topicRef = optionalTopic.get();
                     Subscription subscription = topicRef.getSubscription(subName);
                     assertNotNull(subscription);
-                    assertTrue(subscription instanceof PersistentSubscription);
-                    PersistentSubscription persistentSubscription = (PersistentSubscription) subscription;
-                    assertEquals(persistentSubscription.getReplicatedControlled(), replicateSubscriptionState);
+                    assertEquals(subscription.isReplicated(), replicateSubscriptionState != null
+                            && replicateSubscriptionState);
                     return true;
                 });
+    }
+
+    @DataProvider
+    public Object[][] replicateSubscriptionStateMultipleLevel() {
+        return new Object[][]{
+                // consumer level high priority.
+                {Boolean.TRUE, Boolean.TRUE, Boolean.TRUE, true},
+                {Boolean.TRUE, Boolean.TRUE, Boolean.TRUE, false},
+                {Boolean.TRUE, Boolean.FALSE, Boolean.FALSE, true},
+                {Boolean.TRUE, Boolean.FALSE, Boolean.FALSE, false},
+                {Boolean.FALSE, Boolean.TRUE, Boolean.TRUE, true},
+                {Boolean.FALSE, Boolean.TRUE, Boolean.TRUE, false},
+
+                // namespace level high priority
+                {null, Boolean.TRUE, null, true},
+                {null, Boolean.TRUE, null, false},
+                {null, Boolean.FALSE, null, true},
+                {null, Boolean.FALSE, null, false},
+
+                // topic level high priority.
+                {null, Boolean.TRUE, Boolean.TRUE, true},
+                {null, Boolean.TRUE, Boolean.TRUE, false},
+                {null, Boolean.TRUE, Boolean.FALSE, true},
+                {null, Boolean.TRUE, Boolean.FALSE, false},
+                {null, Boolean.FALSE, Boolean.TRUE, true},
+                {null, Boolean.FALSE, Boolean.TRUE, false},
+
+                // All higher levels are null.
+                {null, null, null, true},
+                {null, null, null, false}
+        };
+    }
+
+    /**
+     * The priority order is as follows (from high to low):
+     * 1. Consumer/Subscription level
+     * 2. Topic level
+     * 3. Namespace level
+     *
+     * If the Consumer/Subscription level is set to false, it should be excluded from the evaluation process.
+     */
+    @Test(dataProvider = "replicateSubscriptionStateMultipleLevel")
+    public void testReplicateSubscriptionStatePriority(
+            Boolean consumerReplicateSubscriptionState,
+            Boolean replicateSubscriptionEnabledOnNamespaceLevel,
+            Boolean replicateSubscriptionEnabledOnTopicLevel,
+            boolean replicatedSubscriptionStatus
+    ) throws Exception {
+        String nsName = "my-property/my-ns-" + System.nanoTime();
+        admin.namespaces().createNamespace(nsName);
+        String topic = "persistent://" + nsName + "/" + System.nanoTime();
+        String subName = "sub";
+        @Cleanup
+        Consumer<String> ignored = null;
+        ConsumerBuilder<String> consumerBuilder = pulsarClient.newConsumer(Schema.STRING)
+                .topic(topic)
+                .subscriptionName(subName);
+        if (consumerReplicateSubscriptionState != null) {
+            consumerBuilder.replicateSubscriptionState(consumerReplicateSubscriptionState);
+        }
+        ignored = consumerBuilder.subscribe();
+
+        CompletableFuture<Optional<Topic>> topicIfExists = pulsar.getBrokerService().getTopicIfExists(topic);
+        Optional<Topic> topicOptional = topicIfExists.get();
+        assertTrue(topicOptional.isPresent());
+        Topic topicRef = topicOptional.get();
+        Subscription subscription = topicRef.getSubscription(subName);
+        assertNotNull(subscription);
+
+        assertEquals(subscription.isReplicated(),
+                consumerReplicateSubscriptionState != null && consumerReplicateSubscriptionState);
+
+        // Verify the namespace level.
+        admin.namespaces().setReplicateSubscriptionState(nsName, replicateSubscriptionEnabledOnNamespaceLevel);
+        await().untilAsserted(() -> {
+            assertEquals(admin.namespaces().getReplicateSubscriptionState(nsName),
+                    replicateSubscriptionEnabledOnNamespaceLevel);
+            assertEquals(admin.topicPolicies().getReplicateSubscriptionState(topic, true),
+                    replicateSubscriptionEnabledOnNamespaceLevel);
+            if (Boolean.TRUE.equals(replicateSubscriptionEnabledOnNamespaceLevel)) {
+                assertTrue(subscription.isReplicated());
+            } else {
+                // Using subscription policy.
+                assertEquals(subscription.isReplicated(),
+                        consumerReplicateSubscriptionState != null && consumerReplicateSubscriptionState);
+            }
+        });
+
+        // Verify the topic level.
+        admin.topicPolicies().setReplicateSubscriptionState(topic, replicateSubscriptionEnabledOnTopicLevel);
+        await().untilAsserted(() -> {
+            assertEquals(admin.topicPolicies().getReplicateSubscriptionState(topic, false),
+                    replicateSubscriptionEnabledOnTopicLevel);
+            Boolean replicateSubscriptionState = admin.topicPolicies().getReplicateSubscriptionState(topic, true);
+            assertTrue(replicateSubscriptionState == replicateSubscriptionEnabledOnTopicLevel
+                    || replicateSubscriptionState == replicateSubscriptionEnabledOnNamespaceLevel);
+            if (consumerReplicateSubscriptionState == null || !consumerReplicateSubscriptionState) {
+                if (replicateSubscriptionEnabledOnTopicLevel != null) {
+                    // Using topic policy.
+                    assertEquals(subscription.isReplicated(),
+                            replicateSubscriptionEnabledOnTopicLevel.booleanValue());
+                } else {
+                    // Using namespace policy.
+                    assertEquals(subscription.isReplicated(),
+                            replicateSubscriptionEnabledOnNamespaceLevel != null
+                                    && replicateSubscriptionEnabledOnNamespaceLevel);
+                }
+            } else {
+                // Using subscription policy.
+                assertTrue(subscription.isReplicated());
+            }
+        });
+
+        // Verify the subscription level takes priority over the topic and namespace level.
+        admin.topics().setReplicatedSubscriptionStatus(topic, subName, replicatedSubscriptionStatus);
+        Boolean finalReplicateSubscriptionState;
+
+        if (Boolean.TRUE.equals(replicatedSubscriptionStatus)) {
+            finalReplicateSubscriptionState = true;
+        } else if (replicateSubscriptionEnabledOnTopicLevel != null) {
+            finalReplicateSubscriptionState = replicateSubscriptionEnabledOnTopicLevel;
+        } else {
+            finalReplicateSubscriptionState = replicateSubscriptionEnabledOnNamespaceLevel;
+        }
+
+        await().untilAsserted(() -> {
+            assertEquals(subscription.isReplicated(),
+                    finalReplicateSubscriptionState != null && finalReplicateSubscriptionState);
+            assertTrue(subscription instanceof PersistentSubscription);
+            PersistentSubscription persistentSubscription = (PersistentSubscription) subscription;
+            boolean cursorFromReplicatedSubscription =
+                    PersistentSubscription.isCursorFromReplicatedSubscription(persistentSubscription.getCursor());
+            assertEquals(cursorFromReplicatedSubscription, replicatedSubscriptionStatus);
+        });
+    }
+
+    @Test(dataProvider = "replicateSubscriptionState")
+    public void testReplicateSubscriptionStateAfterUnload(Boolean replicateSubscriptionState) throws Exception {
+        String topic = "persistent://my-property/my-ns/" + System.nanoTime();
+        String subName = "sub-" + System.nanoTime();
+        ConsumerBuilder<String> consumerBuilder = pulsarClient.newConsumer(Schema.STRING)
+                .topic(topic)
+                .subscriptionName(subName);
+        if (replicateSubscriptionState != null) {
+            consumerBuilder.replicateSubscriptionState(replicateSubscriptionState);
+        }
+        @Cleanup
+        Consumer<String> ignored = consumerBuilder.subscribe();
+
+        admin.topics().unload(topic);
+        await().untilAsserted(() -> {
+            CompletableFuture<Optional<Topic>> topicIfExists = pulsar.getBrokerService().getTopicIfExists(topic);
+            assertThat(topicIfExists)
+                    .succeedsWithin(1, TimeUnit.SECONDS)
+                    .matches(optionalTopic -> {
+                        assertTrue(optionalTopic.isPresent());
+                        Topic topicRef = optionalTopic.get();
+                        Subscription subscription = topicRef.getSubscription(subName);
+                        assertNotNull(subscription);
+                        assertEquals(subscription.isReplicated(), replicateSubscriptionState != null
+                                && replicateSubscriptionState);
+                        return true;
+                    });
+        });
     }
 }
