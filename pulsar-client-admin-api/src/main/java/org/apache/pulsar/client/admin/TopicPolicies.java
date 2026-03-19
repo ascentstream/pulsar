@@ -1950,4 +1950,109 @@ public interface TopicPolicies {
      * Delete topic policies, it works even if the topic has been deleted.
      */
     void deleteTopicPolicies(String topic) throws PulsarAdminException;
+
+    /**
+     * Get the ResourceGroup for a topic.
+     *
+     * @param topic Topic name
+     * @param applied True gets namespace level configuration if ResourceGroup does not exist on the topic.
+     *                False gets topic level configuration.
+     * @return ResourceGroup
+     * @throws NotAuthorizedException Don't have admin permission
+     * @throws NotFoundException Topic does not exist
+     * @throws PulsarAdminException Unexpected error
+     */
+    String getResourceGroup(String topic, boolean applied) throws PulsarAdminException;
+
+    /**
+     * Get the ResourceGroup for a topic asynchronously.
+     *
+     * @param topic Topic name
+     */
+    CompletableFuture<String> getResourceGroupAsync(String topic, boolean applied);
+
+    /**
+     * Set the ResourceGroup for a topic.
+     *
+     * @param topic Topic name
+     * @param resourceGroupName ResourceGroup name
+     * @throws NotAuthorizedException Don't have admin permission
+     * @throws NotFoundException Topic does not exist
+     * @throws PulsarAdminException Unexpected error
+     */
+    void setResourceGroup(String topic, String resourceGroupName) throws PulsarAdminException;
+
+    /**
+     * Set the ResourceGroup for a topic.
+     *
+     * @param topic Topic name
+     * @param resourceGroupName ResourceGroup name
+     */
+    CompletableFuture<Void> setResourceGroupAsync(String topic, String resourceGroupName);
+
+    /**
+     * Remove the ResourceGroup on a topic.
+     *
+     * @param topic Topic name
+     * @throws NotAuthorizedException Don't have admin permission
+     * @throws NotFoundException Topic does not exist
+     * @throws PulsarAdminException Unexpected error
+     */
+    void removeResourceGroup(String topic) throws PulsarAdminException;
+
+    /**
+     * Remove the ResourceGroup on a topic asynchronously.
+     *
+     * @param topic Topic name
+     */
+    CompletableFuture<Void> removeResourceGroupAsync(String topic);
+
+    /**
+     * Enable or disable subscription replication on a topic.
+     *
+     * @param topic   Topic name
+     * @param enabled The replication status to set:
+     *                <ul>
+     *                  <li><code>true</code>: Enable subscription replication.</li>
+     *                  <li><code>false</code>: Disable subscription replication.</li>
+     *                  <li><code>null</code>: Remove config.</li>
+     *                </ul>
+     */
+    void setReplicateSubscriptionState(String topic, Boolean enabled) throws PulsarAdminException;
+
+    /**
+     * Enable or disable subscription replication on a topic asynchronously.
+     *
+     * @param topic Topic name
+     * @param enabled The replication status to set:
+     *                <ul>
+     *                  <li><code>true</code>: Enable subscription replication.</li>
+     *                  <li><code>false</code>: Disable subscription replication.</li>
+     *                  <li><code>null</code>: Remove config.</li>
+     *                </ul>
+     */
+    CompletableFuture<Void> setReplicateSubscriptionStateAsync(String topic, Boolean enabled);
+
+    /**
+     * Get the enabled status of subscription replication on a topic.
+     *
+     * @param topic Topic name
+     * @return <code>true</code> Subscription replication is enabled.
+     * <code>false</code> Subscription replication is disabled.
+     * <code>null</code> Subscription replication is not configured.
+     */
+    Boolean getReplicateSubscriptionState(String topic, boolean applied) throws PulsarAdminException;
+
+    /**
+     * Get the enabled status of subscription replication on a topic.
+     *
+     * @param topic Topic name
+     * @return A {@link CompletableFuture} that will complete with the replication status:
+     * <ul>
+     *   <li><code>true</code>: Subscription replication is enabled.</li>
+     *   <li><code>false</code>: Subscription replication is disabled.</li>
+     *   <li><code>null</code>: Subscription replication is not configured.</li>
+     * </ul>
+     */
+    CompletableFuture<Boolean> getReplicateSubscriptionStateAsync(String topic, boolean applied);
 }

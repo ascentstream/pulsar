@@ -251,6 +251,7 @@ public abstract class AbstractTopic implements Topic, TopicPolicyListener {
             topicPolicies.getSchemaCompatibilityStrategy()
                     .updateTopicValue(formatSchemaCompatibilityStrategy(data.getSchemaCompatibilityStrategy()),
                             isGlobalPolicies);
+            topicPolicies.getReplicateSubscriptionState().updateTopicValue(data.getReplicateSubscriptionState());
         }
         topicPolicies.getRetentionPolicies().updateTopicValue(data.getRetentionPolicies(), isGlobalPolicies);
         topicPolicies.getDispatcherPauseOnAckStatePersistentEnabled()
@@ -314,6 +315,8 @@ public abstract class AbstractTopic implements Topic, TopicPolicyListener {
         if (!isSystemTopic()) {
             updateNamespacePublishRate(namespacePolicies, brokerService.getPulsar().getConfig().getClusterName());
             updateNamespaceDispatchRate(namespacePolicies, brokerService.getPulsar().getConfig().getClusterName());
+            topicPolicies.getReplicateSubscriptionState()
+                    .updateNamespaceValue(namespacePolicies.replicate_subscription_state);
         }
         topicPolicies.getRetentionPolicies().updateNamespaceValue(namespacePolicies.retention_policies);
         topicPolicies.getCompactionThreshold().updateNamespaceValue(namespacePolicies.compaction_threshold);

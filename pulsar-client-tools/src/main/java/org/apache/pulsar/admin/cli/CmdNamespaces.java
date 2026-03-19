@@ -2665,6 +2665,46 @@ public class CmdNamespaces extends CmdBase {
         }
     }
 
+    @Command(description = "Set replicate subscription state from a namespace")
+    private class SetReplicateSubscriptionState extends CliCommand {
+        @Parameters(description = "tenant/namespace", arity = "1")
+        private String namespaceName;
+
+        @Option(names = "--enabled", arity = "1", required = true, description = "Whether to replicate subscription"
+                + " state")
+        private boolean enabled = true;
+
+        @Override
+        void run() throws PulsarAdminException {
+            String namespace = validateNamespace(namespaceName);
+            getAdmin().namespaces().setReplicateSubscriptionState(namespace, enabled);
+        }
+    }
+
+    @Command(description = "Get replicate subscription state from a namespace")
+    private class GetReplicateSubscriptionState extends CliCommand {
+        @Parameters(description = "tenant/namespace", arity = "1")
+        private String namespaceName;
+
+        @Override
+        void run() throws PulsarAdminException {
+            String namespace = validateNamespace(namespaceName);
+            print(getAdmin().namespaces().getReplicateSubscriptionState(namespace));
+        }
+    }
+
+    @Command(description = "Remove replicate subscription state from a namespace")
+    private class RemoveReplicateSubscriptionState extends CliCommand {
+        @Parameters(description = "tenant/namespace", arity = "1")
+        private String namespaceName;
+
+        @Override
+        void run() throws PulsarAdminException {
+            String namespace = validateNamespace(namespaceName);
+            getAdmin().namespaces().setReplicateSubscriptionState(namespace, null);
+        }
+    }
+
     public CmdNamespaces(Supplier<PulsarAdmin> admin) {
         super("namespaces", admin);
         addCommand("list", new GetNamespacesPerProperty());
@@ -2861,5 +2901,10 @@ public class CmdNamespaces extends CmdBase {
                 new GetDispatcherPauseOnAckStatePersistent());
         addCommand("remove-dispatcher-pause-on-ack-state-persistent",
                 new RemoveDispatcherPauseOnAckStatePersistent());
+
+
+        addCommand("set-replicate-subscription-state", new SetReplicateSubscriptionState());
+        addCommand("get-replicate-subscription-state", new GetReplicateSubscriptionState());
+        addCommand("remove-replicate-subscription-state", new RemoveReplicateSubscriptionState());
     }
 }

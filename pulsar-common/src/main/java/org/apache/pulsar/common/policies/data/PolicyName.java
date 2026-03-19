@@ -58,4 +58,6 @@ public enum PolicyName {
     // cluster policies
     CLUSTER_MIGRATION,
     NAMESPACE_ISOLATION,
+
+    REPLICATED_SUBSCRIPTION,
 }

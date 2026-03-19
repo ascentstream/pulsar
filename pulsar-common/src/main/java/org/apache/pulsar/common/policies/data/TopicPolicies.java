@@ -89,6 +89,8 @@ public class TopicPolicies implements Cloneable {
 
     private Boolean schemaValidationEnforced;
 
+    private Boolean replicateSubscriptionState;
+
     @SneakyThrows
     @Override
     public TopicPolicies clone() {
