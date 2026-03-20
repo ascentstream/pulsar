@@ -98,7 +98,7 @@ jobs:
     steps:
       - name: Cancel scheduled jobs in forks by default
         if: ${{ github.repository != 'apache/pulsar' && github.event_name == 'schedule' }}
-        uses: actions/github-script@v9
+        uses: actions/github-script@v6
         with:
           script: |
             await github.rest.actions.cancelWorkflowRun({owner: context.repo.owner, repo: context.repo.repo, run_id: context.runId});
@@ -117,7 +117,7 @@ jobs:
 
       - name: checkout
         if: ${{ github.event_name == 'pull_request' }}
-        uses: actions/checkout@v7
+        uses: actions/checkout@v4
 
       - name: Detect changed files
         if: ${{ github.event_name == 'pull_request' }}
@@ -153,6 +153,14 @@ jobs:
           github.event_name == 'workflow_dispatch' && github.event.inputs.netty_leak_detection || 'report'
           }}" >> $GITHUB_OUTPUT
 
+      - name: Check if the PR has been approved for testing
+        if: ${{ steps.check_changes.outputs.docs_only != 'true' && github.repository == 'apache/pulsar' && github.event_name == 'pull_request' }}
+        env:
+          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          build/pulsar_ci_tool.sh check_ready_to_test
+
   build-and-license-check:
     needs: preconditions
     name: Build and License check
@@ -165,7 +173,7 @@ jobs:
     if: ${{ needs.preconditions.outputs.docs_only != 'true' }}
     steps:
       - name: checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@v4
 
       - name: Tune Runner VM
         uses: ./.github/actions/tune-runner-vm
@@ -179,18 +187,18 @@ jobs:
           limit-access-to-actor: true
 
       - name: Cache local Maven repository
-        uses: actions/cache@v6
+        uses: actions/cache@v4
         timeout-minutes: 5
         with:
           path: |
             ~/.m2/repository/*/*/*
-            !~/.m2/repository/com/ascentstream
+            !~/.m2/repository/org/apache/pulsar
           key: ${{ runner.os }}-m2-dependencies-core-modules-${{ hashFiles('**/pom.xml') }}
           restore-keys: |
             ${{ runner.os }}-m2-dependencies-core-modules-
 
       - name: Set up JDK ${{ env.CI_JDK_MAJOR_VERSION }}
-        uses: actions/setup-java@v6
+        uses: actions/setup-java@v4
         with:
           distribution: ${{ env.JDK_DISTRIBUTION }}
           java-version: ${{ env.CI_JDK_MAJOR_VERSION }}
@@ -215,8 +223,8 @@ jobs:
         run: |
           cd $HOME
           $GITHUB_WORKSPACE/build/pulsar_ci_tool.sh store_tar_to_github_actions_artifacts pulsar-maven-repository-binaries \
-          tar --exclude '.m2/repository/com/ascentstream/pulsar/pulsar-*-distribution' \
-              -I zstd -cf - .m2/repository/com/ascentstream
+          tar --exclude '.m2/repository/org/apache/pulsar/pulsar-*-distribution' \
+              -I zstd -cf - .m2/repository/org/apache/pulsar
           cd $GITHUB_WORKSPACE
           $GITHUB_WORKSPACE/build/pulsar_ci_tool.sh store_tar_to_github_actions_artifacts pulsar-server-distribution \
           tar -I zstd -cf - distribution/server/target/apache-pulsar-*-bin.tar.gz
@@ -284,7 +292,7 @@ jobs:
 
     steps:
       - name: checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@v4
 
       - name: Tune Runner VM
         uses: ./.github/actions/tune-runner-vm
@@ -302,18 +310,18 @@ jobs:
           limit-access-to-actor: true
 
       - name: Cache Maven dependencies
-        uses: actions/cache@v6
+        uses: actions/cache@v4
         timeout-minutes: 5
         with:
           path: |
             ~/.m2/repository/*/*/*
-            !~/.m2/repository/com/ascentstream
+            !~/.m2/repository/org/apache/pulsar
           key: ${{ runner.os }}-m2-dependencies-core-modules-${{ hashFiles('**/pom.xml') }}
           restore-keys: |
             ${{ runner.os }}-m2-dependencies-core-modules-
 
       - name: Set up JDK ${{ matrix.jdk || env.CI_JDK_MAJOR_VERSION }}
-        uses: actions/setup-java@v6
+        uses: actions/setup-java@v4
         with:
           distribution: ${{ env.JDK_DISTRIBUTION }}
           java-version: ${{ matrix.jdk || env.CI_JDK_MAJOR_VERSION }}
@@ -367,7 +375,7 @@ jobs:
         run: $GITHUB_WORKSPACE/build/pulsar_ci_tool.sh report_netty_leaks
 
       - name: Upload Surefire reports
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v4
         if: ${{ !success() || env.TRACE_TEST_RESOURCE_CLEANUP != 'off' }}
         with:
           name: Unit-${{ matrix.group }}-surefire-reports
@@ -375,7 +383,7 @@ jobs:
           retention-days: 7
 
       - name: Upload possible heap dump, core dump or crash files
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v4
         if: ${{ always() }}
         with:
           name: Unit-${{ matrix.group }}-dumps
@@ -409,7 +417,7 @@ jobs:
 
     steps:
       - name: checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@v4
 
       - name: Tune Runner VM
         uses: ./.github/actions/tune-runner-vm
@@ -423,18 +431,18 @@ jobs:
           limit-access-to-actor: true
 
       - name: Cache Maven dependencies
-        uses: actions/cache@v6
+        uses: actions/cache@v4
         timeout-minutes: 5
         with:
           path: |
             ~/.m2/repository/*/*/*
-            !~/.m2/repository/com/ascentstream
+            !~/.m2/repository/org/apache/pulsar
           key: ${{ runner.os }}-m2-dependencies-core-modules-${{ hashFiles('**/pom.xml') }}
           restore-keys: |
             ${{ runner.os }}-m2-dependencies-core-modules-
 
       - name: Set up JDK ${{ matrix.jdk || env.CI_JDK_MAJOR_VERSION }}
-        uses: actions/setup-java@v6
+        uses: actions/setup-java@v4
         with:
           distribution: ${{ env.JDK_DISTRIBUTION }}
           java-version: ${{ matrix.jdk || env.CI_JDK_MAJOR_VERSION }}
@@ -456,7 +464,7 @@ jobs:
           zip -qr jacoco_test_coverage_report_unittests.zip jacoco_test_coverage_report || true
 
       - name: Upload Jacoco report files to build artifacts
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v4
         with:
           name: Jacoco-coverage-report-unittests
           path: target/jacoco_test_coverage_report_unittests.zip
@@ -498,7 +506,7 @@ jobs:
       IMAGE_JDK_MAJOR_VERSION: ${{ needs.preconditions.outputs.jdk_major_version }}
     steps:
       - name: checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@v4
 
       - name: Tune Runner VM
         uses: ./.github/actions/tune-runner-vm
@@ -512,18 +520,18 @@ jobs:
           limit-access-to-actor: true
 
       - name: Cache Maven dependencies
-        uses: actions/cache@v6
+        uses: actions/cache@v4
         timeout-minutes: 5
         with:
           path: |
             ~/.m2/repository/*/*/*
-            !~/.m2/repository/com/ascentstream
+            !~/.m2/repository/org/apache/pulsar
           key: ${{ runner.os }}-m2-dependencies-core-modules-${{ hashFiles('**/pom.xml') }}
           restore-keys: |
             ${{ runner.os }}-m2-dependencies-core-modules-
 
       - name: Set up JDK ${{ env.CI_JDK_MAJOR_VERSION }}
-        uses: actions/setup-java@v6
+        uses: actions/setup-java@v4
         with:
           distribution: ${{ env.JDK_DISTRIBUTION }}
           java-version: ${{ env.CI_JDK_MAJOR_VERSION }}
@@ -537,7 +545,7 @@ jobs:
           $GITHUB_WORKSPACE/build/pulsar_ci_tool.sh restore_tar_from_github_actions_artifacts pulsar-maven-repository-binaries
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4.1.0
+        uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392
         with:
           platforms: arm64
 
@@ -642,7 +650,7 @@ jobs:
 
     steps:
       - name: checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@v4
 
       - name: Tune Runner VM
         uses: ./.github/actions/tune-runner-vm
@@ -656,18 +664,18 @@ jobs:
           limit-access-to-actor: true
 
       - name: Cache Maven dependencies
-        uses: actions/cache@v6
+        uses: actions/cache@v4
         timeout-minutes: 5
         with:
           path: |
             ~/.m2/repository/*/*/*
-            !~/.m2/repository/com/ascentstream
+            !~/.m2/repository/org/apache/pulsar
           key: ${{ runner.os }}-m2-dependencies-core-modules-${{ hashFiles('**/pom.xml') }}
           restore-keys: |
             ${{ runner.os }}-m2-dependencies-core-modules-
 
       - name: Set up JDK ${{ env.CI_JDK_MAJOR_VERSION }}
-        uses: actions/setup-java@v6
+        uses: actions/setup-java@v4
         with:
           distribution: ${{ env.JDK_DISTRIBUTION }}
           java-version: ${{ env.CI_JDK_MAJOR_VERSION }}
@@ -691,7 +699,7 @@ jobs:
           ${{ matrix.setup }}
 
       - name: Set up runtime JDK ${{ matrix.runtime_jdk }}
-        uses: actions/setup-java@v6
+        uses: actions/setup-java@v4
         if: ${{ matrix.runtime_jdk }}
         with:
           distribution: ${{ env.JDK_DISTRIBUTION }}
@@ -728,7 +736,7 @@ jobs:
         run: $GITHUB_WORKSPACE/build/pulsar_ci_tool.sh report_netty_leaks
 
       - name: Upload Surefire reports
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v4
         if: ${{ !success() }}
         with:
           name: Integration-${{ matrix.upload_name || matrix.group }}-surefire-reports
@@ -736,7 +744,7 @@ jobs:
           retention-days: 7
 
       - name: Upload possible heap dump, core dump or crash files
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v4
         if: ${{ always() }}
         with:
           name: Integration-${{ matrix.upload_name || matrix.group }}-dumps
@@ -749,7 +757,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Upload container logs
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v4
         if: ${{ !success() }}
         continue-on-error: true
         with:
@@ -776,7 +784,7 @@ jobs:
       CI_JDK_MAJOR_VERSION: ${{ needs.preconditions.outputs.jdk_major_version }}
     steps:
       - name: checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@v4
 
       - name: Tune Runner VM
         uses: ./.github/actions/tune-runner-vm
@@ -790,18 +798,18 @@ jobs:
           limit-access-to-actor: true
 
       - name: Cache Maven dependencies
-        uses: actions/cache@v6
+        uses: actions/cache@v4
         timeout-minutes: 5
         with:
           path: |
             ~/.m2/repository/*/*/*
-            !~/.m2/repository/com/ascentstream
+            !~/.m2/repository/org/apache/pulsar
           key: ${{ runner.os }}-m2-dependencies-core-modules-${{ hashFiles('**/pom.xml') }}
           restore-keys: |
             ${{ runner.os }}-m2-dependencies-core-modules-
 
       - name: Set up JDK ${{ env.CI_JDK_MAJOR_VERSION }}
-        uses: actions/setup-java@v6
+        uses: actions/setup-java@v4
         with:
           distribution: ${{ env.JDK_DISTRIBUTION }}
           java-version: ${{ env.CI_JDK_MAJOR_VERSION }}
@@ -828,7 +836,7 @@ jobs:
           zip -qr jacoco_test_coverage_report_inttests.zip jacoco_test_coverage_report jacoco_inttest_coverage_report || true
 
       - name: Upload Jacoco report files to build artifacts
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v4
         with:
           name: Jacoco-coverage-report-inttests
           path: target/jacoco_test_coverage_report_inttests.zip
@@ -864,7 +872,7 @@ jobs:
     if: ${{ needs.preconditions.outputs.docs_only != 'true' }}
     steps:
       - name: checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@v4
 
       - name: Tune Runner VM
         uses: ./.github/actions/tune-runner-vm
@@ -888,7 +896,7 @@ jobs:
       IMAGE_JDK_MAJOR_VERSION: ${{ needs.preconditions.outputs.jdk_major_version }}
     steps:
       - name: checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@v4
 
       - name: Tune Runner VM
         uses: ./.github/actions/tune-runner-vm
@@ -907,19 +915,19 @@ jobs:
           mode: full
 
       - name: Cache local Maven repository
-        uses: actions/cache@v6
+        uses: actions/cache@v4
         timeout-minutes: 5
         with:
           path: |
             ~/.m2/repository/*/*/*
-            !~/.m2/repository/com/ascentstream
+            !~/.m2/repository/org/apache/pulsar
           key: ${{ runner.os }}-m2-dependencies-all-${{ hashFiles('**/pom.xml') }}
           restore-keys: |
             ${{ runner.os }}-m2-dependencies-core-modules-${{ hashFiles('**/pom.xml') }}
             ${{ runner.os }}-m2-dependencies-core-modules-
 
       - name: Set up JDK ${{ env.CI_JDK_MAJOR_VERSION }}
-        uses: actions/setup-java@v6
+        uses: actions/setup-java@v4
         with:
           distribution: ${{ env.JDK_DISTRIBUTION }}
           java-version: ${{ env.CI_JDK_MAJOR_VERSION }}
@@ -944,26 +952,25 @@ jobs:
       - name: Check binary licenses
         run: src/check-binary-license.sh ./distribution/server/target/apache-pulsar-*-bin.tar.gz && src/check-binary-license.sh ./distribution/shell/target/apache-pulsar-shell-*-bin.tar.gz
 
-      - name: Run Trivy container scan
-        id: trivy_scan
-        uses: lhotari/sandboxed-trivy-action@f01374b6cc3bf7264ab238293e94f6db7ada6dd0
-        if: ${{ github.repository == 'apache/pulsar' && github.event_name != 'pull_request' }}
-        continue-on-error: true
-        with:
-          scan-type: 'image'
-          scan-ref: "apachepulsar/pulsar:latest"
-          scanners: vuln
-          severity: CRITICAL,HIGH,MEDIUM,LOW
-          limit-severities-for-sarif: true
-          format: 'sarif'
-          output: 'trivy-results.sarif'
-
-      - name: Upload Trivy scan results to GitHub Security tab
-        uses: github/codeql-action/upload-sarif@v4
-        if: ${{ steps.trivy_scan.outcome == 'success' && github.repository == 'apache/pulsar' && github.event_name != 'pull_request' }}
-        continue-on-error: true
-        with:
-          sarif_file: 'trivy-results.sarif'
+#      - name: Run Trivy container scan
+#        id: trivy_scan
+#        uses: aquasecurity/trivy-action@v0.35.0
+#        if: ${{ github.repository == 'apache/pulsar' && github.event_name != 'pull_request' }}
+#        continue-on-error: true
+#        with:
+#          image-ref: "apachepulsar/pulsar:latest"
+#          scanners: vuln
+#          severity: CRITICAL,HIGH,MEDIUM,LOW
+#          limit-severities-for-sarif: true
+#          format: 'sarif'
+#          output: 'trivy-results.sarif'
+#
+#      - name: Upload Trivy scan results to GitHub Security tab
+#        uses: github/codeql-action/upload-sarif@v3
+#        if: ${{ steps.trivy_scan.outcome == 'success' && github.repository == 'apache/pulsar' && github.event_name != 'pull_request' }}
+#        continue-on-error: true
+#        with:
+#          sarif_file: 'trivy-results.sarif'
 
       - name: Clean up disk space
         run: |
@@ -1042,7 +1049,7 @@ jobs:
 
     steps:
       - name: checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@v4
 
       - name: Tune Runner VM
         uses: ./.github/actions/tune-runner-vm
@@ -1060,19 +1067,19 @@ jobs:
           limit-access-to-actor: true
 
       - name: Cache local Maven repository
-        uses: actions/cache@v6
+        uses: actions/cache@v4
         timeout-minutes: 5
         with:
           path: |
             ~/.m2/repository/*/*/*
-            !~/.m2/repository/com/ascentstream
+            !~/.m2/repository/org/apache/pulsar
           key: ${{ runner.os }}-m2-dependencies-all-${{ hashFiles('**/pom.xml') }}
           restore-keys: |
             ${{ runner.os }}-m2-dependencies-core-modules-${{ hashFiles('**/pom.xml') }}
             ${{ runner.os }}-m2-dependencies-core-modules-
 
       - name: Set up JDK ${{ env.CI_JDK_MAJOR_VERSION }}
-        uses: actions/setup-java@v6
+        uses: actions/setup-java@v4
         with:
           distribution: ${{ env.JDK_DISTRIBUTION }}
           java-version: ${{ env.CI_JDK_MAJOR_VERSION }}
@@ -1126,7 +1133,7 @@ jobs:
         run: $GITHUB_WORKSPACE/build/pulsar_ci_tool.sh report_netty_leaks
 
       - name: Upload container logs
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v4
         if: ${{ !success() }}
         continue-on-error: true
         with:
@@ -1135,7 +1142,7 @@ jobs:
           retention-days: 7
 
       - name: Upload Surefire reports
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v4
         if: ${{ !success() }}
         with:
           name: System-${{ matrix.name }}-surefire-reports
@@ -1143,7 +1150,7 @@ jobs:
           retention-days: 7
 
       - name: Upload possible heap dump, core dump or crash files
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v4
         if: ${{ always() }}
         with:
           name: System-${{ matrix.group }}-dumps
@@ -1175,7 +1182,7 @@ jobs:
 
     steps:
       - name: checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@v4
 
       - name: Tune Runner VM
         uses: ./.github/actions/tune-runner-vm
@@ -1189,19 +1196,19 @@ jobs:
           limit-access-to-actor: true
 
       - name: Cache local Maven repository
-        uses: actions/cache@v6
+        uses: actions/cache@v4
         timeout-minutes: 5
         with:
           path: |
             ~/.m2/repository/*/*/*
-            !~/.m2/repository/com/ascentstream
+            !~/.m2/repository/org/apache/pulsar
           key: ${{ runner.os }}-m2-dependencies-all-${{ hashFiles('**/pom.xml') }}
           restore-keys: |
             ${{ runner.os }}-m2-dependencies-core-modules-${{ hashFiles('**/pom.xml') }}
             ${{ runner.os }}-m2-dependencies-core-modules-
 
       - name: Set up JDK ${{ env.CI_JDK_MAJOR_VERSION }}
-        uses: actions/setup-java@v6
+        uses: actions/setup-java@v4
         with:
           distribution: ${{ env.JDK_DISTRIBUTION }}
           java-version: ${{ env.CI_JDK_MAJOR_VERSION }}
@@ -1227,7 +1234,7 @@ jobs:
           zip -qr jacoco_test_coverage_report_systests.zip jacoco_test_coverage_report jacoco_inttest_coverage_report || true
 
       - name: Upload Jacoco report files to build artifacts
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v4
         with:
           name: Jacoco-coverage-report-systests
           path: target/jacoco_test_coverage_report_systests.zip
@@ -1277,7 +1284,7 @@ jobs:
 
     steps:
       - name: checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@v4
 
       - name: Tune Runner VM
         uses: ./.github/actions/tune-runner-vm
@@ -1295,19 +1302,19 @@ jobs:
           limit-access-to-actor: true
 
       - name: Cache local Maven repository
-        uses: actions/cache@v6
+        uses: actions/cache@v4
         timeout-minutes: 5
         with:
           path: |
             ~/.m2/repository/*/*/*
-            !~/.m2/repository/com/ascentstream
+            !~/.m2/repository/org/apache/pulsar
           key: ${{ runner.os }}-m2-dependencies-all-${{ hashFiles('**/pom.xml') }}
           restore-keys: |
             ${{ runner.os }}-m2-dependencies-core-modules-${{ hashFiles('**/pom.xml') }}
             ${{ runner.os }}-m2-dependencies-core-modules-
 
       - name: Set up JDK ${{ env.CI_JDK_MAJOR_VERSION }}
-        uses: actions/setup-java@v6
+        uses: actions/setup-java@v4
         with:
           distribution: ${{ env.JDK_DISTRIBUTION }}
           java-version: ${{ env.CI_JDK_MAJOR_VERSION }}
@@ -1353,7 +1360,7 @@ jobs:
         run: $GITHUB_WORKSPACE/build/pulsar_ci_tool.sh report_netty_leaks
 
       - name: Upload container logs
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v4
         if: ${{ !success() }}
         continue-on-error: true
         with:
@@ -1362,7 +1369,7 @@ jobs:
           retention-days: 7
 
       - name: Upload Surefire reports
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v4
         if: ${{ !success() }}
         with:
           name: Flaky-System-${{ matrix.name }}-surefire-reports
@@ -1370,7 +1377,7 @@ jobs:
           retention-days: 7
 
       - name: Upload possible heap dump, core dump or crash files
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v4
         if: ${{ always() }}
         with:
           name: Flaky-System-${{ matrix.group }}-dumps
@@ -1403,7 +1410,7 @@ jobs:
     if: ${{ needs.preconditions.outputs.docs_only != 'true' }}
     steps:
       - name: checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@v4
 
       - name: Tune Runner VM
         uses: ./.github/actions/tune-runner-vm
@@ -1426,24 +1433,24 @@ jobs:
       CI_JDK_MAJOR_VERSION: ${{ needs.preconditions.outputs.jdk_major_version }}
     steps:
       - name: checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@v4
 
       - name: Tune Runner VM
         uses: ./.github/actions/tune-runner-vm
 
       - name: Cache Maven dependencies
-        uses: actions/cache@v6
+        uses: actions/cache@v4
         timeout-minutes: 5
         with:
           path: |
             ~/.m2/repository/*/*/*
-            !~/.m2/repository/com/ascentstream
+            !~/.m2/repository/org/apache/pulsar
           key: ${{ runner.os }}-m2-dependencies-all-${{ hashFiles('**/pom.xml') }}
           restore-keys: |
             ${{ runner.os }}-m2-dependencies-all-
 
       - name: Set up JDK ${{ env.CI_JDK_MAJOR_VERSION }}
-        uses: actions/setup-java@v6
+        uses: actions/setup-java@v4
         with:
           distribution: ${{ env.JDK_DISTRIBUTION }}
           java-version: ${{ env.CI_JDK_MAJOR_VERSION }}
@@ -1467,7 +1474,7 @@ jobs:
       CODEQL_LANGUAGE: java-kotlin
     steps:
       - name: checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@v4
 
       - name: Tune Runner VM
         uses: ./.github/actions/tune-runner-vm
@@ -1485,25 +1492,25 @@ jobs:
           limit-access-to-actor: true
 
       - name: Cache local Maven repository
-        uses: actions/cache@v6
+        uses: actions/cache@v4
         timeout-minutes: 5
         with:
           path: |
             ~/.m2/repository/*/*/*
-            !~/.m2/repository/com/ascentstream
+            !~/.m2/repository/org/apache/pulsar
           key: ${{ runner.os }}-m2-dependencies-all-${{ hashFiles('**/pom.xml') }}
           restore-keys: |
             ${{ runner.os }}-m2-dependencies-core-modules-${{ hashFiles('**/pom.xml') }}
             ${{ runner.os }}-m2-dependencies-core-modules-
 
       - name: Set up JDK ${{ env.CI_JDK_MAJOR_VERSION }}
-        uses: actions/setup-java@v6
+        uses: actions/setup-java@v4
         with:
           distribution: ${{ env.JDK_DISTRIBUTION }}
           java-version: ${{ env.CI_JDK_MAJOR_VERSION }}
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v4
+        uses: github/codeql-action/init@v3
         with:
           languages: ${{ env.CODEQL_LANGUAGE }}
 
@@ -1512,7 +1519,7 @@ jobs:
           mvn -B -ntp -Pcore-modules,-main install -DskipTests -Dlicense.skip=true -Drat.skip=true -Dcheckstyle.skip=true
 
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v4
+        uses: github/codeql-action/analyze@v3
         with:
           category: "/language:${{ env.CODEQL_LANGUAGE }}"
 
@@ -1528,7 +1535,7 @@ jobs:
       NIST_NVD_API_KEY: ${{ secrets.NIST_NVD_API_KEY }}
     steps:
       - name: checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@v4
 
       - name: Tune Runner VM
         uses: ./.github/actions/tune-runner-vm
@@ -1542,18 +1549,18 @@ jobs:
           limit-access-to-actor: true
 
       - name: Restore Maven repository cache
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@v4
         timeout-minutes: 5
         with:
           path: |
             ~/.m2/repository/*/*/*
-            !~/.m2/repository/com/ascentstream
+            !~/.m2/repository/org/apache/pulsar
           key: ${{ runner.os }}-m2-dependencies-core-modules-${{ hashFiles('**/pom.xml') }}
           restore-keys: |
             ${{ runner.os }}-m2-dependencies-core-modules-
 
       - name: Set up JDK ${{ matrix.jdk || env.CI_JDK_MAJOR_VERSION }}
-        uses: actions/setup-java@v6
+        uses: actions/setup-java@v4
         with:
           distribution: ${{ env.JDK_DISTRIBUTION }}
           java-version: ${{ matrix.jdk || env.CI_JDK_MAJOR_VERSION }}
@@ -1577,7 +1584,7 @@ jobs:
 
       - name: Restore OWASP Dependency Check data
         id: restore-owasp-dependency-check-data
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@v4
         timeout-minutes: 5
         with:
           path: ~/.m2/repository/org/owasp/dependency-check-data
@@ -1599,7 +1606,7 @@ jobs:
             -pl '!distribution/server,!distribution/io,!distribution/offloaders,!tiered-storage/file-system,!pulsar-io/flume,!pulsar-io/hbase,!pulsar-io/hdfs3,!pulsar-io/docs,!pulsar-io/jdbc/openmldb'
 
       - name: Upload report
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v4
         if: ${{ steps.restore-owasp-dependency-check-data.outputs.cache-matched-key && (cancelled() || failure()) }}
         continue-on-error: true
         with:
@@ -1657,7 +1664,7 @@ jobs:
 
       - name: checkout
         if: ${{ needs.preconditions.outputs.docs_only != 'true' }}
-        uses: actions/checkout@v7
+        uses: actions/checkout@v4
 
       - name: Tune Runner VM
         if: ${{ needs.preconditions.outputs.docs_only != 'true' }}
