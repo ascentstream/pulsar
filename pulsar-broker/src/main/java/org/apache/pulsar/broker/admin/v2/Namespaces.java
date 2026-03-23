@@ -1235,9 +1235,10 @@ public class Namespaces extends NamespacesBase {
             @ApiResponse(code = 403, message = "Don't have admin permission")})
     public void removeReplicatorDispatchRate(@Suspended AsyncResponse asyncResponse,
                                              @PathParam("tenant") String tenant,
-                                             @PathParam("namespace") String namespace) {
+                                             @PathParam("namespace") String namespace,
+                                             @QueryParam("cluster") String cluster) {
         validateNamespaceName(tenant, namespace);
-        internalRemoveReplicatorDispatchRate(asyncResponse);
+        internalRemoveReplicatorDispatchRate(asyncResponse, cluster);
     }
 
     @POST
@@ -1249,10 +1250,11 @@ public class Namespaces extends NamespacesBase {
     public void setReplicatorDispatchRate(@Suspended AsyncResponse asyncResponse,
                                           @PathParam("tenant") String tenant,
                                           @PathParam("namespace") String namespace,
+                                          @QueryParam("cluster") String cluster,
                                           @ApiParam(value =
             "Replicator dispatch rate for all topics of the specified namespace") DispatchRateImpl dispatchRate) {
         validateNamespaceName(tenant, namespace);
-        internalSetReplicatorDispatchRate(asyncResponse, dispatchRate);
+        internalSetReplicatorDispatchRate(asyncResponse, cluster, dispatchRate);
     }
 
     @GET
@@ -1264,9 +1266,10 @@ public class Namespaces extends NamespacesBase {
     @ApiResponse(code = 404, message = "Namespace does not exist") })
     public void getReplicatorDispatchRate(@Suspended final AsyncResponse asyncResponse,
                                           @PathParam("tenant") String tenant,
-                                          @PathParam("namespace") String namespace) {
+                                          @PathParam("namespace") String namespace,
+                                          @QueryParam("cluster") String cluster) {
         validateNamespaceName(tenant, namespace);
-        internalGetReplicatorDispatchRate(asyncResponse);
+        internalGetReplicatorDispatchRate(asyncResponse, cluster);
     }
 
     @GET

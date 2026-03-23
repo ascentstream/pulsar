@@ -31,6 +31,7 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.EnumSet;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -58,12 +59,15 @@ import org.apache.commons.lang3.tuple.Pair;
 import org.apache.pulsar.broker.PulsarService;
 import org.apache.pulsar.broker.ServiceConfiguration;
 import org.apache.pulsar.broker.resourcegroup.ResourceGroup;
+import org.apache.pulsar.broker.resourcegroup.ResourceGroupDispatchLimiter;
 import org.apache.pulsar.broker.resourcegroup.ResourceGroupPublishLimiter;
+import org.apache.pulsar.broker.resourcegroup.ResourceGroupService;
 import org.apache.pulsar.broker.service.BrokerServiceException.ConsumerBusyException;
 import org.apache.pulsar.broker.service.BrokerServiceException.ProducerBusyException;
 import org.apache.pulsar.broker.service.BrokerServiceException.ProducerFencedException;
 import org.apache.pulsar.broker.service.BrokerServiceException.TopicMigratedException;
 import org.apache.pulsar.broker.service.BrokerServiceException.TopicTerminatedException;
+import org.apache.pulsar.broker.service.persistent.DispatchRateLimiter;
 import org.apache.pulsar.broker.service.plugin.EntryFilter;
 import org.apache.pulsar.broker.service.schema.SchemaRegistryService;
 import org.apache.pulsar.broker.service.schema.exceptions.IncompatibleSchemaException;
@@ -79,6 +83,7 @@ import org.apache.pulsar.common.policies.data.EntryFilters;
 import org.apache.pulsar.common.policies.data.HierarchyTopicPolicies;
 import org.apache.pulsar.common.policies.data.InactiveTopicPolicies;
 import org.apache.pulsar.common.policies.data.Policies;
+import org.apache.pulsar.common.policies.data.PolicyHierarchyValue;
 import org.apache.pulsar.common.policies.data.PublishRate;
 import org.apache.pulsar.common.policies.data.RetentionPolicies;
 import org.apache.pulsar.common.policies.data.SchemaCompatibilityStrategy;
@@ -139,6 +144,11 @@ public abstract class AbstractTopic implements Topic, TopicPolicyListener {
 
     protected volatile PublishRateLimiter topicPublishRateLimiter;
     protected volatile ResourceGroupPublishLimiter resourceGroupPublishLimiter;
+
+    @Getter
+    protected volatile Optional<ResourceGroupDispatchLimiter> resourceGroupDispatchRateLimiter = Optional.empty();
+
+    protected boolean preciseTopicPublishRateLimitingEnable;
 
     @Getter
     protected boolean resourceGroupRateLimitingEnabled;
@@ -235,8 +245,36 @@ public abstract class AbstractTopic implements Topic, TopicPolicyListener {
         return this.entryFilters.getRight();
     }
 
-    public DispatchRateImpl getReplicatorDispatchRate() {
-        return this.topicPolicies.getReplicatorDispatchRate().get();
+    public DispatchRateImpl getReplicatorDispatchRate(String remoteCluster) {
+        String localCluster = brokerService.pulsar().getConfiguration().getClusterName();
+        PolicyHierarchyValue<DispatchRateImpl> dispatchRatePolicyHierarchyValue =
+                topicPolicies.getReplicatorDispatchRate()
+                        .get(DispatchRateLimiter.getReplicatorDispatchRateKey(localCluster, remoteCluster));
+        DispatchRateImpl dispatchRate;
+        if (dispatchRatePolicyHierarchyValue != null) {
+            // Topic
+            dispatchRate = dispatchRatePolicyHierarchyValue.getTopicValue();
+            if (dispatchRate == null) {
+                dispatchRate = topicPolicies.getReplicatorDispatchRate().get(localCluster).getTopicValue();
+            }
+            // Namespace
+            if (dispatchRate == null) {
+                dispatchRate = dispatchRatePolicyHierarchyValue.getNamespaceValue();
+            }
+            if (dispatchRate == null) {
+                dispatchRate = topicPolicies.getReplicatorDispatchRate().get(localCluster).getNamespaceValue();
+            }
+            // Broker
+            if (dispatchRate == null) {
+                dispatchRate = dispatchRatePolicyHierarchyValue.getBrokerValue();
+            }
+            if (dispatchRate == null) {
+                dispatchRate = topicPolicies.getReplicatorDispatchRate().get(localCluster).getBrokerValue();
+            }
+        } else {
+            dispatchRate = topicPolicies.getReplicatorDispatchRate().get(localCluster).get();
+        }
+        return dispatchRate;
     }
 
     private SchemaCompatibilityStrategy formatSchemaCompatibilityStrategy(SchemaCompatibilityStrategy strategy) {
@@ -285,8 +323,9 @@ public abstract class AbstractTopic implements Topic, TopicPolicyListener {
                 isGlobalPolicies);
         topicPolicies.getPublishRate().updateTopicValue(PublishRate.normalize(data.getPublishRate()), isGlobalPolicies);
         topicPolicies.getDelayedDeliveryEnabled().updateTopicValue(data.getDelayedDeliveryEnabled(), isGlobalPolicies);
-        topicPolicies.getReplicatorDispatchRate().updateTopicValue(
-            DispatchRateImpl.normalize(data.getReplicatorDispatchRate()), isGlobalPolicies);
+        updateTopicLevelReplicatorDispatchRate(
+                data.getReplicatorDispatchRateMap() != null ? data.getReplicatorDispatchRateMap() : new HashMap<>(),
+                data.getReplicatorDispatchRate());
         topicPolicies.getDelayedDeliveryTickTimeMillis().updateTopicValue(data.getDelayedDeliveryTickTimeMillis(),
                 isGlobalPolicies);
         topicPolicies.getDelayedDeliveryMaxDelayInMillis().updateTopicValue(data.getDelayedDeliveryMaxDelayInMillis(),
@@ -304,8 +343,41 @@ public abstract class AbstractTopic implements Topic, TopicPolicyListener {
         topicPolicies.getDispatcherPauseOnAckStatePersistentEnabled()
                 .updateTopicValue(data.getDispatcherPauseOnAckStatePersistentEnabled(), isGlobalPolicies);
         this.subscriptionPolicies = data.getSubscriptionPolicies();
+        topicPolicies.getResourceGroupName().updateTopicValue(data.getResourceGroupName());
 
         updateEntryFilters();
+    }
+
+    private void updateTopicLevelReplicatorDispatchRate(Map<String, DispatchRateImpl> policy,
+                                                        DispatchRateImpl defaultDispatchRate) {
+        Map<String, DispatchRateImpl> dispatchRateMap = new HashMap<>();
+        if (policy != null) {
+            dispatchRateMap.putAll(policy);
+        }
+
+        // Backward compatibility: Default use the current cluster name as key.
+        dispatchRateMap.putIfAbsent(brokerService.pulsar().getConfiguration().getClusterName(), defaultDispatchRate);
+
+        // Process existing topic policies
+        topicPolicies.getReplicatorDispatchRate().forEach((cluster, policyValue) -> {
+            DispatchRateImpl dispatchRate = dispatchRateMap.remove(cluster);
+            policyValue.updateTopicValue(dispatchRate);
+        });
+
+        // Process remaining that weren't in topic policies
+        dispatchRateMap.forEach((cluster, dispatchRate) ->
+                updateReplicatorDispatchRate(cluster, value -> value.updateTopicValue(dispatchRate)));
+    }
+
+    private void updateReplicatorDispatchRate(String cluster,
+                                              java.util.function.Consumer<PolicyHierarchyValue<DispatchRateImpl>> c) {
+        topicPolicies.getReplicatorDispatchRate().compute(cluster, (k, v) -> {
+            if (v == null) {
+                v = new PolicyHierarchyValue<>();
+            }
+            c.accept(v);
+            return v;
+        });
     }
 
     protected void updateTopicPolicyByNamespacePolicy(Policies namespacePolicies) {
@@ -351,8 +423,7 @@ public abstract class AbstractTopic implements Topic, TopicPolicyListener {
                         .map(DelayedDeliveryPolicies::getMaxDeliveryDelayInMillis).orElse(null));
         topicPolicies.getSubscriptionTypesEnabled().updateNamespaceValue(
                 subTypeStringsToEnumSet(namespacePolicies.subscription_types_enabled));
-        updateNamespaceReplicatorDispatchRate(namespacePolicies,
-            brokerService.getPulsar().getConfig().getClusterName());
+        updateNamespaceLevelReplicatorDispatchRate(namespacePolicies.replicatorDispatchRate);
         Arrays.stream(BacklogQuota.BacklogQuotaType.values()).forEach(
                 type -> this.topicPolicies.getBackLogQuotaMap().get(type)
                         .updateNamespaceValue(MapUtils.getObject(namespacePolicies.backlog_quota_map, type)));
@@ -366,11 +437,30 @@ public abstract class AbstractTopic implements Topic, TopicPolicyListener {
         topicPolicies.getDispatcherPauseOnAckStatePersistentEnabled().updateNamespaceValue(
                 namespacePolicies.dispatcherPauseOnAckStatePersistentEnabled);
 
+        topicPolicies.getResourceGroupName().updateNamespaceValue(namespacePolicies.resource_group_name);
+
         updateEntryFilters();
     }
 
     private Integer normalizeValue(Integer policyValue) {
         return policyValue != null && policyValue < 0 ? null : policyValue;
+    }
+
+    private void updateNamespaceLevelReplicatorDispatchRate(Map<String, DispatchRateImpl> policy) {
+        Map<String, DispatchRateImpl> dispatchRateMap = new HashMap<>();
+        if (policy != null) {
+            dispatchRateMap.putAll(policy);
+        }
+
+        // Process existing topic policies.
+        topicPolicies.getReplicatorDispatchRate().forEach((cluster, policyValue) -> {
+            DispatchRateImpl dispatchRate = dispatchRateMap.remove(cluster);
+            policyValue.updateNamespaceValue(dispatchRate);
+        });
+
+        // Process remaining that weren't in topic policies
+        dispatchRateMap.forEach((cluster, dispatchRate) -> updateReplicatorDispatchRate(cluster,
+                value -> value.updateNamespaceValue(dispatchRate)));
     }
 
     private void updateNamespaceDispatchRate(Policies namespacePolicies, String cluster) {
@@ -389,11 +479,6 @@ public abstract class AbstractTopic implements Topic, TopicPolicyListener {
     private void updateNamespaceSubscriptionDispatchRate(Policies namespacePolicies, String cluster) {
         topicPolicies.getSubscriptionDispatchRate()
             .updateNamespaceValue(DispatchRateImpl.normalize(namespacePolicies.subscriptionDispatchRate.get(cluster)));
-    }
-
-    private void updateNamespaceReplicatorDispatchRate(Policies namespacePolicies, String cluster) {
-        topicPolicies.getReplicatorDispatchRate()
-            .updateNamespaceValue(DispatchRateImpl.normalize(namespacePolicies.replicatorDispatchRate.get(cluster)));
     }
 
     private void updateSchemaCompatibilityStrategyNamespaceValue(Policies namespacePolicies){
@@ -456,7 +541,7 @@ public abstract class AbstractTopic implements Topic, TopicPolicyListener {
         topicPolicies.getCompactionThreshold().updateBrokerValue(config.getBrokerServiceCompactionThresholdInBytes());
         topicPolicies.getReplicationClusters().updateBrokerValue(Collections.emptyList());
         SchemaCompatibilityStrategy schemaCompatibilityStrategy = config.getSchemaCompatibilityStrategy();
-        topicPolicies.getReplicatorDispatchRate().updateBrokerValue(replicatorDispatchRateInBroker(config));
+        updateBrokerReplicatorDispatchRate();
         if (isSystemTopic()) {
             schemaCompatibilityStrategy = config.getSystemTopicSchemaCompatibilityStrategy();
         }
@@ -1143,23 +1228,48 @@ public abstract class AbstractTopic implements Topic, TopicPolicyListener {
 
     public void updateResourceGroupLimiter(@NonNull Policies namespacePolicies) {
         requireNonNull(namespacePolicies);
-        // attach the resource-group level rate limiters, if set
-        String rgName = namespacePolicies.resource_group_name;
+        topicPolicies.getResourceGroupName().updateNamespaceValue(namespacePolicies.resource_group_name);
+        updateResourceGroupLimiter();
+    }
+
+    public void updateResourceGroupLimiter() {
+        String rgName = topicPolicies.getResourceGroupName().get();
         if (rgName != null) {
-            final ResourceGroup resourceGroup =
-                    brokerService.getPulsar().getResourceGroupServiceManager().resourceGroupGet(rgName);
+            ResourceGroupService resourceGroupService = brokerService.getPulsar().getResourceGroupServiceManager();
+            final ResourceGroup resourceGroup = resourceGroupService.resourceGroupGet(rgName);
             if (resourceGroup != null) {
+                TopicName topicName = TopicName.get(topic);
+                resourceGroupService.unRegisterTopic(topicName);
+                String topicRg = topicPolicies.getResourceGroupName().getTopicValue();
+                if (topicRg != null) {
+                    try {
+                        resourceGroupService.registerTopic(topicRg, topicName);
+                    } catch (Exception e) {
+                        log.error("Failed to register resource group {} for topic {}", rgName, topic);
+                        return;
+                    }
+                }
                 this.resourceGroupRateLimitingEnabled = true;
                 this.resourceGroupPublishLimiter = resourceGroup.getResourceGroupPublishLimiter();
+                this.resourceGroupDispatchRateLimiter = Optional.of(resourceGroup.getResourceGroupDispatchLimiter());
                 log.info("Using resource group {} rate limiter for topic {}", rgName, topic);
             }
         } else {
-            if (this.resourceGroupRateLimitingEnabled) {
-                this.resourceGroupPublishLimiter = null;
-                this.resourceGroupRateLimitingEnabled = false;
-            }
+            closeResourceGroupLimiter();
         }
         updateActiveRateLimiters();
+    }
+
+    protected void closeResourceGroupLimiter() {
+        if (resourceGroupRateLimitingEnabled) {
+            this.resourceGroupPublishLimiter = null;
+            this.resourceGroupDispatchRateLimiter = Optional.empty();
+            this.resourceGroupRateLimitingEnabled = false;
+        }
+        ResourceGroupService resourceGroupServiceManager = brokerService.getPulsar().getResourceGroupServiceManager();
+        if (resourceGroupServiceManager != null) {
+            resourceGroupServiceManager.unRegisterTopic(TopicName.get(topic));
+        }
     }
 
     public void updateEntryFilters() {
@@ -1301,8 +1411,9 @@ public abstract class AbstractTopic implements Topic, TopicPolicyListener {
     }
 
     public void updateBrokerReplicatorDispatchRate() {
-        topicPolicies.getReplicatorDispatchRate().updateBrokerValue(
-            replicatorDispatchRateInBroker(brokerService.pulsar().getConfiguration()));
+        updateReplicatorDispatchRate(brokerService.pulsar().getConfiguration().getClusterName(), v -> {
+            v.updateBrokerValue(replicatorDispatchRateInBroker(brokerService.pulsar().getConfiguration()));
+        });
     }
 
     public void updateBrokerDispatchRate() {
@@ -1387,5 +1498,12 @@ public abstract class AbstractTopic implements Topic, TopicPolicyListener {
     public boolean isSystemCursor(String sub) {
         return COMPACTION_SUBSCRIPTION.equals(sub)
                 || (additionalSystemCursorNames != null && additionalSystemCursorNames.contains(sub));
+    }
+
+    public static String getReplicatorDispatchRateKey(String localCluster, String remoteCluster) {
+        if (StringUtils.isNotEmpty(remoteCluster)) {
+            return String.format("%s->%s", remoteCluster, localCluster);
+        }
+        return localCluster;
     }
 }

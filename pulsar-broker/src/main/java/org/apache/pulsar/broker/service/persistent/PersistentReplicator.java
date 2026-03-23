@@ -35,6 +35,7 @@ import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.Getter;
@@ -53,6 +54,8 @@ import org.apache.bookkeeper.mledger.Position;
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.pulsar.broker.PulsarServerException;
+import org.apache.pulsar.broker.resourcegroup.ResourceGroup;
+import org.apache.pulsar.broker.resourcegroup.ResourceGroupDispatchLimiter;
 import org.apache.pulsar.broker.service.AbstractReplicator;
 import org.apache.pulsar.broker.service.BrokerService;
 import org.apache.pulsar.broker.service.BrokerServiceException;
@@ -84,6 +87,9 @@ public abstract class PersistentReplicator extends AbstractReplicator
     protected final String localSchemaTopicName;
 
     protected Optional<DispatchRateLimiter> dispatchRateLimiter = Optional.empty();
+    protected volatile Optional<ResourceGroupDispatchLimiter> resourceGroupDispatchRateLimiter = Optional.empty();
+    private final Consumer<ResourceGroupDispatchLimiter> resourceGroupDispatchRateLimiterConsumer = (v) ->
+            resourceGroupDispatchRateLimiter = Optional.ofNullable(v);
     private final Object dispatchRateLimiterLock = new Object();
 
     private int readBatchSize;
@@ -268,6 +274,33 @@ public abstract class PersistentReplicator extends AbstractReplicator
                             MESSAGE_RATE_BACKOFF_MS);
                 }
                 return new AvailablePermits(-1, -1);
+            }
+        }
+
+        if (resourceGroupDispatchRateLimiter.isPresent()) {
+            ResourceGroupDispatchLimiter rateLimiter = resourceGroupDispatchRateLimiter.get();
+            long rgAvailablePermitsOnMsg = rateLimiter.getAvailableDispatchRateLimitOnMsg();
+            long rgAvailablePermitsOnByte = rateLimiter.getAvailableDispatchRateLimitOnByte();
+            if (rgAvailablePermitsOnMsg == 0 || rgAvailablePermitsOnByte == 0) {
+                if (log.isDebugEnabled()) {
+                    log.debug("[{}] message-read exceeded resourcegroup message-rate {}/{},"
+                                    + " schedule after a {}",
+                            replicatorId,
+                            rateLimiter.getDispatchRateOnMsg(),
+                            rateLimiter.getDispatchRateOnByte(),
+                            MESSAGE_RATE_BACKOFF_MS);
+                }
+                return new AvailablePermits(-1, -1);
+            }
+            if (availablePermitsOnMsg == -1) {
+                availablePermitsOnMsg = rgAvailablePermitsOnMsg;
+            } else {
+                availablePermitsOnMsg = Math.min(rgAvailablePermitsOnMsg, availablePermitsOnMsg);
+            }
+            if (availablePermitsOnByte == -1) {
+                availablePermitsOnByte = rgAvailablePermitsOnByte;
+            } else {
+                availablePermitsOnByte = Math.min(rgAvailablePermitsOnByte, availablePermitsOnByte);
             }
         }
 
@@ -629,7 +662,7 @@ public abstract class PersistentReplicator extends AbstractReplicator
                 exception.getMessage(), exception);
         if (exception instanceof CursorAlreadyClosedException) {
             log.warn("[{}] Asynchronous ack failure because replicator is already deleted and cursor is already"
-                            + " closed {}, ({})", replicatorId, ctx, exception.getMessage(), exception);
+                    + " closed {}, ({})", replicatorId, ctx, exception.getMessage(), exception);
             // replicator is already deleted and cursor is already closed so, producer should also be disconnected.
             terminate();
             return;
@@ -715,15 +748,52 @@ public abstract class PersistentReplicator extends AbstractReplicator
     }
 
     @Override
+    public Optional<ResourceGroupDispatchLimiter> getResourceGroupDispatchRateLimiter() {
+        return resourceGroupDispatchRateLimiter;
+    }
+
+    // This is used to unregister the resource group dispatch rate limiter
+    private String usedResourceGroupName;
+
+    @Override
     public void initializeDispatchRateLimiterIfNeeded() {
         synchronized (dispatchRateLimiterLock) {
             if (!dispatchRateLimiter.isPresent()
-                    && DispatchRateLimiter.isDispatchRateEnabled(topic.getReplicatorDispatchRate())) {
-                this.dispatchRateLimiter = Optional.of(
-                        topic.getBrokerService().getDispatchRateLimiterFactory()
-                                .createReplicatorDispatchRateLimiter(topic, Codec.decode(cursor.getName())));
+                    && DispatchRateLimiter.isDispatchRateEnabled(topic.getReplicatorDispatchRate(remoteCluster))) {
+                this.dispatchRateLimiter = Optional.of(topic.getBrokerService().getDispatchRateLimiterFactory()
+                        .createReplicatorDispatchRateLimiter(topic, remoteCluster));
+            }
+
+            String resourceGroupName = topic.getHierarchyTopicPolicies().getResourceGroupName().get();
+            if (resourceGroupName != null) {
+                if (usedResourceGroupName != null) {
+                    unregisterReplicatorDispatchRateLimiter();
+                }
+                usedResourceGroupName = resourceGroupName;
+                ResourceGroup resourceGroup =
+                        brokerService.getPulsar().getResourceGroupServiceManager().resourceGroupGet(resourceGroupName);
+                if (resourceGroup != null) {
+                    resourceGroup.registerReplicatorDispatchRateLimiter(remoteCluster,
+                            resourceGroupDispatchRateLimiterConsumer);
+                }
+            } else {
+                unregisterReplicatorDispatchRateLimiter();
             }
         }
+    }
+
+    private void unregisterReplicatorDispatchRateLimiter() {
+        if (usedResourceGroupName == null) {
+            return;
+        }
+        ResourceGroup resourceGroup =
+                brokerService.getPulsar().getResourceGroupServiceManager()
+                        .resourceGroupGet(usedResourceGroupName);
+        if (resourceGroup != null) {
+            resourceGroup.unregisterReplicatorDispatchRateLimiter(remoteCluster,
+                    resourceGroupDispatchRateLimiterConsumer);
+        }
+        usedResourceGroupName = null;
     }
 
     @Override

@@ -19,17 +19,69 @@
 package org.apache.pulsar.broker.admin.impl;
 
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import javax.ws.rs.core.Response;
+import javax.ws.rs.core.Response.Status;
 import org.apache.pulsar.broker.admin.AdminResource;
 import org.apache.pulsar.broker.web.RestException;
-import org.apache.pulsar.common.naming.NamespaceName;
-import org.apache.pulsar.common.policies.data.Policies;
+import org.apache.pulsar.client.admin.PulsarAdminException;
+import org.apache.pulsar.common.policies.data.DispatchRate;
 import org.apache.pulsar.common.policies.data.ResourceGroup;
+import org.apache.pulsar.common.util.FutureUtil;
 import org.apache.pulsar.metadata.api.MetadataStoreException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 public abstract class ResourceGroupsBase extends AdminResource {
+
+    protected CompletableFuture<Void> internalSetReplicatorDispatchRate(String rgName, String remoteCluster,
+                                                                 DispatchRate dispatchRate) {
+        if (remoteCluster == null) {
+            return FutureUtil.failedFuture(new RestException(Status.PRECONDITION_FAILED,
+                    "Remote cluster name is not provided"));
+        }
+        return validateSuperUserAccessAsync()
+                .thenCompose((__) -> resourceGroupResources()
+                        .updateResourceGroupAsync(rgName, rg -> {
+                            String key = getReplicatorDispatchRateKey(remoteCluster);
+                            if (rg.getReplicatorDispatchRate() == null) {
+                                rg.setReplicatorDispatchRate(new ConcurrentHashMap<>());
+                            }
+                            if (dispatchRate == null) {
+                                rg.getReplicatorDispatchRate().remove(key);
+                            } else {
+                                rg.getReplicatorDispatchRate().put(key, dispatchRate);
+                            }
+                            return rg;
+                        })
+                );
+    }
+
+    protected CompletableFuture<DispatchRate> internalGetReplicatorDispatchRate(String rgName, String remoteCluster) {
+        if (remoteCluster == null) {
+            return FutureUtil.failedFuture(new RestException(Status.PRECONDITION_FAILED,
+                    "Remote cluster name is not provided"));
+        }
+        return validateSuperUserAccessAsync()
+                .thenCompose((__) -> resourceGroupResources()
+                        .getResourceGroupAsync(rgName))
+                .thenCompose((resourceGroupOptional) -> resourceGroupOptional
+                        .map((rg) -> {
+                            Map<String, DispatchRate> replicatorDispatchRate = rg.getReplicatorDispatchRate();
+                            DispatchRate dispatchRate = null;
+                            if (replicatorDispatchRate != null) {
+                                dispatchRate = rg.getReplicatorDispatchRate()
+                                        .get(getReplicatorDispatchRateKey(remoteCluster));
+                            }
+                            return CompletableFuture.completedFuture(dispatchRate);
+                        })
+                        .orElseGet(() -> FutureUtil.failedFuture(
+                                new RestException(Status.NOT_FOUND, "ResourceGroup does not exist")))
+                );
+    }
+
     protected List<String> internalGetResourceGroups() {
         try {
             validateSuperUserAccess();
@@ -75,7 +127,12 @@ public abstract class ResourceGroupsBase extends AdminResource {
             if (rgConfig.getDispatchRateInBytes() != null) {
                 resourceGroup.setDispatchRateInBytes(rgConfig.getDispatchRateInBytes());
             }
-
+            if (rgConfig.getReplicationDispatchRateInBytes() != null) {
+                resourceGroup.setReplicationDispatchRateInBytes(rgConfig.getReplicationDispatchRateInBytes());
+            }
+            if (rgConfig.getReplicationDispatchRateInMsgs() != null) {
+                resourceGroup.setReplicationDispatchRateInMsgs(rgConfig.getReplicationDispatchRateInMsgs());
+            }
             // write back the new ResourceGroup config.
             resourceGroupResources().updateResourceGroup(rgName, r -> resourceGroup);
             log.info("[{}] Successfully updated the ResourceGroup {}", clientAppId(), rgName);
@@ -96,6 +153,10 @@ public abstract class ResourceGroupsBase extends AdminResource {
                 ? -1 : rgConfig.getDispatchRateInMsgs());
         rgConfig.setDispatchRateInBytes(rgConfig.getDispatchRateInBytes() == null
                 ? -1 : rgConfig.getDispatchRateInBytes());
+        rgConfig.setReplicationDispatchRateInBytes(rgConfig.getReplicationDispatchRateInBytes() == null
+                ? -1 : rgConfig.getReplicationDispatchRateInBytes());
+        rgConfig.setReplicationDispatchRateInMsgs(rgConfig.getReplicationDispatchRateInMsgs() == null
+                ? -1 : rgConfig.getReplicationDispatchRateInMsgs());
         try {
             resourceGroupResources().createResourceGroup(rgName, rgConfig);
             log.info("[{}] Created ResourceGroup {}", clientAppId(), rgName);
@@ -138,23 +199,6 @@ public abstract class ResourceGroupsBase extends AdminResource {
         }
     }
 
-    protected boolean internalCheckRgInUse(String rgName) {
-        try {
-            for (String tenant : tenantResources().listTenants()) {
-                for (String namespace : tenantResources().getListOfNamespaces(tenant)) {
-                    Policies policies = getNamespacePolicies(NamespaceName.get(namespace));
-                    if (null != policies && rgName.equals(policies.resource_group_name)) {
-                        return true;
-                    }
-                }
-            }
-        } catch (Exception e) {
-            log.error("[{}] Failed to get tenant/namespace list {}: {}", clientAppId(), rgName, e);
-            throw new RestException(e);
-        }
-        return false;
-    }
-
     protected void internalDeleteResourceGroup(String rgName) {
         /*
          * need to walk the namespaces and make sure it is not in use
@@ -164,8 +208,12 @@ public abstract class ResourceGroupsBase extends AdminResource {
             /*
              * walk the namespaces and make sure it is not in use.
              */
-            if (internalCheckRgInUse(rgName)) {
-                throw new RestException(Response.Status.PRECONDITION_FAILED, "ResourceGroup is in use");
+            try {
+                pulsar().getResourceGroupServiceManager().checkResourceGroupInUse(rgName);
+            } catch (PulsarAdminException e) {
+                log.error("[{}] Check if ResourceGroup {} is in use: {}", clientAppId(), rgName, e);
+                throw new RestException(Response.Status.PRECONDITION_FAILED,
+                        "ResourceGroup is in use");
             }
             resourceGroupResources().deleteResourceGroup(rgName);
             log.info("[{}] Deleted ResourceGroup {}", clientAppId(), rgName);

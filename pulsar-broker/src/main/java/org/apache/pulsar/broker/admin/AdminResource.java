@@ -49,6 +49,7 @@ import org.apache.pulsar.broker.resources.ClusterResources;
 import org.apache.pulsar.broker.service.TopicEventsListener.EventStage;
 import org.apache.pulsar.broker.service.TopicEventsListener.TopicEvent;
 import org.apache.pulsar.broker.service.TopicPoliciesService;
+import org.apache.pulsar.broker.service.persistent.DispatchRateLimiter;
 import org.apache.pulsar.broker.service.plugin.InvalidEntryFilterException;
 import org.apache.pulsar.broker.web.PulsarWebResource;
 import org.apache.pulsar.broker.web.RestException;
@@ -1050,5 +1051,10 @@ public abstract class AdminResource extends PulsarWebResource {
                         throw new RestException(Status.NOT_FOUND, getTopicNotFoundErrorMessage(topicName.toString()));
                     }
                 });
+    }
+
+    protected String getReplicatorDispatchRateKey(String remoteCluster) {
+        return DispatchRateLimiter.getReplicatorDispatchRateKey(pulsar().getConfiguration().getClusterName(),
+                remoteCluster);
     }
 }

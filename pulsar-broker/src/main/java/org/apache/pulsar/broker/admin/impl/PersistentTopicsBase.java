@@ -3673,24 +3673,68 @@ public class PersistentTopicsBase extends AdminResource {
                 });
     }
 
-    protected CompletableFuture<DispatchRateImpl> internalGetReplicatorDispatchRate(boolean applied, boolean isGlobal) {
+    protected CompletableFuture<DispatchRateImpl> internalGetReplicatorDispatchRate(String cluster, boolean applied,
+                                                                                    boolean isGlobal) {
         return getTopicPoliciesAsyncWithRetry(topicName, isGlobal)
-            .thenApply(op -> op.map(TopicPolicies::getReplicatorDispatchRate)
-                .orElseGet(() -> {
-                    if (applied) {
-                        DispatchRateImpl namespacePolicy = getNamespacePolicies(namespaceName)
-                                .replicatorDispatchRate.get(pulsar().getConfiguration().getClusterName());
-                        return namespacePolicy == null ? replicatorDispatchRate() : namespacePolicy;
+                .thenApply(op -> op.map(n -> {
+                    // Prioritize getting the dispatch rate from the replicatorDispatchRateMap if a specific cluster
+                    // is provided.
+                    // If the cluster is empty, it means the user has not explicitly set a rate for a particular
+                    // cluster,
+                    // so we still attempt to retrieve the value from the replicatorDispatchRateMap using the current
+                    // cluster.
+                    // If `applied` is true, we also need to consider the default cluster rate and finally fallback
+                    // to `getReplicatorDispatchRate()` for backward compatibility.
+                    Map<String, DispatchRateImpl> dispatchRateMap = new HashMap<>();
+                    if (n.getReplicatorDispatchRateMap() != null) {
+                        dispatchRateMap = n.getReplicatorDispatchRateMap();
+                    }
+                    DispatchRateImpl dispatchRate = dispatchRateMap.get(getReplicatorDispatchRateKey(cluster));
+                    if (dispatchRate != null) {
+                        return dispatchRate;
+                    }
+
+                    if (applied || StringUtils.isEmpty(cluster)) {
+                        dispatchRate =
+                                dispatchRateMap.get(pulsar().getConfiguration().getClusterName());
+                        if (dispatchRate != null) {
+                            return dispatchRate;
+                        }
+                        // Backward compatibility.
+                        return n.getReplicatorDispatchRate();
                     }
                     return null;
+                }).orElseGet(() -> {
+                    if (!applied) {
+                        return null;
+                    }
+                    Map<String, DispatchRateImpl> replicatorDispatchRate =
+                            getNamespacePolicies(namespaceName).replicatorDispatchRate;
+                    DispatchRateImpl namespacePolicy =
+                            replicatorDispatchRate.getOrDefault(getReplicatorDispatchRateKey(cluster),
+                                    replicatorDispatchRate.get(pulsar().getConfiguration().getClusterName()));
+                    return namespacePolicy == null ? replicatorDispatchRate() : namespacePolicy;
                 }));
     }
 
-    protected CompletableFuture<Void> internalSetReplicatorDispatchRate(DispatchRateImpl dispatchRateToSet,
+    protected CompletableFuture<Void> internalSetReplicatorDispatchRate(String cluster,
+                                                                        DispatchRateImpl dispatchRateToSet,
                                                                         boolean isGlobal) {
         return pulsar().getTopicPoliciesService()
                 .updateTopicPoliciesAsync(topicName, isGlobal, dispatchRateToSet == null, policies -> {
-                    policies.setReplicatorDispatchRate(dispatchRateToSet);
+                    if (policies.getReplicatorDispatchRateMap() == null) {
+                        policies.setReplicatorDispatchRateMap(new HashMap<>());
+                    }
+                    if (dispatchRateToSet == null) {
+                        policies.getReplicatorDispatchRateMap()
+                                .remove(getReplicatorDispatchRateKey(cluster));
+                    } else {
+                        policies.getReplicatorDispatchRateMap()
+                                .put(getReplicatorDispatchRateKey(cluster), dispatchRateToSet);
+                    }
+                    if (StringUtils.isEmpty(cluster)) {
+                        policies.setReplicatorDispatchRate(dispatchRateToSet);
+                    }
                 });
     }
 
@@ -5503,5 +5547,41 @@ public class PersistentTopicsBase extends AdminResource {
         } else {
             return null;
         }
+    }
+
+    protected CompletableFuture<Void> internalSetResourceGroup(String resourceGroupName, boolean isGlobal) {
+        boolean isDelete = StringUtils.isEmpty(resourceGroupName);
+        return validateTopicOperationAsync(topicName, TopicOperation.SET_RESOURCE_GROUP)
+                .thenCompose(__ -> {
+                    if (isDelete) {
+                        return CompletableFuture.completedFuture(true);
+                    }
+                    return resourceGroupResources().resourceGroupExistsAsync(resourceGroupName);
+                })
+                .thenCompose(exists -> {
+                    if (!exists) {
+                        return FutureUtil.failedFuture(new RestException(Status.NOT_FOUND,
+                                "ResourceGroup does not exist"));
+                    }
+
+                    return pulsar().getTopicPoliciesService()
+                            .updateTopicPoliciesAsync(topicName, isGlobal, false,
+                                    policies -> {
+                                        policies.setResourceGroupName(isDelete ? null : resourceGroupName);
+                                    });
+                });
+    }
+
+    protected CompletableFuture<String> internalGetResourceGroup(boolean applied, boolean isGlobal) {
+        return validateTopicOperationAsync(topicName, TopicOperation.GET_RESOURCE_GROUP)
+                .thenCompose(__ -> getTopicPoliciesAsyncWithRetry(topicName, isGlobal)
+                        .thenApply(op -> op.map(TopicPolicies::getResourceGroupName)
+                                .orElseGet(() -> {
+                                    if (applied) {
+                                        return getNamespacePolicies(namespaceName).resource_group_name;
+                                    }
+                                    return null;
+                                })
+                        ));
     }
 }

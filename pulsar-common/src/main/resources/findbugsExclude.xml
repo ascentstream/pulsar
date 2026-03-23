@@ -58,4 +58,8 @@
         <Field name="NONE_KEY"/>
         <Bug pattern="MS_PKGPROTECT"/>
     </Match>
+    <Match>
+        <Class name="org.apache.pulsar.common.policies.data.TopicPolicies"/>
+        <Bug pattern="RCN_REDUNDANT_NULLCHECK_OF_NONNULL_VALUE"/>
+    </Match>
 </FindBugsFilter>

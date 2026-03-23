@@ -18,19 +18,33 @@
  */
 package org.apache.pulsar.broker.resourcegroup;
 
-import java.util.HashSet;
+import static org.mockito.Mockito.mock;
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Policy.Expiration;
+import com.google.common.collect.Lists;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import org.apache.pulsar.broker.auth.MockedPulsarServiceBaseTest;
 import org.apache.pulsar.broker.resourcegroup.ResourceGroup.BytesAndMessagesCount;
+import org.apache.pulsar.broker.resourcegroup.ResourceGroup.PerBrokerUsageStats;
 import org.apache.pulsar.broker.resourcegroup.ResourceGroup.PerMonitoringClassFields;
 import org.apache.pulsar.broker.resourcegroup.ResourceGroup.ResourceGroupMonitoringClass;
-import org.apache.pulsar.broker.service.resource.usage.NetworkUsage;
+import org.apache.pulsar.broker.service.persistent.DispatchRateLimiter;
 import org.apache.pulsar.broker.service.resource.usage.ResourceUsage;
 import org.apache.pulsar.client.admin.PulsarAdminException;
 import org.apache.pulsar.common.naming.NamespaceName;
 import org.apache.pulsar.common.naming.TopicName;
 import org.apache.pulsar.common.policies.data.ClusterData;
+import org.apache.pulsar.common.policies.data.DispatchRate;
+import org.awaitility.Awaitility;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.testng.Assert;
@@ -49,8 +63,9 @@ public class ResourceGroupServiceTest extends MockedPulsarServiceBaseTest {
             @Override
             public boolean needToReportLocalUsage(long currentBytesUsed, long lastReportedBytes,
                                                   long currentMessagesUsed, long lastReportedMessages,
-                                                  long lastReportTimeMSecsSinceEpoch) {
-                final int maxSuppressRounds = ResourceGroupService.MaxUsageReportSuppressRounds;
+                                                  long lastReportTimeMSecsSinceEpoch)
+            {
+                final int maxSuppressRounds = conf.getResourceUsageMaxUsageReportSuppressRounds();
                 if (++numLocalReportsEvaluated % maxSuppressRounds == (maxSuppressRounds - 1)) {
                     return true;
                 }
@@ -86,7 +101,7 @@ public class ResourceGroupServiceTest extends MockedPulsarServiceBaseTest {
     @Test
     public void measureOpsTime() throws PulsarAdminException {
         long mSecsStart, mSecsEnd, diffMsecs;
-        final int numPerfTestIterations = 10_000_000;
+        final int numPerfTestIterations = 1_000;
         org.apache.pulsar.common.policies.data.ResourceGroup rgConfig =
           new org.apache.pulsar.common.policies.data.ResourceGroup();
         BytesAndMessagesCount stats = new BytesAndMessagesCount();
@@ -101,7 +116,8 @@ public class ResourceGroupServiceTest extends MockedPulsarServiceBaseTest {
         for (int ix = 0; ix < numPerfTestIterations; ix++) {
             for (int monClassIdx = 0; monClassIdx < ResourceGroupMonitoringClass.values().length; monClassIdx++) {
                 monClass = ResourceGroupMonitoringClass.values()[monClassIdx];
-                rg.incrementLocalUsageStats(monClass, stats);
+                rg.incrementLocalUsageStats(monClass, stats,
+                        monClass.equals(ResourceGroupMonitoringClass.ReplicationDispatch) ? "r2" : null);
             }
         }
         mSecsEnd = System.currentTimeMillis();
@@ -110,16 +126,18 @@ public class ResourceGroupServiceTest extends MockedPulsarServiceBaseTest {
                 numPerfTestIterations, diffMsecs, (1000 * (float) diffMsecs) / numPerfTestIterations);
 
         // Going through the resource-group service
-        final String tenantName = "SomeTenant";
-        final String namespaceName = "SomeNameSpace";
+        final TopicName topicName = TopicName.get("SomeTenant/SomeNameSpace/my-topic");
+        rgs.registerTopic(rgName, topicName);
+        final String tenantName = topicName.getTenant();
+        final String namespaceName = topicName.getNamespace();
         rgs.registerTenant(rgName, tenantName);
-        final NamespaceName tenantAndNamespaceName = NamespaceName.get(tenantName, namespaceName);
+        final NamespaceName tenantAndNamespaceName = topicName.getNamespaceObject();
         rgs.registerNameSpace(rgName, tenantAndNamespaceName);
         mSecsStart = System.currentTimeMillis();
         for (int ix = 0; ix < numPerfTestIterations; ix++) {
             for (int monClassIdx = 0; monClassIdx < ResourceGroupMonitoringClass.values().length; monClassIdx++) {
                 monClass = ResourceGroupMonitoringClass.values()[monClassIdx];
-                rgs.incrementUsage(tenantName, namespaceName, monClass, stats);
+                rgs.incrementUsage(tenantName, namespaceName, topicName.toString(), monClass, stats, monClass.equals(ResourceGroupMonitoringClass.ReplicationDispatch) ? "r2" : null);
             }
         }
         mSecsEnd = System.currentTimeMillis();
@@ -128,6 +146,7 @@ public class ResourceGroupServiceTest extends MockedPulsarServiceBaseTest {
                 numPerfTestIterations, diffMsecs, (1000 * (float) diffMsecs) / numPerfTestIterations);
         rgs.unRegisterTenant(rgName, tenantName);
         rgs.unRegisterNameSpace(rgName, tenantAndNamespaceName);
+        rgs.unRegisterTopic(topicName);
 
         // The overhead of a RG lookup
         mSecsStart = System.currentTimeMillis();
@@ -143,6 +162,129 @@ public class ResourceGroupServiceTest extends MockedPulsarServiceBaseTest {
     }
 
     @Test
+    public void testReplicatorResourceGroupOps() throws PulsarAdminException {
+        String rgName = "testRG-" + System.currentTimeMillis();
+        org.apache.pulsar.common.policies.data.ResourceGroup rgConfig =
+                new org.apache.pulsar.common.policies.data.ResourceGroup();
+        rgConfig.setReplicationDispatchRateInBytes(2000L);
+        rgConfig.setReplicationDispatchRateInMsgs(400L);
+
+        rgs.resourceGroupCreate(rgName, rgConfig);
+        ResourceGroup retRG = rgs.resourceGroupGet(rgName);
+        Assert.assertNotEquals(retRG, null);
+
+        PerMonitoringClassFields r1 = retRG.getMonitoredEntity(ResourceGroupMonitoringClass.ReplicationDispatch, "r1");
+        Assert.assertEquals(r1.configValuesPerPeriod.bytes,
+                rgConfig.getReplicationDispatchRateInBytes().longValue());
+        Assert.assertEquals(r1.configValuesPerPeriod.messages,
+                rgConfig.getReplicationDispatchRateInMsgs().intValue());
+
+        AtomicReference<ResourceGroupDispatchLimiter> r1Limiter = new AtomicReference<>();
+        retRG.registerReplicatorDispatchRateLimiter("r1", r1Limiter::set);
+        AtomicReference<ResourceGroupDispatchLimiter> r2Limiter = new AtomicReference<>();
+        retRG.registerReplicatorDispatchRateLimiter("r2", r2Limiter::set);
+
+        Assert.assertEquals(r1Limiter.get(), r2Limiter.get());
+        Assert.assertEquals(r1Limiter.get().getDispatchRateOnByte(),
+                rgConfig.getReplicationDispatchRateInBytes().longValue());
+        Assert.assertEquals(r1Limiter.get().getDispatchRateOnMsg(),
+                rgConfig.getReplicationDispatchRateInMsgs().longValue());
+
+        // Update the default rate limitation.
+        rgConfig.setReplicationDispatchRateInBytes(rgConfig.getReplicationDispatchRateInBytes() * 10);
+        rgConfig.setReplicationDispatchRateInMsgs(rgConfig.getReplicationDispatchRateInMsgs() * 10);
+        rgs.resourceGroupUpdate(rgName, rgConfig);
+
+        Assert.assertEquals(r1Limiter.get(), r2Limiter.get());
+        Assert.assertEquals(r1Limiter.get().getDispatchRateOnByte(),
+                rgConfig.getReplicationDispatchRateInBytes().longValue());
+        Assert.assertEquals(r1Limiter.get().getDispatchRateOnMsg(),
+                rgConfig.getReplicationDispatchRateInMsgs().longValue());
+
+        r1 = retRG.getMonitoredEntity(ResourceGroupMonitoringClass.ReplicationDispatch, "r1");
+        Assert.assertEquals(r1.configValuesPerPeriod.bytes,
+                rgConfig.getReplicationDispatchRateInBytes().longValue());
+        Assert.assertEquals(r1.configValuesPerPeriod.messages,
+                rgConfig.getReplicationDispatchRateInMsgs().intValue());
+
+        // Set up the specific rate limitation based on the remote cluster.
+        Map<String, DispatchRate> replicatorLimiterMap = new ConcurrentHashMap<>();
+        // r1
+        DispatchRate newR1Limiter =
+                DispatchRate.builder().dispatchThrottlingRateInMsg(1024).dispatchThrottlingRateInByte(200).build();
+        replicatorLimiterMap.put(retRG.getReplicatorDispatchRateLimiterKey("r1"), newR1Limiter);
+        rgConfig.setReplicatorDispatchRate(replicatorLimiterMap);
+        rgs.resourceGroupUpdate(rgName, rgConfig);
+
+        Assert.assertNotEquals(r1Limiter.get(), r2Limiter.get());
+        Assert.assertEquals(r1Limiter.get().getDispatchRateOnByte(), newR1Limiter.getDispatchThrottlingRateInByte());
+        Assert.assertEquals(r1Limiter.get().getDispatchRateOnMsg(), newR1Limiter.getDispatchThrottlingRateInMsg());
+        Assert.assertEquals(r2Limiter.get().getDispatchRateOnByte(),
+                rgConfig.getReplicationDispatchRateInBytes().longValue());
+        Assert.assertEquals(r2Limiter.get().getDispatchRateOnMsg(),
+                rgConfig.getReplicationDispatchRateInMsgs().longValue());
+        r1 = retRG.getMonitoredEntity(ResourceGroupMonitoringClass.ReplicationDispatch, "r1");
+        Assert.assertEquals(r1.configValuesPerPeriod.bytes, newR1Limiter.getDispatchThrottlingRateInByte());
+        Assert.assertEquals(r1.configValuesPerPeriod.messages, newR1Limiter.getDispatchThrottlingRateInMsg());
+
+        // r2
+        DispatchRate newR2Limiter =
+                DispatchRate.builder().dispatchThrottlingRateInMsg(2048).dispatchThrottlingRateInByte(400).build();
+        replicatorLimiterMap.put(retRG.getReplicatorDispatchRateLimiterKey("r2"), newR2Limiter);
+        rgs.resourceGroupUpdate(rgName, rgConfig);
+
+        Assert.assertNotEquals(r1Limiter.get(), r2Limiter.get());
+        Assert.assertEquals(r1Limiter.get().getDispatchRateOnByte(), newR1Limiter.getDispatchThrottlingRateInByte());
+        Assert.assertEquals(r1Limiter.get().getDispatchRateOnMsg(), newR1Limiter.getDispatchThrottlingRateInMsg());
+        Assert.assertEquals(r2Limiter.get().getDispatchRateOnByte(), newR2Limiter.getDispatchThrottlingRateInByte());
+        Assert.assertEquals(r2Limiter.get().getDispatchRateOnMsg(), newR2Limiter.getDispatchThrottlingRateInMsg());
+
+        PerMonitoringClassFields r2 = retRG.getMonitoredEntity(ResourceGroupMonitoringClass.ReplicationDispatch, "r2");
+        Assert.assertEquals(r2.configValuesPerPeriod.bytes, newR2Limiter.getDispatchThrottlingRateInByte());
+        Assert.assertEquals(r2.configValuesPerPeriod.messages, newR2Limiter.getDispatchThrottlingRateInMsg());
+
+        // remove r1
+        replicatorLimiterMap.remove(retRG.getReplicatorDispatchRateLimiterKey("r1"));
+        rgs.resourceGroupUpdate(rgName, rgConfig);
+        Assert.assertEquals(r1Limiter.get().getDispatchRateOnByte(),
+                rgConfig.getReplicationDispatchRateInBytes().longValue());
+        Assert.assertEquals(r1Limiter.get().getDispatchRateOnMsg(),
+                rgConfig.getReplicationDispatchRateInMsgs().longValue());
+        Assert.assertEquals(r2Limiter.get().getDispatchRateOnByte(), newR2Limiter.getDispatchThrottlingRateInByte());
+        Assert.assertEquals(r2Limiter.get().getDispatchRateOnMsg(), newR2Limiter.getDispatchThrottlingRateInMsg());
+
+        r1 = retRG.getMonitoredEntity(ResourceGroupMonitoringClass.ReplicationDispatch, "r1");
+        Assert.assertEquals(r1.configValuesPerPeriod.bytes,
+                rgConfig.getReplicationDispatchRateInBytes().longValue());
+        Assert.assertEquals(r1.configValuesPerPeriod.messages,
+                rgConfig.getReplicationDispatchRateInMsgs().intValue());
+
+        // remove r2
+        replicatorLimiterMap.remove(retRG.getReplicatorDispatchRateLimiterKey("r2"));
+        rgs.resourceGroupUpdate(rgName, rgConfig);
+        Assert.assertEquals(r1Limiter.get().getDispatchRateOnByte(),
+                rgConfig.getReplicationDispatchRateInBytes().longValue());
+        Assert.assertEquals(r1Limiter.get().getDispatchRateOnMsg(),
+                rgConfig.getReplicationDispatchRateInMsgs().longValue());
+        Assert.assertEquals(r2Limiter.get().getDispatchRateOnByte(),
+                rgConfig.getReplicationDispatchRateInBytes().longValue());
+        Assert.assertEquals(r2Limiter.get().getDispatchRateOnMsg(),
+                rgConfig.getReplicationDispatchRateInMsgs().longValue());
+
+        r2 = retRG.getMonitoredEntity(ResourceGroupMonitoringClass.ReplicationDispatch, "r2");
+        Assert.assertEquals(r2.configValuesPerPeriod.bytes,
+                rgConfig.getReplicationDispatchRateInBytes().longValue());
+        Assert.assertEquals(r2.configValuesPerPeriod.messages,
+                rgConfig.getReplicationDispatchRateInMsgs().intValue());
+
+        rgs.resourceGroupDelete(rgName);
+
+        // Check the rate limiters are removed.
+        Assert.assertNull(r1Limiter.get());
+        Assert.assertNull(r2Limiter.get());
+    }
+
+        @Test
     public void testResourceGroupOps() throws PulsarAdminException, InterruptedException {
         org.apache.pulsar.common.policies.data.ResourceGroup rgConfig =
           new org.apache.pulsar.common.policies.data.ResourceGroup();
@@ -152,6 +294,8 @@ public class ResourceGroupServiceTest extends MockedPulsarServiceBaseTest {
         rgConfig.setPublishRateInMsgs(100);
         rgConfig.setDispatchRateInBytes(40000L);
         rgConfig.setDispatchRateInMsgs(500);
+        rgConfig.setReplicationDispatchRateInBytes(2000L);
+        rgConfig.setReplicationDispatchRateInMsgs(400L);
 
         int initialNumQuotaCalculations = numAnonymousQuotaCalculations;
         rgs.resourceGroupCreate(rgName, rgConfig);
@@ -162,27 +306,33 @@ public class ResourceGroupServiceTest extends MockedPulsarServiceBaseTest {
           new org.apache.pulsar.common.policies.data.ResourceGroup();
         Assert.assertThrows(PulsarAdminException.class, () -> rgs.resourceGroupUpdate(randomRgName, randomConfig));
 
-        rgConfig.setPublishRateInBytes(rgConfig.getPublishRateInBytes() * 10);
-        rgConfig.setPublishRateInMsgs(rgConfig.getPublishRateInMsgs() * 10);
-        rgConfig.setDispatchRateInBytes(rgConfig.getDispatchRateInBytes() / 10);
-        rgConfig.setDispatchRateInMsgs(rgConfig.getDispatchRateInMsgs() / 10);
+        rgConfig.setPublishRateInBytes(rgConfig.getPublishRateInBytes()*10);
+        rgConfig.setPublishRateInMsgs(rgConfig.getPublishRateInMsgs()*10);
+        rgConfig.setDispatchRateInBytes(rgConfig.getDispatchRateInBytes()/10);
+        rgConfig.setDispatchRateInMsgs(rgConfig.getDispatchRateInMsgs()/10);
+        rgConfig.setReplicationDispatchRateInBytes(rgConfig.getReplicationDispatchRateInBytes()/10);
+        rgConfig.setReplicationDispatchRateInMsgs(rgConfig.getReplicationDispatchRateInMsgs()/10);
         rgs.resourceGroupUpdate(rgName, rgConfig);
 
         Assert.assertEquals(rgs.getNumResourceGroups(), 1);
 
-        ResourceGroup retRG = rgs.resourceGroupGet(randomRgName);
-        Assert.assertNull(retRG);
+        Assert.assertNull(rgs.resourceGroupGet(randomRgName));
 
-        retRG = rgs.resourceGroupGet(rgName);
+        ResourceGroup retRG = rgs.resourceGroupGet(rgName);
         Assert.assertNotEquals(retRG, null);
 
         PerMonitoringClassFields monClassFields;
-        monClassFields = retRG.monitoringClassFields[ResourceGroupMonitoringClass.Publish.ordinal()];
+        monClassFields = retRG.getMonitoredEntity(ResourceGroupMonitoringClass.Publish, null);
         Assert.assertEquals(monClassFields.configValuesPerPeriod.bytes, rgConfig.getPublishRateInBytes().longValue());
         Assert.assertEquals(monClassFields.configValuesPerPeriod.messages, rgConfig.getPublishRateInMsgs().intValue());
-        monClassFields = retRG.monitoringClassFields[ResourceGroupMonitoringClass.Dispatch.ordinal()];
+        monClassFields = retRG.getMonitoredEntity(ResourceGroupMonitoringClass.Dispatch, null);
         Assert.assertEquals(monClassFields.configValuesPerPeriod.bytes, rgConfig.getDispatchRateInBytes().longValue());
         Assert.assertEquals(monClassFields.configValuesPerPeriod.messages, rgConfig.getDispatchRateInMsgs().intValue());
+        monClassFields = retRG.getMonitoredEntity(ResourceGroupMonitoringClass.ReplicationDispatch, "r1");
+        Assert.assertEquals(monClassFields.configValuesPerPeriod.bytes,
+                rgConfig.getReplicationDispatchRateInBytes().longValue());
+        Assert.assertEquals(monClassFields.configValuesPerPeriod.messages,
+                rgConfig.getReplicationDispatchRateInMsgs().intValue());
 
         Assert.assertThrows(PulsarAdminException.class, () -> rgs.resourceGroupDelete(randomRgName));
 
@@ -196,6 +346,7 @@ public class ResourceGroupServiceTest extends MockedPulsarServiceBaseTest {
 
         final NamespaceName tenantAndNamespace = NamespaceName.get(tenantName, namespaceName);
         rgs.registerNameSpace(rgName, tenantAndNamespace);
+        rgs.registerTopic(rgName, topic);
 
         // Delete of our valid config should throw until we unref correspondingly.
         Assert.assertThrows(PulsarAdminException.class, () -> rgs.resourceGroupDelete(rgName));
@@ -203,30 +354,23 @@ public class ResourceGroupServiceTest extends MockedPulsarServiceBaseTest {
         // Attempt to report for a few rounds (simulating a fill usage with transport mgr).
         // It should say "we need to report now" every 'maxUsageReportSuppressRounds' rounds,
         // even if usage does not change.
-        final ResourceUsage usage = new ResourceUsage();
-        NetworkUsage nwUsage;
-
-        boolean needToReport;
-        for (int monClassIdx = 0; monClassIdx < ResourceGroupMonitoringClass.values().length; monClassIdx++) {
-            ResourceGroupMonitoringClass monClass = ResourceGroupMonitoringClass.values()[monClassIdx];
-            // Gross hack!
-            if (monClass == ResourceGroupMonitoringClass.Publish) {
-                nwUsage = usage.setPublish();
-            } else {
-                nwUsage = usage.setDispatch();
-            }
-            // We know that dummyQuotaCalc::needToReportLocalUsage() makes us report usage once every
-            // maxUsageReportSuppressRounds iterations. So, if we run for maxUsageReportSuppressRounds iterations,
-            // we should see needToReportLocalUsage() return true at least once.
-            Set<Boolean> myBoolSet = new HashSet<>();
-            for (int idx = 0; idx < ResourceGroupService.MaxUsageReportSuppressRounds; idx++) {
-                needToReport = retRG.setUsageInMonitoredEntity(monClass, nwUsage);
-                myBoolSet.add(needToReport);
+        retRG.getMonitoringClassFieldsMap().forEach((k, v) -> {
+            List<ResourceUsage> usageList = new ArrayList<>();
+            for (int idx = 0; idx < conf.getResourceUsageMaxUsageReportSuppressRounds(); idx++) {
+                ResourceUsage usage = new ResourceUsage();
+                usageList.add(usage);
+                retRG.setUsageInMonitoredEntity(usage);
             }
             // Expect to see at least one true and at least one false.
-            Assert.assertTrue(myBoolSet.contains(true));
-            Assert.assertTrue(myBoolSet.contains(false));
-        }
+            Assert.assertTrue(usageList.stream()
+                    .anyMatch(n -> n.hasPublish() || n.hasDispatch() || n.getReplicatorsCount() != 0));
+            Assert.assertTrue(usageList.stream()
+                    .anyMatch(n -> (!n.hasPublish()) && (!n.hasDispatch()) && (n.getReplicatorsCount() == 0)));
+        });
+
+        rgs.unRegisterTenant(rgName, tenantName);
+        rgs.unRegisterNameSpace(rgName, tenantAndNamespace);
+        rgs.unRegisterTopic(topic);
 
         BytesAndMessagesCount publishQuota = rgs.getPublishRateLimiters(rgName);
 
@@ -255,6 +399,101 @@ public class ResourceGroupServiceTest extends MockedPulsarServiceBaseTest {
         Assert.assertThrows(PulsarAdminException.class, () -> rgs.getPublishRateLimiters(rgName));
 
         Assert.assertEquals(rgs.getNumResourceGroups(), 0);
+
+        Assert.assertEquals(rgs.getTopicConsumeStats().estimatedSize(), 0);
+        Assert.assertEquals(rgs.getTopicProduceStats().estimatedSize(), 0);
+        Assert.assertEquals(rgs.getReplicationDispatchStats().estimatedSize(), 0);
+        Assert.assertEquals(rgs.getTopicToReplicatorsMap().size(), 0);
+    }
+
+    @Test
+    public void testCleanupStatsWhenUnRegisterTopic()
+            throws PulsarAdminException {
+        String tenantName = UUID.randomUUID().toString();
+        org.apache.pulsar.common.policies.data.ResourceGroup rgConfig =
+                new org.apache.pulsar.common.policies.data.ResourceGroup();
+        final String rgName = UUID.randomUUID().toString();
+        rgConfig.setPublishRateInBytes(15000L);
+        rgConfig.setPublishRateInMsgs(100);
+        rgConfig.setDispatchRateInBytes(40000L);
+        rgConfig.setDispatchRateInMsgs(500);
+        rgConfig.setReplicationDispatchRateInBytes(2000L);
+        rgConfig.setReplicationDispatchRateInMsgs(400L);
+
+        rgs.resourceGroupCreate(rgName, rgConfig);
+        String nsName = tenantName + "/" + UUID.randomUUID();
+        TopicName topicName = TopicName.get(nsName + "/" + UUID.randomUUID());
+        String topic = topicName.toString();
+
+        rgs.registerTopic(rgName, topicName);
+
+        // Simulate replicator
+        rgs.updateStatsWithDiff(topic, "remote-cluster", tenantName, nsName, 1, 1,
+                ResourceGroupMonitoringClass.ReplicationDispatch);
+        rgs.updateStatsWithDiff(topic, null, tenantName, nsName, 1, 1,
+                ResourceGroupMonitoringClass.Publish);
+        rgs.updateStatsWithDiff(topic, null, tenantName, nsName, 1, 1,
+                ResourceGroupMonitoringClass.Dispatch);
+        Assert.assertEquals(rgs.getTopicProduceStats().asMap().size(), 1);
+        Assert.assertEquals(rgs.getTopicConsumeStats().asMap().size(), 1);
+        Assert.assertEquals(rgs.getReplicationDispatchStats().asMap().size(), 1);
+        Assert.assertEquals(rgs.getTopicToReplicatorsMap().size(), 1);
+        Set<String> replicators = rgs.getTopicToReplicatorsMap().get(rgs.getTopicToReplicatorsMap().keys().nextElement());
+        Assert.assertEquals(replicators.size(), 1);
+
+        rgs.unRegisterTopic(TopicName.get(topic));
+
+        Assert.assertEquals(rgs.getTopicProduceStats().asMap().size(), 0);
+        Assert.assertEquals(rgs.getTopicConsumeStats().asMap().size(), 0);
+        Assert.assertEquals(rgs.getReplicationDispatchStats().asMap().size(), 0);
+        Assert.assertEquals(rgs.getReplicationDispatchStats().asMap().size(), 0);
+        Assert.assertEquals(rgs.getTopicToReplicatorsMap().size(), 0);
+
+        rgs.resourceGroupDelete(rgName);
+    }
+
+    @Test
+    public void testCleanupStatsWhenUnRegisterNamespace()
+            throws PulsarAdminException {
+        String tenantName = UUID.randomUUID().toString();
+        org.apache.pulsar.common.policies.data.ResourceGroup rgConfig =
+                new org.apache.pulsar.common.policies.data.ResourceGroup();
+        final String rgName = UUID.randomUUID().toString();
+        rgConfig.setPublishRateInBytes(15000L);
+        rgConfig.setPublishRateInMsgs(100);
+        rgConfig.setDispatchRateInBytes(40000L);
+        rgConfig.setDispatchRateInMsgs(500);
+        rgConfig.setReplicationDispatchRateInBytes(2000L);
+        rgConfig.setReplicationDispatchRateInMsgs(400L);
+
+        rgs.resourceGroupCreate(rgName, rgConfig);
+        String nsName = tenantName + "/" + UUID.randomUUID();
+        TopicName topicName = TopicName.get(nsName + "/" + UUID.randomUUID());
+        String topic = topicName.toString();
+
+        rgs.registerNameSpace(rgName, topicName.getNamespaceObject());
+
+        // Simulate replicator
+        rgs.updateStatsWithDiff(topic, "remote-cluster", tenantName, nsName, 1, 1,
+                ResourceGroupMonitoringClass.ReplicationDispatch);
+        rgs.updateStatsWithDiff(topic, null, tenantName, nsName, 1, 1,
+                ResourceGroupMonitoringClass.Publish);
+        rgs.updateStatsWithDiff(topic, null, tenantName, nsName, 1, 1,
+                ResourceGroupMonitoringClass.Dispatch);
+        Assert.assertEquals(rgs.getTopicProduceStats().asMap().size(), 1);
+        Assert.assertEquals(rgs.getTopicConsumeStats().asMap().size(), 1);
+        Assert.assertEquals(rgs.getReplicationDispatchStats().asMap().size(), 1);
+        Set<String> replicators = rgs.getTopicToReplicatorsMap().get(rgs.getTopicToReplicatorsMap().keys().nextElement());
+        Assert.assertEquals(replicators.size(), 1);
+
+        rgs.unRegisterNameSpace(rgName, topicName.getNamespaceObject());
+
+        Assert.assertEquals(rgs.getTopicProduceStats().asMap().size(), 0);
+        Assert.assertEquals(rgs.getTopicConsumeStats().asMap().size(), 0);
+        Assert.assertEquals(rgs.getReplicationDispatchStats().asMap().size(), 0);
+        Assert.assertEquals(rgs.getTopicToReplicatorsMap().size(), 0);
+
+        rgs.resourceGroupDelete(rgName);
     }
 
     /**
@@ -300,6 +539,254 @@ public class ResourceGroupServiceTest extends MockedPulsarServiceBaseTest {
                 "SchedulersRunning flag should be false after close().");
     }
 
+    private void assertTopicStatsCache(Cache<String, BytesAndMessagesCount> cache, long durationMS) {
+        Optional<Expiration<String, BytesAndMessagesCount>> expirationOptional =
+                cache.policy().expireAfterAccess();
+        Assert.assertTrue(expirationOptional.isPresent());
+        Expiration<String, BytesAndMessagesCount> expiration = expirationOptional.get();
+        Assert.assertEquals(expiration.getExpiresAfter().toMillis(), durationMS);
+    }
+
+    @Test
+    public void testTopicStatsCache() {
+        long ms = 2_000;
+        Cache<String, BytesAndMessagesCount> cache =
+                pulsar.getResourceGroupServiceManager().newStatsCache(TimeUnit.MILLISECONDS.toMillis(ms));
+        String key = "topic-1";
+        BytesAndMessagesCount value = new BytesAndMessagesCount();
+        cache.put(key, value);
+        Assert.assertEquals(cache.getIfPresent(key), value);
+        Awaitility.await().pollDelay(ms + 200 , TimeUnit.MILLISECONDS).untilAsserted(() -> {
+            Assert.assertNull(cache.getIfPresent(key));
+        });
+
+        long expMS =
+                TimeUnit.SECONDS.toMillis(pulsar.getConfiguration().getResourceUsageTransportPublishIntervalInSecs())
+                        * 2;
+        assertTopicStatsCache(pulsar.getResourceGroupServiceManager().getTopicConsumeStats(), expMS);
+        assertTopicStatsCache(pulsar.getResourceGroupServiceManager().getTopicProduceStats(), expMS);
+        assertTopicStatsCache(pulsar.getResourceGroupServiceManager().getReplicationDispatchStats(), expMS);
+    }
+
+    @Test
+    public void testBrokerStatsCache() throws PulsarAdminException {
+        long ms = 2_000;
+        String key = "broker-1";
+        PerBrokerUsageStats value = new PerBrokerUsageStats();
+        PerMonitoringClassFields perMonitoringClassFields = PerMonitoringClassFields.create(ms);
+        Cache<String, PerBrokerUsageStats> usageFromOtherBrokers = perMonitoringClassFields.usageFromOtherBrokers;
+        usageFromOtherBrokers.put(key, value);
+        Assert.assertEquals(usageFromOtherBrokers.getIfPresent(key), value);
+        Awaitility.await().atMost(ms + 500, TimeUnit.MILLISECONDS).untilAsserted(() -> {
+            Assert.assertNull(usageFromOtherBrokers.getIfPresent(key));
+        });
+
+        org.apache.pulsar.common.policies.data.ResourceGroup rgConfig =
+                new org.apache.pulsar.common.policies.data.ResourceGroup();
+        final String rgName = UUID.randomUUID().toString();
+        rgConfig.setPublishRateInBytes(15000L);
+        rgConfig.setPublishRateInMsgs(100);
+        rgConfig.setDispatchRateInBytes(40000L);
+        rgConfig.setDispatchRateInMsgs(500);
+        rgConfig.setReplicationDispatchRateInBytes(2000L);
+        rgConfig.setReplicationDispatchRateInMsgs(400L);
+
+        ResourceGroupService resourceGroupServiceManager = pulsar.getResourceGroupServiceManager();
+        resourceGroupServiceManager.resourceGroupCreate(rgName, rgConfig);
+        ResourceGroup resourceGroup = resourceGroupServiceManager.resourceGroupGet(rgName);
+        PerMonitoringClassFields publishMonitoredEntity =
+                resourceGroup.getMonitoredEntity(ResourceGroupMonitoringClass.Publish, null);
+        Cache<String, PerBrokerUsageStats> cache = publishMonitoredEntity.usageFromOtherBrokers;
+        Optional<Expiration<String, PerBrokerUsageStats>> expirationOptional =
+                cache.policy().expireAfterWrite();
+        Assert.assertTrue(expirationOptional.isPresent());
+        Expiration<String, PerBrokerUsageStats> brokerUsageStatsExpiration = expirationOptional.get();
+
+        long statsDuration =
+                TimeUnit.SECONDS.toMillis(pulsar.getConfiguration().getResourceUsageTransportPublishIntervalInSecs())
+                        * conf.getResourceUsageMaxUsageReportSuppressRounds() * 2;
+        Assert.assertEquals(brokerUsageStatsExpiration.getExpiresAfter().toMillis(), statsDuration);
+    }
+
+    protected String getReplicatorDispatchRateLimiterKey(String remoteCluster) {
+        return DispatchRateLimiter.getReplicatorDispatchRateKey(pulsar.getConfiguration().getClusterName(),
+                remoteCluster);
+    }
+
+    @Test
+    public void testPublishAndDispatchQuotaCalculation() throws PulsarAdminException {
+        // Mocks and setup
+        ResourceUsageTransportManager resourceUsageTransportManager = mock(ResourceUsageTransportManager.class);
+        ResourceGroupService resourceGroupService = new ResourceGroupService(
+                pulsar, TimeUnit.HOURS, resourceUsageTransportManager,
+                new ResourceQuotaCalculatorImpl(pulsar)
+        );
+
+        // Setup: Resource Group Configuration
+        String rg1Name = UUID.randomUUID().toString();
+        org.apache.pulsar.common.policies.data.ResourceGroup rg1Config =
+                new org.apache.pulsar.common.policies.data.ResourceGroup();
+        rg1Config.setPublishRateInBytes(100L);
+        rg1Config.setPublishRateInMsgs(200);
+        rg1Config.setDispatchRateInBytes(40000L);
+        rg1Config.setDispatchRateInMsgs(500);
+
+        resourceGroupService.resourceGroupCreate(rg1Name, rg1Config);
+        ResourceGroup rg1Ref = resourceGroupService.resourceGroupGet(rg1Name);
+
+        // Verify initial publish limiter values
+        ResourceGroupPublishLimiter publishLimiter = rg1Ref.getResourceGroupPublishLimiter();
+        Assert.assertEquals(publishLimiter.getResourceGroupPublishValues().bytes, 100L);
+        Assert.assertEquals(publishLimiter.getResourceGroupPublishValues().messages, 200);
+
+        // Verify initial dispatch limiter values
+        ResourceGroupDispatchLimiter dispatchLimiter = rg1Ref.getResourceGroupDispatchLimiter();
+        Assert.assertEquals(dispatchLimiter.getDispatchRateOnByte(), 40000L);
+        Assert.assertEquals(dispatchLimiter.getDispatchRateOnMsg(), 500);
+
+        // Simulate local usage
+        ResourceUsage localUsage = new ResourceUsage();
+        // Local dispatch usage
+        localUsage.setDispatch().setBytesPerPeriod(100).setMessagesPerPeriod(200);
+        // Local publish usage
+        localUsage.setPublish().setBytesPerPeriod(50).setMessagesPerPeriod(150);
+
+        // Simulate remote usage
+        ResourceUsage remoteUsage = new ResourceUsage();
+        // Remote dispatch usage
+        remoteUsage.setDispatch().setBytesPerPeriod(500).setMessagesPerPeriod(800);
+        // Remote publish usage
+        remoteUsage.setPublish().setBytesPerPeriod(250).setMessagesPerPeriod(600);
+
+        // Report usages
+        rg1Ref.getUsageFromMonitoredEntity(remoteUsage, "pulsar://broker-2:6650");
+        rg1Ref.getUsageFromMonitoredEntity(localUsage, pulsar.getBrokerServiceUrl());
+
+        // Calculate publish quota
+        // Global limits: messages = 200, bytes = 100
+        // Usage:
+        //  - Local: messages = 150, bytes = 50
+        // - Remote: messages = 600, bytes = 250
+        // Quota:
+        // - Messages: 150 / (150 + 600) * 200 ≈ 40
+        // - Bytes: 50 / (50 + 250) * 100 ≈ 16
+        resourceGroupService.calculateQuotaByMonClass(rg1Name, rg1Ref, ResourceGroupMonitoringClass.Publish);
+        publishLimiter = rg1Ref.getResourceGroupPublishLimiter();
+        Assert.assertEquals(publishLimiter.getResourceGroupPublishValues().bytes, 16);
+        Assert.assertEquals(publishLimiter.getResourceGroupPublishValues().messages, 40);
+
+        // Calculate dispatch quota
+        // Global limits: messages = 500, bytes = 40000
+        // Usage:
+        // - Local: messages = 200, bytes = 100
+        // - Remote: messages = 800, bytes = 500
+        // Quota:
+        // - Messages: 200 / (200 + 800) * 500 = 100
+        // - Bytes: 100 / (100 + 500) * 40000 ≈ 6666
+        resourceGroupService.calculateQuotaByMonClass(rg1Name, rg1Ref, ResourceGroupMonitoringClass.Dispatch);
+        dispatchLimiter = rg1Ref.getResourceGroupDispatchLimiter();
+        Assert.assertEquals(dispatchLimiter.getDispatchRateOnByte(), 6666);
+        Assert.assertEquals(dispatchLimiter.getDispatchRateOnMsg(), 100);
+    }
+
+    @Test
+    public void testReplicationDispatchQuotaCalculation() throws PulsarAdminException {
+        ResourceUsageTransportManager transportManager = mock(ResourceUsageTransportManager.class);
+        ResourceGroupService resourceGroupService = new ResourceGroupService(
+                pulsar, TimeUnit.HOURS, transportManager, new ResourceQuotaCalculatorImpl(pulsar));
+
+        String rgName = UUID.randomUUID().toString();
+        org.apache.pulsar.common.policies.data.ResourceGroup rgConfig = new org.apache.pulsar.common.policies.data.ResourceGroup();
+        rgConfig.setReplicationDispatchRateInBytes(2000L);
+        rgConfig.setReplicationDispatchRateInMsgs(400L);
+
+        Map<String, DispatchRate> replicatorDispatchRateMap = new HashMap<>();
+        replicatorDispatchRateMap.put(getReplicatorDispatchRateLimiterKey("r1"), DispatchRate.builder().dispatchThrottlingRateInByte(1000).dispatchThrottlingRateInMsg(300).build());
+        replicatorDispatchRateMap.put(getReplicatorDispatchRateLimiterKey("r3"), DispatchRate.builder().dispatchThrottlingRateInByte(500).dispatchThrottlingRateInMsg(100).build());
+        rgConfig.setReplicatorDispatchRate(replicatorDispatchRateMap);
+
+        resourceGroupService.resourceGroupCreate(rgName, rgConfig);
+        ResourceGroup rg = resourceGroupService.resourceGroupGet(rgName);
+
+        Map<String, AtomicReference<ResourceGroupDispatchLimiter>> limiters = new HashMap<>();
+        for (String cluster : Lists.newArrayList("r1", "r2", "r3", "r4")) {
+            AtomicReference<ResourceGroupDispatchLimiter> ref = new AtomicReference<>();
+            rg.registerReplicatorDispatchRateLimiter(cluster, ref::set);
+            limiters.put(cluster, ref);
+        }
+
+        // Local usage
+        ResourceUsage local = new ResourceUsage();
+        local.addReplicator().setRemoteCluster("r1").setNetworkUsage().setBytesPerPeriod(100).setMessagesPerPeriod(100);
+        local.addReplicator().setRemoteCluster("r2").setNetworkUsage().setBytesPerPeriod(1400).setMessagesPerPeriod(90);
+        local.addReplicator().setRemoteCluster("r3").setNetworkUsage().setBytesPerPeriod(300).setMessagesPerPeriod(50);
+        local.addReplicator().setRemoteCluster("r4").setNetworkUsage().setBytesPerPeriod(100).setMessagesPerPeriod(10);
+        local.addReplicator().setRemoteCluster("r5").setNetworkUsage().setBytesPerPeriod(1900).setMessagesPerPeriod(100);
+
+        // Remote usage
+        ResourceUsage remote = new ResourceUsage();
+        remote.addReplicator().setRemoteCluster("r1").setNetworkUsage().setBytesPerPeriod(50).setMessagesPerPeriod(20);
+        remote.addReplicator().setRemoteCluster("r2").setNetworkUsage().setBytesPerPeriod(400).setMessagesPerPeriod(280);
+        remote.addReplicator().setRemoteCluster("r3").setNetworkUsage().setBytesPerPeriod(100).setMessagesPerPeriod(50);
+        remote.addReplicator().setRemoteCluster("r4").setNetworkUsage().setBytesPerPeriod(200).setMessagesPerPeriod(80);
+        remote.addReplicator().setRemoteCluster("r5").setNetworkUsage().setBytesPerPeriod(100).setMessagesPerPeriod(40);
+
+        rg.getUsageFromMonitoredEntity(remote, "pulsar://broker-remote");
+        rg.getUsageFromMonitoredEntity(local, pulsar.getBrokerServiceUrl());
+
+        resourceGroupService.calculateQuotaByMonClass(rgName, rg, ResourceGroupMonitoringClass.ReplicationDispatch);
+
+        // r1 (specific)
+        // Global limits: 1000 bytes, 300 messages
+        // Local usage: 100 B / 100 M
+        // Remote usage: 50 B / 20 M
+        // Quota calculation:
+        // 100 / (100 + 50) * 1000 = 666.67 (≈ 666) B
+        // 100 / (100 + 20) * 300 = 250 (M)
+        Assert.assertEquals(limiters.get("r1").get().getDispatchRateOnByte(), 666);
+        Assert.assertEquals(limiters.get("r1").get().getDispatchRateOnMsg(), 250);
+
+        // r3 (specific)
+        // Global limits: 500 bytes, 100 messages
+        // Local usage: 300 B / 50 M
+        // Remote usage: 100 B / 50 M
+        // Quota calculation:
+        // 300 / (300 + 100) * 500 = 375 (B)
+        // 50 / (50 + 50) * 100 = 50 (M)
+        Assert.assertEquals(limiters.get("r3").get().getDispatchRateOnByte(), 375);
+        Assert.assertEquals(limiters.get("r3").get().getDispatchRateOnMsg(), 50);
+
+        // r2, r4 (global)
+        // Local usage:
+        // r2: 1400 B / 90 M
+        // r4: 100 B / 10 M
+        // r5: 1900 B / 100 M
+        // Remote usage:
+        // r2: 400 B / 280 M
+        // r4: 200 B / 80 M
+        // r5: 100 B / 40 M
+        // Total usage:
+        // r2: 1400 + 400 = 1800 B / 90 + 280 = 370 M
+        // r4: 100 + 200 = 300 B / 10 + 80 = 90 M
+        // r5: 1900 + 100 = 2000 B / 100 + 40 = 140 M
+
+        // long totalBytesLocal = 1400 + 100 + 1900; // 3400
+        // long totalMsgsLocal = 90 + 10 + 100; // 200
+        // long totalBytes= 1800 + 300 + 2000; // 4100
+        // long totalMsgs = 370 + 90 + 140;  // 600
+
+        // Global limit: 2000 bytes, 400 messages
+        // Quota calculation:
+        // 3400 / 4100 * 2000 = 1658.54 (≈ 1658) B
+        // 200 / 600 * 400 = 133.33 (≈ 133) M
+        for (String cluster : Lists.newArrayList("r2", "r4")) {
+            ResourceGroupDispatchLimiter limiter = limiters.get(cluster).get();
+            Assert.assertNotNull(limiter);
+            Assert.assertEquals(limiter.getDispatchRateOnByte(), 1658);
+            Assert.assertEquals(limiter.getDispatchRateOnMsg(), 133);
+        }
+    }
+
     private ResourceGroupService rgs;
     int numAnonymousQuotaCalculations;
 
@@ -307,7 +794,6 @@ public class ResourceGroupServiceTest extends MockedPulsarServiceBaseTest {
 
     private static final int PUBLISH_INTERVAL_SECS = 500;
     private void prepareData() throws PulsarAdminException {
-        this.conf.setResourceUsageTransportPublishIntervalInSecs(PUBLISH_INTERVAL_SECS);
         admin.clusters().createCluster("test", ClusterData.builder().serviceUrl(pulsar.getWebServiceAddress()).build());
     }
     /**

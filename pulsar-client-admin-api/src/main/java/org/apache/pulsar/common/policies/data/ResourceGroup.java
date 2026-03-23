@@ -18,6 +18,8 @@
  */
 package org.apache.pulsar.common.policies.data;
 
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import lombok.Data;
 
 @Data
@@ -26,4 +28,9 @@ public class ResourceGroup {
     private Long publishRateInBytes;
     private Integer dispatchRateInMsgs;
     private Long dispatchRateInBytes;
+
+    private Long replicationDispatchRateInMsgs;
+    private Long replicationDispatchRateInBytes;
+
+    private Map<String, DispatchRate> replicatorDispatchRate = new ConcurrentHashMap<>();
 }
