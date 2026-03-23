@@ -169,6 +169,7 @@ public class SameAuthParamsLookupAutoClusterFailoverTest {
     }
 
     /**
+<<<<<<< HEAD
      * Reproduces the bug fixed by resetting state of higher-priority-than-target indices on
      * recovery. The check loop only probes indices 0..currentPulsarServiceIndex, so if a
      * higher index was left in a transient state (e.g., PreFail from a single timed-out
@@ -232,6 +233,8 @@ public class SameAuthParamsLookupAutoClusterFailoverTest {
     }
 
     /**
+=======
+>>>>>>> 2b9ef9239dd ([fix][client] Fix stale Healthy state in SameAuthParamsLookupAutoClusterFailover causing flaky test (#25388))
      * Verifies that recovery still works correctly for a service that was marked Failed
      * by findFailoverTo, once that service becomes available again.
      */
