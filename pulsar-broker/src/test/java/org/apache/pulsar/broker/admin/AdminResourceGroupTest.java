@@ -1,0 +1,241 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+package org.apache.pulsar.broker.admin;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.testng.Assert.assertEquals;
+import static org.testng.Assert.assertNotNull;
+import static org.testng.Assert.assertNull;
+import static org.testng.Assert.assertThrows;
+import static org.testng.Assert.assertTrue;
+import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
+import org.apache.commons.lang3.StringUtils;
+import org.apache.pulsar.broker.resourcegroup.ResourceGroupDispatchLimiter;
+import org.apache.pulsar.broker.service.BrokerTestBase;
+import org.apache.pulsar.client.admin.PulsarAdminException;
+import org.apache.pulsar.common.naming.TopicName;
+import org.apache.pulsar.common.policies.data.DispatchRate;
+import org.apache.pulsar.common.policies.data.ResourceGroup;
+import org.awaitility.Awaitility;
+import org.testng.annotations.AfterClass;
+import org.testng.annotations.BeforeClass;
+import org.testng.annotations.Test;
+
+/**
+ * Unit test {@link AdminResource}.
+ */
+@Test(groups = "broker-admin")
+public class AdminResourceGroupTest extends BrokerTestBase {
+
+    @BeforeClass
+    @Override
+    public void setup() throws Exception {
+        super.baseSetup();
+    }
+
+    @AfterClass(alwaysRun = true)
+    @Override
+    protected void cleanup() throws Exception {
+        super.internalCleanup();
+    }
+
+    @Override
+    protected void doInitConf() throws Exception {
+        super.doInitConf();
+        conf.setTopicLevelPoliciesEnabled(true);
+        conf.setSystemTopicEnabled(true);
+    }
+
+    @Test
+    public void testTopicResourceGroup() throws PulsarAdminException {
+        String topic = newTopicName();
+        TopicName topicName = TopicName.get(topic);
+
+        String resourceGroupName = "rg-topic-" + UUID.randomUUID();
+        ResourceGroup resourceGroup = new ResourceGroup();
+        resourceGroup.setPublishRateInMsgs(1000);
+        resourceGroup.setPublishRateInBytes(100000L);
+        resourceGroup.setDispatchRateInMsgs(2000);
+        resourceGroup.setDispatchRateInBytes(200000L);
+        admin.resourcegroups().createResourceGroup(resourceGroupName, resourceGroup);
+
+        admin.topics().createNonPartitionedTopic(topic);
+
+        admin.topicPolicies().setResourceGroup(topic, resourceGroupName);
+        Awaitility.await().untilAsserted(() -> {
+            assertEquals(admin.topicPolicies().getResourceGroup(topic, true), resourceGroupName);
+        });
+
+        Awaitility.await().untilAsserted(() -> {
+            org.apache.pulsar.broker.resourcegroup.ResourceGroup rg = pulsar.getResourceGroupServiceManager()
+                    .getTopicResourceGroup(topicName);
+            assertNotNull(rg);
+            assertEquals(rg.resourceGroupName, resourceGroupName);
+        });
+
+        assertThrows(PulsarAdminException.PreconditionFailedException.class, () -> {
+            admin.resourcegroups().deleteResourceGroup(resourceGroupName);
+        });
+
+        admin.topicPolicies().removeResourceGroup(topic);
+        Awaitility.await().untilAsserted(() -> {
+            assertTrue(StringUtils.isEmpty(admin.topicPolicies().getResourceGroup(topic, true)));
+            org.apache.pulsar.broker.resourcegroup.ResourceGroup rg = pulsar.getResourceGroupServiceManager()
+                    .getTopicResourceGroup(topicName);
+            assertNull(rg);
+        });
+        admin.resourcegroups().deleteResourceGroup(resourceGroupName);
+    }
+
+    @Test
+    public void testTopicResourceGroupOverriderNamespaceResourceGroup() throws PulsarAdminException {
+        String namespaceResourceGroupName = "rg-ns-" + UUID.randomUUID();
+        ResourceGroup namespaceResourceGroup = new ResourceGroup();
+        namespaceResourceGroup.setPublishRateInMsgs(1001);
+        namespaceResourceGroup.setPublishRateInBytes(100001L);
+        namespaceResourceGroup.setDispatchRateInMsgs(2001);
+        namespaceResourceGroup.setDispatchRateInBytes(200001L);
+        admin.resourcegroups().createResourceGroup(namespaceResourceGroupName, namespaceResourceGroup);
+
+        String topicResourceGroupName = "rg-topic-" + UUID.randomUUID();
+        ResourceGroup topicResourceGroup = new ResourceGroup();
+        topicResourceGroup.setPublishRateInMsgs(1000);
+        topicResourceGroup.setPublishRateInBytes(100000L);
+        topicResourceGroup.setDispatchRateInMsgs(2000);
+        topicResourceGroup.setDispatchRateInBytes(200000L);
+        admin.resourcegroups().createResourceGroup(topicResourceGroupName, topicResourceGroup);
+
+        String topic = newTopicName();
+        TopicName topicName = TopicName.get(topic);
+        String namespace = topicName.getNamespace();
+        admin.namespaces().setNamespaceResourceGroup(namespace, namespaceResourceGroupName);
+        assertEquals(admin.namespaces().getNamespaceResourceGroup(namespace), namespaceResourceGroupName);
+
+        admin.topics().createNonPartitionedTopic(topic);
+        admin.topicPolicies().setResourceGroup(topic, topicResourceGroupName);
+        Awaitility.await().untilAsserted(() -> {
+            assertEquals(admin.topicPolicies()
+                    .getResourceGroup(topic, true), topicResourceGroupName);
+            org.apache.pulsar.broker.resourcegroup.ResourceGroup rg = pulsar.getResourceGroupServiceManager()
+                    .getTopicResourceGroup(topicName);
+            assertNotNull(rg);
+            assertEquals(rg.resourceGroupName, topicResourceGroupName);
+        });
+
+        assertThrows(PulsarAdminException.PreconditionFailedException.class, () -> {
+            admin.resourcegroups().deleteResourceGroup(topicResourceGroupName);
+        });
+        assertThrows(PulsarAdminException.PreconditionFailedException.class, () -> {
+            admin.resourcegroups().deleteResourceGroup(namespaceResourceGroupName);
+        });
+
+        admin.topicPolicies().removeResourceGroup(topic);
+        Awaitility.await().untilAsserted(() -> {
+            assertEquals(admin.topicPolicies()
+                    .getResourceGroup(topic, true), namespaceResourceGroupName);
+            org.apache.pulsar.broker.resourcegroup.ResourceGroup rg = pulsar.getResourceGroupServiceManager()
+                    .getTopicResourceGroup(topicName);
+            assertNull(rg);
+        });
+        admin.resourcegroups().deleteResourceGroup(topicResourceGroupName);
+        admin.namespaces().removeNamespaceResourceGroup(namespace);
+        Awaitility.await().untilAsserted(() -> {
+            org.apache.pulsar.broker.resourcegroup.ResourceGroup rg = pulsar.getResourceGroupServiceManager()
+                    .getNamespaceResourceGroup(topicName.getNamespaceObject());
+            assertNull(rg);
+        });
+        admin.resourcegroups().deleteResourceGroup(namespaceResourceGroupName);
+    }
+
+    @Test
+    public void testUpdateResourceGroup() throws PulsarAdminException {
+        String resourceGroupName = "rg-" + UUID.randomUUID();
+        ResourceGroup resourceGroup = new ResourceGroup();
+        resourceGroup.setPublishRateInMsgs(1000);
+        resourceGroup.setPublishRateInBytes(100000L);
+        resourceGroup.setDispatchRateInMsgs(2000);
+        resourceGroup.setDispatchRateInBytes(200000L);
+        resourceGroup.setReplicationDispatchRateInMsgs(10L);
+        resourceGroup.setReplicationDispatchRateInBytes(20L);
+
+        admin.resourcegroups().createResourceGroup(resourceGroupName, resourceGroup);
+        ResourceGroup got = admin.resourcegroups().getResourceGroup(resourceGroupName);
+        assertEquals(got, resourceGroup);
+
+        resourceGroup.setReplicationDispatchRateInMsgs(11L);
+        resourceGroup.setReplicationDispatchRateInBytes(29L);
+        admin.resourcegroups().updateResourceGroup(resourceGroupName, resourceGroup);
+        got = admin.resourcegroups().getResourceGroup(resourceGroupName);
+        assertEquals(got, resourceGroup);
+
+        admin.resourcegroups().deleteResourceGroup(resourceGroupName);
+        assertThrows(PulsarAdminException.NotFoundException.class,
+                () -> admin.resourcegroups().getResourceGroup(resourceGroupName));
+    }
+
+    @Test
+    public void testReplicatorDispatchRate() throws PulsarAdminException {
+        String resourceGroupName = "rg-" + UUID.randomUUID();
+        ResourceGroup resourceGroup = new ResourceGroup();
+        resourceGroup.setPublishRateInMsgs(1000);
+        resourceGroup.setPublishRateInBytes(100000L);
+        resourceGroup.setDispatchRateInMsgs(2000);
+        resourceGroup.setDispatchRateInBytes(200000L);
+        resourceGroup.setReplicationDispatchRateInMsgs(10L);
+        resourceGroup.setReplicationDispatchRateInBytes(20L);
+
+        admin.resourcegroups().createResourceGroup(resourceGroupName, resourceGroup);
+        Awaitility.await().untilAsserted(() -> assertThat(
+                pulsar.getResourceGroupServiceManager().resourceGroupGet(resourceGroupName)).isNotNull());
+
+        org.apache.pulsar.broker.resourcegroup.ResourceGroup rgRef =
+                pulsar.getResourceGroupServiceManager().resourceGroupGet(resourceGroupName);
+
+        AtomicReference<ResourceGroupDispatchLimiter> r2Limiter = new AtomicReference<>();
+        rgRef.registerReplicatorDispatchRateLimiter("r2", r2Limiter::set);
+        assertThat(r2Limiter.get()).isEqualTo(rgRef.getResourceGroupReplicationDispatchLimiter());
+
+        String targetCluster = "r2";
+        DispatchRate dispatchRate =
+                DispatchRate.builder()
+                        .dispatchThrottlingRateInByte(10)
+                        .dispatchThrottlingRateInMsg(20)
+                        .ratePeriodInSecond(100)
+                        .relativeToPublishRate(false)
+                        .build();
+        admin.resourcegroups().setReplicatorDispatchRate(resourceGroupName, targetCluster, dispatchRate);
+        Awaitility.await().untilAsserted(() -> {
+            ResourceGroupDispatchLimiter resourceGroupDispatchLimiter = r2Limiter.get();
+            assertThat(resourceGroupDispatchLimiter).satisfies(n -> {
+                assertThat(n.getDispatchRateOnByte()).isEqualTo(10);
+                assertThat(n.getDispatchRateOnMsg()).isEqualTo(20);
+            });
+        });
+
+        assertThat(admin.resourcegroups().getReplicatorDispatchRate(resourceGroupName, targetCluster))
+                .isEqualTo(dispatchRate);
+        admin.resourcegroups().removeReplicatorDispatchRate(resourceGroupName, targetCluster);
+        assertThat(admin.resourcegroups().getReplicatorDispatchRate(resourceGroupName, targetCluster)).isNull();
+
+        Awaitility.await().untilAsserted(() -> {
+            assertThat(r2Limiter.get()).isEqualTo(rgRef.getResourceGroupReplicationDispatchLimiter());
+        });
+    }
+}

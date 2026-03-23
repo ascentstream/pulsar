@@ -596,13 +596,13 @@ public class RGUsageMTAggrWaitForAllMsgsTest extends ProducerConsumerBase {
                     final String tenantRGName = topicToTenantRGName(topic);
                     if (!rgsWithPublishStatsGathered.contains(tenantRGName)) {
                         prodCounts = this.rgservice.getRGUsage(tenantRGName, ResourceGroupMonitoringClass.Publish,
-                                getCumulativeUsageStats);
+                                getCumulativeUsageStats).entrySet().iterator().next().getValue();
                         totalTenantRGProdCounts = ResourceGroup.accumulateBMCount(totalTenantRGProdCounts, prodCounts);
                         rgsWithPublishStatsGathered.add(tenantRGName);
                     }
                     if (!rgsWithDispatchStatsGathered.contains(tenantRGName)) {
                         consCounts = this.rgservice.getRGUsage(tenantRGName, ResourceGroupMonitoringClass.Dispatch,
-                                getCumulativeUsageStats);
+                                getCumulativeUsageStats).entrySet().iterator().next().getValue();
                         totalTenantRGConsCounts = ResourceGroup.accumulateBMCount(totalTenantRGConsCounts, consCounts);
                         rgsWithDispatchStatsGathered.add(tenantRGName);
                     }
@@ -613,13 +613,13 @@ public class RGUsageMTAggrWaitForAllMsgsTest extends ProducerConsumerBase {
                     if (tenantRGName.compareTo(nsRGName) != 0) {
                         if (!rgsWithPublishStatsGathered.contains(nsRGName)) {
                             prodCounts = this.rgservice.getRGUsage(nsRGName, ResourceGroupMonitoringClass.Publish,
-                                    getCumulativeUsageStats);
+                                    getCumulativeUsageStats).entrySet().iterator().next().getValue();
                             totalNsRGProdCounts = ResourceGroup.accumulateBMCount(totalNsRGProdCounts, prodCounts);
                             rgsWithPublishStatsGathered.add(nsRGName);
                         }
                         if (!rgsWithDispatchStatsGathered.contains(nsRGName)) {
                             consCounts = this.rgservice.getRGUsage(nsRGName, ResourceGroupMonitoringClass.Dispatch,
-                                    getCumulativeUsageStats);
+                                    getCumulativeUsageStats).entrySet().iterator().next().getValue();
                             totalNsRGConsCounts = ResourceGroup.accumulateBMCount(totalNsRGConsCounts, consCounts);
                             rgsWithDispatchStatsGathered.add(nsRGName);
                         }
@@ -683,11 +683,17 @@ public class RGUsageMTAggrWaitForAllMsgsTest extends ProducerConsumerBase {
             for (ResourceGroupMonitoringClass mc : ResourceGroupMonitoringClass.values()) {
                 String mcName = mc.name();
                 int mcIndex = mc.ordinal();
-                totalQuotaBytes[mcIndex] += ResourceGroupService.getRgQuotaByteCount(rgName, mcName);
-                totalQuotaMessages[mcIndex] += ResourceGroupService.getRgQuotaMessageCount(rgName, mcName);
-                totalUsedBytes[mcIndex] += ResourceGroupService.getRgLocalUsageByteCount(rgName, mcName);
-                totalUsedMessages[mcIndex] += ResourceGroupService.getRgLocalUsageMessageCount(rgName, mcName);
-                totalUsageReportCounts[mcIndex] += ResourceGroup.getRgUsageReportedCount(rgName, mcName);
+                double quotaBytes = ResourceGroupService.getRgQuotaByteCount(rgName, mcName, pulsar.getConfiguration().getClusterName(),null);
+                totalQuotaBytes[mcIndex] += quotaBytes;
+                double quotaMesgs = ResourceGroupService.getRgQuotaMessageCount(rgName, mcName,pulsar.getConfiguration().getClusterName(),null);
+                totalQuotaMessages[mcIndex] += quotaMesgs;
+                double usedBytes = ResourceGroupService.getRgLocalUsageByteCount(rgName, mcName,pulsar.getConfiguration().getClusterName(),null);
+                totalUsedBytes[mcIndex] += usedBytes;
+                double usedMesgs = ResourceGroupService.getRgLocalUsageMessageCount(rgName, mcName,pulsar.getConfiguration().getClusterName(),null);
+                totalUsedMessages[mcIndex] += usedMesgs;
+
+                double usageReportedCount = ResourceGroup.getRgUsageReportedCount(rgName, mcName);
+                totalUsageReportCounts[mcIndex] += usageReportedCount;
             }
 
             totalTenantRegisters += ResourceGroupService.getRgTenantRegistersCount(rgName);

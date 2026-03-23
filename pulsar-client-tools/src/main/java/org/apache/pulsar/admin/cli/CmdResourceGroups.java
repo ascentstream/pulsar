@@ -21,6 +21,7 @@ package org.apache.pulsar.admin.cli;
 import java.util.function.Supplier;
 import org.apache.pulsar.client.admin.PulsarAdmin;
 import org.apache.pulsar.client.admin.PulsarAdminException;
+import org.apache.pulsar.common.policies.data.DispatchRate;
 import org.apache.pulsar.common.policies.data.ResourceGroup;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
@@ -73,6 +74,14 @@ public class CmdResourceGroups extends CmdBase {
                 + "(default -1 will be overwrite if not passed)", required = false)
         private Long dispatchRateInBytes;
 
+        @Option(names = {"--replication-msg-dispatch-rate"}, description = "replication-msg-dispatch-rate "
+                + "(default -1 will be overwrite if not passed)", required = false)
+        private Long replicationDispatchRateInMsgs;
+
+        @Option(names = {"--replication-byte-dispatch-rate"}, description = "replication-byte-dispatch-rate "
+                + "(default -1 will be overwrite if not passed)", required = false)
+        private Long replicationDispatchRateInBytes;
+
         @Override
         void run() throws PulsarAdminException {
             ResourceGroup resourcegroup = new ResourceGroup();
@@ -80,6 +89,8 @@ public class CmdResourceGroups extends CmdBase {
             resourcegroup.setDispatchRateInBytes(dispatchRateInBytes);
             resourcegroup.setPublishRateInMsgs(publishRateInMsgs);
             resourcegroup.setPublishRateInBytes(publishRateInBytes);
+            resourcegroup.setReplicationDispatchRateInMsgs(replicationDispatchRateInMsgs);
+            resourcegroup.setReplicationDispatchRateInBytes(replicationDispatchRateInBytes);
             getAdmin().resourcegroups().createResourceGroup(resourceGroupName, resourcegroup);
         }
     }
@@ -106,6 +117,14 @@ public class CmdResourceGroups extends CmdBase {
                 "-bd" }, description = "byte-dispatch-rate ", required = false)
         private Long dispatchRateInBytes;
 
+        @Option(names = {"--replication-msg-dispatch-rate"}, description = "replication-msg-dispatch-rate "
+                + "(default -1 will be overwrite if not passed)", required = false)
+        private Long replicationDispatchRateInMsgs;
+
+        @Option(names = {"--replication-byte-dispatch-rate"}, description = "replication-byte-dispatch-rate "
+                + "(default -1 will be overwrite if not passed)", required = false)
+        private Long replicationDispatchRateInBytes;
+
         @Override
         void run() throws PulsarAdminException {
             ResourceGroup resourcegroup = new ResourceGroup();
@@ -113,6 +132,8 @@ public class CmdResourceGroups extends CmdBase {
             resourcegroup.setDispatchRateInBytes(dispatchRateInBytes);
             resourcegroup.setPublishRateInMsgs(publishRateInMsgs);
             resourcegroup.setPublishRateInBytes(publishRateInBytes);
+            resourcegroup.setReplicationDispatchRateInMsgs(replicationDispatchRateInMsgs);
+            resourcegroup.setReplicationDispatchRateInBytes(replicationDispatchRateInBytes);
 
             getAdmin().resourcegroups().updateResourceGroup(resourceGroupName, resourcegroup);
         }
@@ -129,6 +150,65 @@ public class CmdResourceGroups extends CmdBase {
         }
     }
 
+    @Command(description = "Set replicator rate limiter for a resourcegroup")
+    private class SetReplicatorDispatchRate extends CliCommand {
+        @Parameters(description = "resourcegroup-name", arity = "1")
+        private String resourceGroupName;
+
+        @Option(names = {"--msg-dispatch-rate",
+                "-md"}, description = "message-dispatch-rate "
+                + "(default -1 will be overwrite if not passed)", required = false)
+        private int msgDispatchRate = -1;
+
+        @Option(names = {"--byte-dispatch-rate",
+                "-bd"}, description = "byte-dispatch-rate (default -1 will be overwrite if not passed)",
+                required = false)
+        private long byteDispatchRate = -1;
+
+        @Option(names = "--cluster", description = "The remote cluster for which set the dispatch rate",
+                required = true)
+        private String cluster;
+
+        @Override
+        void run() throws PulsarAdminException {
+            getAdmin().resourcegroups().setReplicatorDispatchRate(resourceGroupName, cluster,
+                    DispatchRate.builder()
+                            .dispatchThrottlingRateInMsg(msgDispatchRate)
+                            .dispatchThrottlingRateInByte(byteDispatchRate)
+                            .build());
+        }
+    }
+
+    @Command(description ="Get replicator rate limiter from a resourcegroup")
+    private class GetReplicatorDispatchRate extends CliCommand {
+        @Parameters(description = "resourcegroup-name", arity = "1")
+        private String resourceGroupName;
+
+        @Option(names = "--cluster", description = "The remote cluster for which set the dispatch rate",
+                required = true)
+        private String cluster;
+
+        @Override
+        void run() throws PulsarAdminException {
+            print(getAdmin().resourcegroups().getReplicatorDispatchRate(resourceGroupName, cluster));
+        }
+    }
+
+    @Command(description = "Remove replicator rate limiter from a resourcegroup")
+    private class RemoveReplicatorDispatchRate extends CliCommand {
+        @Parameters(description = "resourcegroup-name", arity = "1")
+        private String resourceGroupName;
+
+        @Option(names = "--cluster", description = "The remote cluster for which set the dispatch rate",
+                required = true)
+        private String cluster;
+
+        @Override
+        void run() throws PulsarAdminException {
+            getAdmin().resourcegroups().removeReplicatorDispatchRate(resourceGroupName, cluster);
+        }
+    }
+
 
     public CmdResourceGroups(Supplier<PulsarAdmin> admin) {
         super("resourcegroups", admin);
@@ -137,6 +217,9 @@ public class CmdResourceGroups extends CmdBase {
         addCommand("create", new CmdResourceGroups.Create());
         addCommand("update", new CmdResourceGroups.Update());
         addCommand("delete", new CmdResourceGroups.Delete());
+        addCommand("get-replicator-dispatch-rate", new GetReplicatorDispatchRate());
+        addCommand("set-replicator-dispatch-rate", new SetReplicatorDispatchRate());
+        addCommand("remove-replicator-dispatch-rate", new RemoveReplicatorDispatchRate());
     }
 
 

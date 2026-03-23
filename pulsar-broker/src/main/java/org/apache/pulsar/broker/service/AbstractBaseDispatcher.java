@@ -20,6 +20,7 @@ package org.apache.pulsar.broker.service;
 
 import static org.apache.bookkeeper.mledger.util.PositionAckSetUtil.andAckSet;
 import static org.apache.bookkeeper.mledger.util.PositionAckSetUtil.isAckSetEmpty;
+import static org.apache.pulsar.broker.service.persistent.DispatchRateLimiter.Type.RESOURCE_GROUP;
 import static org.apache.pulsar.broker.service.persistent.PersistentTopic.MESSAGE_RATE_BACKOFF_MS;
 import io.netty.buffer.ByteBuf;
 import io.prometheus.client.Gauge;
@@ -40,6 +41,7 @@ import org.apache.commons.lang3.tuple.MutablePair;
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.pulsar.broker.ServiceConfiguration;
 import org.apache.pulsar.broker.intercept.BrokerInterceptor;
+import org.apache.pulsar.broker.resourcegroup.ResourceGroupDispatchLimiter;
 import org.apache.pulsar.broker.service.persistent.DispatchRateLimiter;
 import org.apache.pulsar.broker.service.persistent.PersistentSubscription;
 import org.apache.pulsar.broker.service.persistent.PersistentTopic;
@@ -382,7 +384,8 @@ public abstract class AbstractBaseDispatcher extends EntryFilterSupport implemen
     protected boolean hasAnyDispatchRateLimiter() {
         return subscription.getTopic().getBrokerDispatchRateLimiter().isPresent()
                 || subscription.getTopic().getDispatchRateLimiter().isPresent()
-                || getRateLimiter().isPresent();
+                || getRateLimiter().isPresent()
+                || subscription.getTopic().getResourceGroupDispatchRateLimiter().isPresent();
     }
 
     protected Pair<Integer, Long> applyRateLimitsToMessagesAndBytesToRead(int messagesToRead, long bytesToRead) {
@@ -406,6 +409,10 @@ public abstract class AbstractBaseDispatcher extends EntryFilterSupport implemen
                     DispatchRateLimiter.Type.SUBSCRIPTION);
         }
 
+        if (success) {
+            success = applyDispatchRateLimitsToReadLimits(null, readLimits, RESOURCE_GROUP);
+        }
+
         return readLimits;
     }
 
@@ -414,29 +421,47 @@ public abstract class AbstractBaseDispatcher extends EntryFilterSupport implemen
                                                         DispatchRateLimiter.Type limiterType) {
         int originalMessagesToRead = readLimits.getLeft();
         long originalBytesToRead = readLimits.getRight();
-        // update messagesToRead according to available dispatch rate limit.
-        int availablePermitsOnMsg = (int) rateLimiter.getAvailableDispatchRateLimitOnMsg();
-        if (availablePermitsOnMsg >= 0) {
-            readLimits.setLeft(Math.min(readLimits.getLeft(), availablePermitsOnMsg));
-        }
-        long availablePermitsOnByte = rateLimiter.getAvailableDispatchRateLimitOnByte();
-        if (availablePermitsOnByte >= 0) {
-            readLimits.setRight(Math.min(readLimits.getRight(), availablePermitsOnByte));
-        }
-        if (readLimits.getLeft() < originalMessagesToRead) {
-            switch (limiterType) {
-                case BROKER -> dispatchThrottledMsgEventsByBrokerLimit.increment();
-                case TOPIC -> dispatchThrottledMsgEventsByTopicLimit.increment();
-                case SUBSCRIPTION -> dispatchThrottledMsgEventsBySubscriptionLimit.increment();
-                default -> {}
+        if (RESOURCE_GROUP.equals(limiterType)) {
+            ResourceGroupDispatchLimiter resourceGroupDispatchLimiter =
+                    subscription.getTopic().getResourceGroupDispatchRateLimiter().orElse(null);
+            if (resourceGroupDispatchLimiter == null) {
+                return true;
             }
-        }
-        if (readLimits.getRight() < originalBytesToRead) {
-            switch (limiterType) {
-                case BROKER -> dispatchThrottledBytesEventsByBrokerLimit.increment();
-                case TOPIC -> dispatchThrottledBytesEventsByTopicLimit.increment();
-                case SUBSCRIPTION -> dispatchThrottledBytesEventsBySubscriptionLimit.increment();
-                default -> {}
+            long availablePermitsOnMsgByRG = resourceGroupDispatchLimiter.getAvailableDispatchRateLimitOnMsg();
+            if (availablePermitsOnMsgByRG >= 0) {
+                readLimits.setLeft((int) Math.min(readLimits.getLeft(), availablePermitsOnMsgByRG));
+            }
+            long availablePermitsOnByteByRG = resourceGroupDispatchLimiter.getAvailableDispatchRateLimitOnByte();
+            if (availablePermitsOnByteByRG >= 0) {
+                readLimits.setRight(Math.min(readLimits.getRight(), availablePermitsOnByteByRG));
+            }
+        } else {
+            // update messagesToRead according to available dispatch rate limit.
+            int availablePermitsOnMsg = (int) rateLimiter.getAvailableDispatchRateLimitOnMsg();
+            if (availablePermitsOnMsg >= 0) {
+                readLimits.setLeft(Math.min(readLimits.getLeft(), availablePermitsOnMsg));
+            }
+            long availablePermitsOnByte = rateLimiter.getAvailableDispatchRateLimitOnByte();
+            if (availablePermitsOnByte >= 0) {
+                readLimits.setRight(Math.min(readLimits.getRight(), availablePermitsOnByte));
+            }
+            if (readLimits.getLeft() < originalMessagesToRead) {
+                switch (limiterType) {
+                    case BROKER -> dispatchThrottledMsgEventsByBrokerLimit.increment();
+                    case TOPIC -> dispatchThrottledMsgEventsByTopicLimit.increment();
+                    case SUBSCRIPTION -> dispatchThrottledMsgEventsBySubscriptionLimit.increment();
+                    default -> {
+                    }
+                }
+            }
+            if (readLimits.getRight() < originalBytesToRead) {
+                switch (limiterType) {
+                    case BROKER -> dispatchThrottledBytesEventsByBrokerLimit.increment();
+                    case TOPIC -> dispatchThrottledBytesEventsByTopicLimit.increment();
+                    case SUBSCRIPTION -> dispatchThrottledBytesEventsBySubscriptionLimit.increment();
+                    default -> {
+                    }
+                }
             }
         }
         if (readLimits.getLeft() == 0 || readLimits.getRight() == 0) {

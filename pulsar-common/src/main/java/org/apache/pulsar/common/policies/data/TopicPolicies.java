@@ -75,7 +75,13 @@ public class TopicPolicies implements Cloneable {
     private Integer deduplicationSnapshotIntervalSeconds;
     private Integer maxMessageSize;
     private Integer maxSubscriptionsPerTopic;
+    /**
+     * @deprecated Use {@link #replicatorDispatchRateMap} instead.
+     */
+    @Deprecated
     private DispatchRateImpl replicatorDispatchRate;
+    @Builder.Default
+    private Map<String, DispatchRateImpl> replicatorDispatchRateMap = new HashMap<>();
     private SchemaCompatibilityStrategy schemaCompatibilityStrategy;
     private EntryFilters entryFilters;
     // If set, it will override the namespace settings for allowing auto subscription creation
@@ -90,6 +96,8 @@ public class TopicPolicies implements Cloneable {
     private Boolean schemaValidationEnforced;
 
     private Boolean replicateSubscriptionState;
+
+    private String resourceGroupName;
 
     @SneakyThrows
     @Override
@@ -147,6 +155,11 @@ public class TopicPolicies implements Cloneable {
             }
         } else {
             cloned.subscriptionPolicies = new HashMap<>();
+        }
+
+        if (this.replicatorDispatchRateMap != null) {
+            cloned.replicatorDispatchRateMap = new HashMap<>();
+            cloned.replicatorDispatchRateMap.putAll(this.replicatorDispatchRateMap);
         }
 
         // Primitive types (Boolean, Integer, Long, String) and enums (SchemaCompatibilityStrategy)

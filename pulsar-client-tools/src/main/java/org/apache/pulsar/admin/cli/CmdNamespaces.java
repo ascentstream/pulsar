@@ -1193,10 +1193,14 @@ public class CmdNamespaces extends CmdBase {
                 + "(default 1 second will be overwrite if not passed)", required = false)
         private int dispatchRatePeriodSec = 1;
 
+        @Option(names = "--cluster", description = "The remote cluster for which set the dispatch rate, default to"
+                + " null", required = false)
+        private String cluster = null;
+
         @Override
         void run() throws PulsarAdminException {
             String namespace = validateNamespace(namespaceName);
-            getAdmin().namespaces().setReplicatorDispatchRate(namespace,
+            getAdmin().namespaces().setReplicatorDispatchRate(namespace, cluster,
                     DispatchRate.builder()
                             .dispatchThrottlingRateInMsg(msgDispatchRate)
                             .dispatchThrottlingRateInByte(byteDispatchRate)
@@ -1211,10 +1215,14 @@ public class CmdNamespaces extends CmdBase {
         @Parameters(description = "tenant/namespace", arity = "1")
         private String namespaceName;
 
+        @Option(names = "--cluster", description = "The remote cluster for which set the dispatch rate, default to"
+                + " null", required = false)
+        private String cluster = null;
+
         @Override
         void run() throws PulsarAdminException {
             String namespace = validateNamespace(namespaceName);
-            print(getAdmin().namespaces().getReplicatorDispatchRate(namespace));
+            print(getAdmin().namespaces().getReplicatorDispatchRate(namespace, cluster));
         }
     }
 
@@ -1224,10 +1232,14 @@ public class CmdNamespaces extends CmdBase {
         @Parameters(description = "tenant/namespace", arity = "1")
         private String namespaceName;
 
+        @Option(names = "--cluster", description = "The remote cluster for which set the dispatch rate, default to"
+                + " null", required = false)
+        private String cluster = null;
+
         @Override
         void run() throws PulsarAdminException {
             String namespace = validateNamespace(namespaceName);
-            getAdmin().namespaces().removeReplicatorDispatchRate(namespace);
+            getAdmin().namespaces().removeReplicatorDispatchRate(namespace, cluster);
         }
     }
 

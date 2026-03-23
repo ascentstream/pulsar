@@ -21,6 +21,7 @@ package org.apache.pulsar.broker.service;
 import static org.mockito.Mockito.CALLS_REAL_METHODS;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.withSettings;
 import static org.testng.Assert.assertEquals;
@@ -40,7 +41,8 @@ public class AbstractTopicTest {
     public void beforeMethod() {
         BrokerService brokerService = mock(BrokerService.class);
         PulsarService pulsarService = mock(PulsarService.class);
-        ServiceConfiguration serviceConfiguration = mock(ServiceConfiguration.class);
+        ServiceConfiguration serviceConfiguration = spy(ServiceConfiguration.class);
+        serviceConfiguration.setClusterName("test-cluster");
         BacklogQuotaManager backlogQuotaManager = mock(BacklogQuotaManager.class);
         subscription = mock(AbstractSubscription.class);
 
