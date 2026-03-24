@@ -23,6 +23,8 @@ import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertFalse;
@@ -42,11 +44,11 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicReference;
 import javax.ws.rs.client.Entity;
 import javax.ws.rs.core.MediaType;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.bookkeeper.mledger.AsyncCallbacks;
+import org.apache.bookkeeper.mledger.AsyncCallbacks.MarkDeleteCallback;
 import org.apache.bookkeeper.mledger.Entry;
 import org.apache.bookkeeper.mledger.ManagedCursor;
 import org.apache.bookkeeper.mledger.ManagedLedger;
@@ -58,7 +60,6 @@ import org.apache.bookkeeper.mledger.impl.ManagedCursorImpl;
 import org.apache.bookkeeper.mledger.impl.ManagedLedgerImpl;
 import org.apache.bookkeeper.mledger.proto.MLDataFormats.ManagedLedgerInfo.LedgerInfo;
 import org.apache.bookkeeper.test.MockedBookKeeperTestCase;
-import org.apache.commons.lang3.reflect.FieldUtils;
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.pulsar.broker.PulsarService;
 import org.apache.pulsar.broker.ServiceConfiguration;
@@ -78,8 +79,6 @@ import org.apache.pulsar.common.intercept.BrokerEntryMetadataUtils;
 import org.apache.pulsar.common.protocol.ByteBufPair;
 import org.apache.pulsar.common.protocol.Commands;
 import org.awaitility.Awaitility;
-import org.mockito.Mockito;
-import org.testng.Assert;
 import org.testng.annotations.Test;
 
 @Test(groups = "broker")
@@ -716,26 +715,16 @@ public class PersistentMessageFinderTest extends MockedBookKeeperTestCase {
         PersistentTopic mock = mock(PersistentTopic.class);
         when(mock.getName()).thenReturn("topicname");
         when(mock.getLastPosition()).thenReturn(PositionFactory.EARLIEST);
-        PersistentMessageExpiryMonitor monitor = new PersistentMessageExpiryMonitor(mock, c1.getName(), c1, null);
-        AsyncCallbacks.MarkDeleteCallback markDeleteCallback =
-                (AsyncCallbacks.MarkDeleteCallback) spy(
-                        FieldUtils.readDeclaredField(monitor, "markDeleteCallback", true));
-        FieldUtils.writeField(monitor, "markDeleteCallback", markDeleteCallback, true);
-
-        AtomicReference<Throwable> throwableAtomicReference = new AtomicReference<>();
-        Mockito.doAnswer(invocation -> {
-            ManagedLedgerException argument = invocation.getArgument(0, ManagedLedgerException.class);
-            throwableAtomicReference.set(argument);
-            return invocation.callRealMethod();
-        }).when(markDeleteCallback).markDeleteFailed(any(), any());
-
+        PersistentMessageExpiryMonitor monitor =
+                spy(new PersistentMessageExpiryMonitor(mock, c1.getName(), c1, null));
+        MarkDeleteCallback markDeleteCallback = mock(MarkDeleteCallback.class);
+        doReturn(markDeleteCallback).when(monitor).getMarkDeleteCallback(any());
         Position position = ledger.getLastConfirmedEntry();
         c1.markDelete(position);
         Thread.sleep(TimeUnit.SECONDS.toMillis(maxTTLSeconds));
         monitor.expireMessages(maxTTLSeconds);
         assertEquals(c1.getNumberOfEntriesInBacklog(true), 0);
-
-        Assert.assertNull(throwableAtomicReference.get());
+        verify(markDeleteCallback, times(0)).markDeleteFailed(any(), any());
     }
 
     @Test
@@ -753,26 +742,17 @@ public class PersistentMessageFinderTest extends MockedBookKeeperTestCase {
         }
         assertEquals(ledger.getLedgersInfoAsList().size(), 2);
         PersistentTopic mock = mockPersistentTopic("topicname");
-        PersistentMessageExpiryMonitor monitor = new PersistentMessageExpiryMonitor(mock, c1.getName(), c1, null);
-        AsyncCallbacks.MarkDeleteCallback markDeleteCallback =
-                (AsyncCallbacks.MarkDeleteCallback) spy(
-                        FieldUtils.readDeclaredField(monitor, "markDeleteCallback", true));
-        FieldUtils.writeField(monitor, "markDeleteCallback", markDeleteCallback, true);
-
-        AtomicReference<Throwable> throwableAtomicReference = new AtomicReference<>();
-        Mockito.doAnswer(invocation -> {
-            ManagedLedgerException argument = invocation.getArgument(0, ManagedLedgerException.class);
-            throwableAtomicReference.set(argument);
-            return invocation.callRealMethod();
-        }).when(markDeleteCallback).markDeleteFailed(any(), any());
+        PersistentMessageExpiryMonitor monitor =
+                spy(new PersistentMessageExpiryMonitor(mock, c1.getName(), c1, null));
+        MarkDeleteCallback markDeleteCallback = mock(MarkDeleteCallback.class);
+        doReturn(markDeleteCallback).when(monitor).getMarkDeleteCallback(any());
 
         Position position = ledger.getLastConfirmedEntry();
         c1.markDelete(position);
         Thread.sleep(TimeUnit.SECONDS.toMillis(maxTTLSeconds));
         monitor.expireMessagesAsync(maxTTLSeconds).get();
         assertEquals(c1.getNumberOfEntriesInBacklog(true), 0);
-
-        Assert.assertNull(throwableAtomicReference.get());
+        verify(markDeleteCallback, times(0)).markDeleteFailed(any(), any());
     }
 
     @Test

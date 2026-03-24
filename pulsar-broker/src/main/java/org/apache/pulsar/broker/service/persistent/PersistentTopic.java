@@ -34,6 +34,7 @@ import io.netty.util.concurrent.FastThreadLocal;
 import java.io.IOException;
 import java.time.Clock;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.EnumSet;
 import java.util.HashMap;
@@ -76,6 +77,7 @@ import org.apache.bookkeeper.mledger.ManagedCursor;
 import org.apache.bookkeeper.mledger.ManagedCursor.IndividualDeletedEntries;
 import org.apache.bookkeeper.mledger.ManagedLedger;
 import org.apache.bookkeeper.mledger.ManagedLedgerConfig;
+import org.apache.bookkeeper.mledger.ManagedLedgerEventListener;
 import org.apache.bookkeeper.mledger.ManagedLedgerException;
 import org.apache.bookkeeper.mledger.ManagedLedgerException.ManagedLedgerAlreadyClosedException;
 import org.apache.bookkeeper.mledger.ManagedLedgerException.ManagedLedgerFencedException;
@@ -89,6 +91,7 @@ import org.apache.bookkeeper.mledger.PositionFactory;
 import org.apache.bookkeeper.mledger.impl.ManagedCursorContainer;
 import org.apache.bookkeeper.mledger.impl.ManagedCursorContainer.CursorInfo;
 import org.apache.bookkeeper.mledger.impl.ManagedLedgerImpl;
+import org.apache.bookkeeper.mledger.proto.MLDataFormats;
 import org.apache.bookkeeper.mledger.util.Futures;
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.StringUtils;
@@ -96,6 +99,9 @@ import org.apache.commons.lang3.mutable.MutableInt;
 import org.apache.pulsar.broker.PulsarServerException;
 import org.apache.pulsar.broker.delayed.BucketDelayedDeliveryTrackerFactory;
 import org.apache.pulsar.broker.delayed.DelayedDeliveryTrackerFactory;
+import org.apache.pulsar.broker.event.data.LedgerPurgeEventData;
+import org.apache.pulsar.broker.event.data.LedgerRollEventData;
+import org.apache.pulsar.broker.event.data.TopicPoliciesApplyEventData;
 import org.apache.pulsar.broker.loadbalance.extensions.ExtensibleLoadManagerImpl;
 import org.apache.pulsar.broker.loadbalance.extensions.channel.ServiceUnitStateDataConflictResolver;
 import org.apache.pulsar.broker.namespace.NamespaceService;
@@ -132,6 +138,8 @@ import org.apache.pulsar.broker.service.StreamingStats;
 import org.apache.pulsar.broker.service.Subscription;
 import org.apache.pulsar.broker.service.SubscriptionOption;
 import org.apache.pulsar.broker.service.Topic;
+import org.apache.pulsar.broker.service.TopicEventsListener.EventStage;
+import org.apache.pulsar.broker.service.TopicEventsListener.TopicEvent;
 import org.apache.pulsar.broker.service.TopicPoliciesService;
 import org.apache.pulsar.broker.service.TransportCnx;
 import org.apache.pulsar.broker.service.schema.BookkeeperSchemaStorage;
@@ -408,6 +416,35 @@ public class PersistentTopic extends AbstractTopic implements Topic, AddEntryCal
                 ? brokerService.getTopicOrderedExecutor().chooseThread(topic)
                 : null;
         this.ledger = ledger;
+        this.ledger.addLedgerEventListener(new ManagedLedgerEventListener() {
+            @Override
+            public void onLedgerRoll(LedgerRollEvent event) {
+                brokerService.getTopicEventsDispatcher()
+                        .newEvent(topic, TopicEvent.LEDGER_ROLL)
+                        .data(LedgerRollEventData.builder().reason(event.getReason()).ledgerId(event.getLedgerId())
+                                .build())
+                        .dispatch();
+            }
+
+            @Override
+            public void onLedgerDelete(MLDataFormats.ManagedLedgerInfo.LedgerInfo... ledgerInfos) {
+                if (ledgerInfos == null || ledgerInfos.length == 0) {
+                    return;
+                }
+
+                List<LedgerPurgeEventData.LedgerInfo> purgedLedgers = Arrays.stream(ledgerInfos)
+                        .map(n -> LedgerPurgeEventData.LedgerInfo.builder()
+                                .ledgerId(n.getLedgerId()).entries(n.getEntries())
+                                .timestamp(n.getTimestamp())
+                                .build())
+                        .toList();
+                brokerService.getTopicEventsDispatcher()
+                        .newEvent(topic, TopicEvent.LEDGER_PURGE)
+                        .data(LedgerPurgeEventData.builder().ledgerInfos(purgedLedgers)
+                                .build())
+                        .dispatch();
+            }
+        });
         this.backloggedCursorThresholdEntries =
                 brokerService.pulsar().getConfiguration().getManagedLedgerCursorBackloggedThreshold();
         this.messageDeduplication = new MessageDeduplication(brokerService.pulsar(), this, ledger);
@@ -3681,10 +3718,20 @@ public class PersistentTopic extends AbstractTopic implements Topic, AddEntryCal
         applyPolicyTasks.add(applyUpdatedNamespacePolicies());
         return FutureUtil.waitForAll(applyPolicyTasks)
             .thenAccept(__ -> log.info("[{}] namespace-level policies updated successfully", topic))
+            .whenComplete((__, ex) -> notifyTopicPoliciesApplyEvent(ex))
             .exceptionally(ex -> {
                 log.error("[{}] update namespace polices : {} error", this.getName(), data, ex);
                 throw FutureUtil.wrapToCompletionException(ex);
             });
+    }
+
+    private void notifyTopicPoliciesApplyEvent(Throwable error) {
+        brokerService.getTopicEventsDispatcher()
+                .newEvent(topic, TopicEvent.POLICIES_APPLY)
+                .error(error)
+                .stage(error != null ? EventStage.FAILURE : EventStage.SUCCESS)
+                .data(TopicPoliciesApplyEventData.builder().policies(topicPolicies).build())
+                .dispatch();
     }
 
     private CompletableFuture<Void> applyUpdatedNamespacePolicies() {
@@ -4695,6 +4742,7 @@ public class PersistentTopic extends AbstractTopic implements Topic, AddEntryCal
         // Apply policies for components(not contains the specified policies which only defined in namespace policies).
         FutureUtil.waitForAll(applyUpdatedTopicPolicies())
             .thenAccept(__ -> log.info("[{}] topic-level policies updated successfully", topic))
+            .whenComplete((__, ex) -> notifyTopicPoliciesApplyEvent(ex))
             .exceptionally(e -> {
                 Throwable t = FutureUtil.unwrapCompletionException(e);
                 log.error("[{}] update topic-level policy error: {}", topic, t.getMessage(), t);

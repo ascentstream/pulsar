@@ -34,6 +34,7 @@ import org.apache.bookkeeper.client.AsyncCallback.CloseCallback;
 import org.apache.bookkeeper.client.BKException;
 import org.apache.bookkeeper.client.LedgerHandle;
 import org.apache.bookkeeper.mledger.AsyncCallbacks.AddEntryCallback;
+import org.apache.bookkeeper.mledger.ManagedLedgerEventListener.LedgerRollReason;
 import org.apache.bookkeeper.mledger.ManagedLedgerException;
 import org.apache.bookkeeper.mledger.Position;
 import org.apache.bookkeeper.mledger.PositionFactory;
@@ -304,7 +305,7 @@ public class OpAddEntry implements AddCallback, CloseCallback, Runnable, Managed
             log.warn("Error when closing ledger {}. Status={}", lh.getId(), BKException.getMessage(rc));
         }
 
-        ml.ledgerClosed(lh);
+        ml.ledgerClosedWithReason(lh, LedgerRollReason.FULL);
         updateLatency();
 
         AddEntryCallback cb = callbackUpdater.getAndSet(this, null);
@@ -360,7 +361,7 @@ public class OpAddEntry implements AddCallback, CloseCallback, Runnable, Managed
                     || rc.intValue() == BKException.Code.LedgerFencedException)) {
                 finalMl.addEntryFailedDueToConcurrentlyModified(lh, rc);
             } else {
-                finalMl.ledgerClosed(lh);
+                finalMl.ledgerClosedWithReason(lh, LedgerRollReason.APPEND_FAIL);
             }
         });
     }

@@ -22,13 +22,13 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
+import lombok.Builder;
 import lombok.Getter;
-import lombok.RequiredArgsConstructor;
 import lombok.Setter;
 import org.apache.pulsar.common.naming.TopicName;
 import org.jspecify.annotations.Nullable;
 
-@RequiredArgsConstructor
+@Builder
 public class TopicLoadingContext {
 
     private static final String EXAMPLE_LATENCY_OUTPUTS = "1234 ms (queued: 567)";
@@ -37,13 +37,23 @@ public class TopicLoadingContext {
     @Getter
     private final TopicName topicName;
     @Getter
-    private final boolean createIfMissing;
-    @Getter
-    private final CompletableFuture<Optional<Topic>> topicFuture;
+    @Setter
+    private boolean createIfMissing;
     @Getter
     @Setter
-    @Nullable private Map<String, String> properties;
+    private  CompletableFuture<Optional<Topic>> topicFuture;
+    @Getter
+    @Setter
+    @Nullable
+    private Map<String, String> properties;
     private long polledFromQueueNs = -1L;
+
+    @Getter
+    @Setter
+    private String clientVersion;
+    @Getter
+    @Setter
+    private String proxyVersion;
 
     public void polledFromQueue() {
         polledFromQueueNs = System.nanoTime();

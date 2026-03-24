@@ -229,6 +229,8 @@ public class ServerCnxTest {
         brokerService = pulsarTestContext.getBrokerService();
 
         namespaceService = pulsar.getNamespaceService();
+        doReturn(CompletableFuture.completedFuture(TopicExistsInfo.newNonPartitionedTopicExists()))
+                .when(namespaceService).checkTopicExistsAsync(any());
         doReturn(CompletableFuture.completedFuture(mock(NamespaceBundle.class))).when(namespaceService)
                 .getBundleAsync(any());
         doReturn(CompletableFuture.completedFuture(true)).when(namespaceService).checkBundleOwnership(any(), any());

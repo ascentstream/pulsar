@@ -770,4 +770,8 @@ public interface ManagedLedger {
     default long getMetadataCreationTimestamp() {
         return 0;
     }
+
+    default void addLedgerEventListener(ManagedLedgerEventListener listener) {
+        // No-op by default
+    }
 }

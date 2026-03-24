@@ -22,8 +22,7 @@ import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertFalse;
 import static org.testng.Assert.assertNotEquals;
 import static org.testng.Assert.assertNotNull;
-import static org.testng.Assert.assertTrue;
-import java.lang.reflect.Method;
+import static org.testng.AssertJUnit.assertTrue;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
@@ -32,6 +31,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import lombok.Cleanup;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.bookkeeper.client.LedgerHandle;
+import org.apache.bookkeeper.mledger.ManagedLedgerEventListener.LedgerRollReason;
 import org.apache.bookkeeper.mledger.Position;
 import org.apache.bookkeeper.mledger.PositionFactory;
 import org.apache.bookkeeper.mledger.impl.ManagedCursorImpl;
@@ -290,13 +290,6 @@ public class NonDurableSubscriptionTest extends ProducerConsumerBase {
     }
 
     private void switchLedgerManually(final String tpName) throws Exception {
-        Method ledgerClosed =
-                ManagedLedgerImpl.class.getDeclaredMethod("ledgerClosed", new Class[]{LedgerHandle.class});
-        Method createLedgerAfterClosed =
-                ManagedLedgerImpl.class.getDeclaredMethod("createLedgerAfterClosed", new Class[0]);
-        ledgerClosed.setAccessible(true);
-        createLedgerAfterClosed.setAccessible(true);
-
         // Wait for topic create.
         org.awaitility.Awaitility.await().untilAsserted(() -> {
             PersistentTopic persistentTopic =
@@ -309,8 +302,8 @@ public class NonDurableSubscriptionTest extends ProducerConsumerBase {
                 (PersistentTopic) pulsar.getBrokerService().getTopic(tpName, false).join().get();
         ManagedLedgerImpl ml = (ManagedLedgerImpl) persistentTopic.getManagedLedger();
         LedgerHandle currentLedger1 = WhiteboxImpl.getInternalState(ml, "currentLedger");
-        ledgerClosed.invoke(ml, new Object[]{currentLedger1});
-        createLedgerAfterClosed.invoke(ml, new Object[0]);
+        ml.ledgerClosedWithReason(currentLedger1, LedgerRollReason.FULL);
+        ml.createLedgerAfterClosed(LedgerRollReason.FULL);
         Awaitility.await().untilAsserted(() -> {
             LedgerHandle currentLedger2 = WhiteboxImpl.getInternalState(ml, "currentLedger");
             assertNotEquals(currentLedger1.getId(), currentLedger2.getId());
@@ -613,7 +606,7 @@ public class NonDurableSubscriptionTest extends ProducerConsumerBase {
                     PositionFactory.create(msgIdInDeletedLedger5.getLedgerId(), msgIdInDeletedLedger5.getEntryId());
             log.info("Expected mark deleted position: {}", expectedMarkDeletedPos);
             log.info("Actual mark deleted position: {}", cursorStats.markDeletePosition);
-            Assert.assertTrue(actMarkDeletedPos.compareTo(expectedMarkDeletedPos) >= 0);
+            assertTrue(actMarkDeletedPos.compareTo(expectedMarkDeletedPos) >= 0);
         });
 
         // Clear the incoming queue of the reader for next test.

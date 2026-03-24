@@ -18,8 +18,16 @@
  */
 package org.apache.pulsar.broker.service;
 
+import com.fasterxml.jackson.annotation.JsonTypeInfo;
+import java.time.OffsetDateTime;
+import java.time.ZoneId;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.NoArgsConstructor;
+import lombok.Value;
 import org.apache.pulsar.common.classification.InterfaceAudience;
 import org.apache.pulsar.common.classification.InterfaceStability;
+import org.apache.pulsar.common.naming.TopicName;
 
 /**
  * Listener for the Topic events.
@@ -38,6 +46,31 @@ public interface TopicEventsListener {
         LOAD,
         UNLOAD,
         DELETE,
+
+        LOOKUP,
+
+        TOPIC_METADATA_UPDATE,
+
+        MESSAGE_EXPIRE,
+        LEDGER_PURGE,
+        LEDGER_ROLL,
+
+        POLICIES_UPDATE,
+        POLICIES_APPLY,
+
+        PRODUCER_CONNECT,
+        PRODUCER_DISCONNECT,
+
+        CONSUMER_CONNECT,
+        CONSUMER_DISCONNECT,
+
+        SUBSCRIPTION_CREATE,
+        SUBSCRIPTION_DELETE,
+        SUBSCRIPTION_SEEK,
+        SUBSCRIPTION_CLEAR_BACKLOG,
+
+        REPLICATOR_START,
+        REPLICATOR_STOP
     }
 
     /**
@@ -50,6 +83,35 @@ public interface TopicEventsListener {
         FAILURE
     }
 
+    @JsonTypeInfo(use = JsonTypeInfo.Id.CLASS, include = JsonTypeInfo.As.PROPERTY, property = "@class")
+    interface EventData {
+        // Marker interface for event data
+    }
+
+    @Builder
+    @Value
+    @NoArgsConstructor(force = true)
+    @AllArgsConstructor
+    class EventContext {
+        String cluster;
+        String brokerId;
+        String proxyRole;
+        String clientRole;
+        String topic;
+        int partition;
+        TopicEvent event;
+        EventData data;
+        EventStage stage;
+        Throwable error;
+        String clientVersion;
+        String brokerVersion;
+        String proxyVersion;
+
+        // ISO-8601 format
+        @Builder.Default
+        String timestamp = OffsetDateTime.now(ZoneId.systemDefault()).toString();
+    }
+
     /**
      * Handle topic event.
      * Choice of the thread / maintenance of the thread pool is up to the event handlers.
@@ -57,6 +119,16 @@ public interface TopicEventsListener {
      * @param event - TopicEvent
      * @param stage - EventStage
      * @param t - exception in case of FAILURE, if present/known
+     * @deprecated Use {@link #handleEvent(EventContext)} instead.
      */
-    void handleEvent(String topicName, TopicEvent event, EventStage stage, Throwable t);
+    @Deprecated
+    default void handleEvent(String topicName, TopicEvent event, EventStage stage, Throwable t) {
+        // noop
+    }
+
+    default void handleEvent(EventContext context) {
+        handleEvent(context.getPartition() >= 0
+                ? TopicName.getTopicPartitionNameString(context.getTopic(), context.getPartition())
+                : context.getTopic(), context.getEvent(), context.getStage(), context.getError());
+    }
 }

@@ -25,6 +25,7 @@ import java.util.SortedMap;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
 import java.util.concurrent.atomic.LongAdder;
+import lombok.AllArgsConstructor;
 import org.apache.bookkeeper.mledger.AsyncCallbacks.FindEntryCallback;
 import org.apache.bookkeeper.mledger.AsyncCallbacks.MarkDeleteCallback;
 import org.apache.bookkeeper.mledger.ManagedCursor;
@@ -36,7 +37,9 @@ import org.apache.bookkeeper.mledger.Position;
 import org.apache.bookkeeper.mledger.PositionFactory;
 import org.apache.bookkeeper.mledger.impl.ManagedLedgerImpl;
 import org.apache.bookkeeper.mledger.proto.MLDataFormats;
+import org.apache.pulsar.broker.event.data.MessageExpireEventData;
 import org.apache.pulsar.broker.service.MessageExpirer;
+import org.apache.pulsar.broker.service.TopicEventsListener.TopicEvent;
 import org.apache.pulsar.client.impl.MessageImpl;
 import org.apache.pulsar.common.api.proto.CommandSubscribe.SubType;
 import org.apache.pulsar.common.protocol.Commands;
@@ -205,7 +208,10 @@ public class PersistentMessageExpiryMonitor implements FindEntryCallback, Messag
 
     private static final Logger log = LoggerFactory.getLogger(PersistentMessageExpiryMonitor.class);
 
-    private final MarkDeleteCallback markDeleteCallback = new MarkDeleteCallback() {
+    @AllArgsConstructor
+    class MessageExpiryMarkDeleteCallback implements MarkDeleteCallback {
+        private Position position;
+
         @Override
         public void markDeleteComplete(Object ctx) {
             long numMessagesExpired = (long) ctx - cursor.getNumberOfEntriesInBacklog(false);
@@ -214,6 +220,13 @@ public class PersistentMessageExpiryMonitor implements FindEntryCallback, Messag
             // If the subscription is a Key_Shared subscription, we should to trigger message dispatch.
             if (subscription != null && subscription.getType() == SubType.Key_Shared) {
                 subscription.getDispatcher().markDeletePositionMoveForward();
+                subscription.getTopic().getBrokerService().getTopicEventsDispatcher()
+                        .newEvent(topicName, TopicEvent.MESSAGE_EXPIRE)
+                        .data(MessageExpireEventData.builder()
+                                .subscriptionName(subName)
+                                .position(position.toString())
+                                .build())
+                        .dispatch();
             }
             expirationCheckInProgress = FALSE;
             if (log.isDebugEnabled()) {
@@ -227,7 +240,12 @@ public class PersistentMessageExpiryMonitor implements FindEntryCallback, Messag
             expirationCheckInProgress = FALSE;
             updateRates();
         }
-    };
+    }
+
+    @VisibleForTesting
+    public MarkDeleteCallback getMarkDeleteCallback(Position position) {
+        return new MessageExpiryMarkDeleteCallback(position);
+    }
 
     @Override
     public void findEntryComplete(Position position, Object ctx) {
@@ -239,7 +257,7 @@ public class PersistentMessageExpiryMonitor implements FindEntryCallback, Messag
             }
             log.info("[{}][{}] Expiring all messages until position {}", topicName, subName, position);
             Position prevMarkDeletePos = cursor.getMarkDeletedPosition();
-            cursor.asyncMarkDelete(position, cursor.getProperties(), markDeleteCallback,
+            cursor.asyncMarkDelete(position, cursor.getProperties(), getMarkDeleteCallback(position),
                     cursor.getNumberOfEntriesInBacklog(false));
             if (!Objects.equals(cursor.getMarkDeletedPosition(), prevMarkDeletePos) && subscription != null) {
                 subscription.updateLastMarkDeleteAdvancedTimestamp();
