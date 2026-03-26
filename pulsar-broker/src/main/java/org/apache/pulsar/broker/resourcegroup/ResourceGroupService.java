@@ -692,8 +692,8 @@ public class ResourceGroupService implements AutoCloseable{
     @VisibleForTesting
     protected static long getRgLocalUsageByteCount(String rgName, String monClassName, String localCluster,
                                                      String remoteCluster) {
-        return (long) rgLocalUsageBytes.labels(rgName, monClassName, localCluster, remoteCluster != null ? remoteCluster : "")
-                .get();
+        return (long) rgLocalUsageBytes.labels(rgName, monClassName, localCluster,
+                        remoteCluster != null ? remoteCluster : "").get();
     }
 
     // Visibility for testing.

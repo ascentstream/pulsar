@@ -48,13 +48,14 @@ import org.testng.annotations.Test;
 @Slf4j
 public class ResourceGroupUsageAggregationOnTopicLevelTest extends ProducerConsumerBase {
 
-    private final String TenantName = "pulsar-test";
-    private final String NsName = "test";
-    private final String TenantAndNsName = TenantName + "/" + NsName;
-    private final String TestProduceConsumeTopicName = "/test/prod-cons-topic";
-    private final String PRODUCE_CONSUME_PERSISTENT_TOPIC = "persistent://" + TenantAndNsName + TestProduceConsumeTopicName;
-    private final String PRODUCE_CONSUME_NON_PERSISTENT_TOPIC =
-            "non-persistent://" + TenantAndNsName + TestProduceConsumeTopicName;
+    private final String tenantName = "pulsar-test";
+    private final String nsName = "test";
+    private final String tenantAndNsName = tenantName + "/" + nsName;
+    private final String testProduceConsumeTopicName = "/test/prod-cons-topic";
+    private final String produceConsumerPersistentTopic =
+            "persistent://" + tenantAndNsName + testProduceConsumeTopicName;
+    private final String produceConsumerNonPersistentTopic =
+            "non-persistent://" + tenantAndNsName + testProduceConsumeTopicName;
 
     @BeforeMethod
     @Override
@@ -64,10 +65,10 @@ public class ResourceGroupUsageAggregationOnTopicLevelTest extends ProducerConsu
 
         final String clusterName = "test";
         admin.clusters().createCluster(clusterName, ClusterData.builder().serviceUrl(brokerUrl.toString()).build());
-        admin.tenants().createTenant(TenantName,
+        admin.tenants().createTenant(tenantName,
                 new TenantInfoImpl(Sets.newHashSet("fakeAdminRole"), Sets.newHashSet(clusterName)));
-        admin.namespaces().createNamespace(TenantAndNsName);
-        admin.namespaces().setNamespaceReplicationClusters(TenantAndNsName, Sets.newHashSet(clusterName));
+        admin.namespaces().createNamespace(tenantAndNsName);
+        admin.namespaces().setNamespaceReplicationClusters(tenantAndNsName, Sets.newHashSet(clusterName));
     }
 
     @AfterMethod(alwaysRun = true)
@@ -78,12 +79,12 @@ public class ResourceGroupUsageAggregationOnTopicLevelTest extends ProducerConsu
 
     @Test
     public void testPersistentTopicProduceConsumeUsageOnRG() throws Exception {
-        testProduceConsumeUsageOnRG(PRODUCE_CONSUME_PERSISTENT_TOPIC);
+        testProduceConsumeUsageOnRG(produceConsumerPersistentTopic);
     }
 
     @Test
     public void testNonPersistentTopicProduceConsumeUsageOnRG() throws Exception {
-        testProduceConsumeUsageOnRG(PRODUCE_CONSUME_NON_PERSISTENT_TOPIC);
+        testProduceConsumeUsageOnRG(produceConsumerNonPersistentTopic);
     }
 
     private void testProduceConsumeUsageOnRG(String topicString) throws Exception {
@@ -162,12 +163,12 @@ public class ResourceGroupUsageAggregationOnTopicLevelTest extends ProducerConsu
 
         TopicName myTopic = TopicName.get(topicString);
         rgs.unRegisterTopic(myTopic);
-        rgs.registerTopic(activeRgName,myTopic);
+        rgs.registerTopic(activeRgName, myTopic);
 
-        final int NumMessagesToSend = 10;
+        final int numMessagesToSend = 10;
         int sentNumBytes = 0;
         int sentNumMsgs = 0;
-        for (int ix = 0; ix < NumMessagesToSend; ix++) {
+        for (int ix = 0; ix < numMessagesToSend; ix++) {
             byte[] mesg = String.format("Hi, ix=%s", ix).getBytes();
             producer.send(mesg);
             sentNumBytes += mesg.length;
@@ -187,7 +188,7 @@ public class ResourceGroupUsageAggregationOnTopicLevelTest extends ProducerConsu
             recvdNumMsgs++;
         }
 
-        this.verifyStats(rgs,topicString, activeRgName, sentNumBytes, sentNumMsgs, recvdNumBytes, recvdNumMsgs,
+        this.verifyStats(rgs, topicString, activeRgName, sentNumBytes, sentNumMsgs, recvdNumBytes, recvdNumMsgs,
                 true, true);
     }
 

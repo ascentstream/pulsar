@@ -54,8 +54,10 @@ public class ResourceGroupRateLimiterManagerTest {
         assertTrue(resourceGroupDispatchLimiter.isDispatchRateLimitingEnabled());
 
 
-        assertEquals(resourceGroupDispatchLimiter.getAvailableDispatchRateLimitOnMsg(), resourceGroup.getReplicationDispatchRateInMsgs().longValue());
-        assertEquals(resourceGroupDispatchLimiter.getDispatchRateOnMsg(), resourceGroup.getReplicationDispatchRateInMsgs().longValue());
+        assertEquals(resourceGroupDispatchLimiter.getAvailableDispatchRateLimitOnMsg(),
+                resourceGroup.getReplicationDispatchRateInMsgs().longValue());
+        assertEquals(resourceGroupDispatchLimiter.getDispatchRateOnMsg(),
+                resourceGroup.getReplicationDispatchRateInMsgs().longValue());
 
         assertEquals(resourceGroupDispatchLimiter.getAvailableDispatchRateLimitOnByte(), -1L);
         assertEquals(resourceGroupDispatchLimiter.getDispatchRateOnByte(), -1L);
@@ -73,8 +75,10 @@ public class ResourceGroupRateLimiterManagerTest {
         assertEquals(resourceGroupDispatchLimiter.getAvailableDispatchRateLimitOnMsg(), -1L);
         assertEquals(resourceGroupDispatchLimiter.getDispatchRateOnMsg(), -1L);
 
-        assertEquals(resourceGroupDispatchLimiter.getAvailableDispatchRateLimitOnByte(), resourceGroup.getReplicationDispatchRateInBytes().longValue());
-        assertEquals(resourceGroupDispatchLimiter.getDispatchRateOnByte(), resourceGroup.getReplicationDispatchRateInBytes().longValue());
+        assertEquals(resourceGroupDispatchLimiter.getAvailableDispatchRateLimitOnByte(),
+                resourceGroup.getReplicationDispatchRateInBytes().longValue());
+        assertEquals(resourceGroupDispatchLimiter.getDispatchRateOnByte(),
+                resourceGroup.getReplicationDispatchRateInBytes().longValue());
     }
 
     @Test

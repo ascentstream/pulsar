@@ -45,8 +45,10 @@ import org.apache.commons.lang3.mutable.MutableObject;
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.pulsar.broker.PulsarServerException;
 import org.apache.pulsar.broker.PulsarService;
+import org.apache.pulsar.broker.event.data.TopicPoliciesUpdateEventData;
 import org.apache.pulsar.broker.namespace.NamespaceBundleOwnershipListener;
 import org.apache.pulsar.broker.namespace.NamespaceService;
+import org.apache.pulsar.broker.service.TopicEventsListener.TopicEvent;
 import org.apache.pulsar.broker.systopic.NamespaceEventsSystemTopicFactory;
 import org.apache.pulsar.broker.systopic.SystemTopicClient;
 import org.apache.pulsar.client.api.Message;
@@ -434,6 +436,11 @@ public class SystemTopicBasedTopicPoliciesService implements TopicPoliciesServic
                         });
                         return future;
                     } else {
+                        pulsarService.getBrokerService().getTopicEventsDispatcher()
+                                .newEvent(topicName.getPartitionedTopicName(), TopicEvent.POLICIES_UPDATE)
+                                .data(TopicPoliciesUpdateEventData.builder()
+                                        .policiesClass(TopicPolicies.class.getName()).policies(policies).build())
+                                .dispatch();
                         return writer.writeAsync(eventKey, event);
                     }
                 }).exceptionally(t -> {

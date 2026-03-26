@@ -174,7 +174,8 @@ public class AdminReplicatorDispatchRateTest extends MockedPulsarServiceBaseTest
         // If applied is true, return default dispatch rate, otherwise, return null.
         admin.topicPolicies().removeReplicatorDispatchRate(topic, r1Cluster);
         Awaitility.await().untilAsserted(() -> {
-            assertEquals(admin.topicPolicies().getReplicatorDispatchRate(topic, r1Cluster, true), defaultDispatchRateOnTopic);
+            assertEquals(admin.topicPolicies().getReplicatorDispatchRate(topic, r1Cluster, true),
+                    defaultDispatchRateOnTopic);
             assertNull(admin.topicPolicies().getReplicatorDispatchRate(topic, r1Cluster, false));
         });
 

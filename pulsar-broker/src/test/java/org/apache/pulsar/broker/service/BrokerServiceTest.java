@@ -1185,9 +1185,10 @@ public class BrokerServiceTest extends BrokerTestBase {
         pulsar.getNamespaceService().getOwnershipCache().updateBundleState(bundle, false).join();
 
         // try to create topic which should fail as bundle is disable
+        TopicLoadingContext topicLoadingContext =
+                TopicLoadingContext.builder().topicName(topic).createIfMissing(true).properties(null).build();
         CompletableFuture<Optional<Topic>> futureResult = pulsar.getBrokerService()
-                .loadOrCreatePersistentTopic(new TopicLoadingContext(topic, true,
-                        new CompletableFuture<>()));
+                .loadOrCreatePersistentTopic(topicLoadingContext);
 
         try {
             futureResult.get();
@@ -1231,7 +1232,8 @@ public class BrokerServiceTest extends BrokerTestBase {
             for (int i = 0; i < 10; i++) {
                 // try to create topic which should fail as bundle is disable
                 CompletableFuture<Optional<Topic>> futureResult = pulsar.getBrokerService().loadOrCreatePersistentTopic(
-                        new TopicLoadingContext(TopicName.get(topicName + "_" + i), false, new CompletableFuture<>()));
+                        TopicLoadingContext.builder().topicName(TopicName.get(topicName + "_" + i))
+                                .createIfMissing(false).topicFuture(new CompletableFuture<>()).build());
                 loadFutures.add(futureResult);
             }
 

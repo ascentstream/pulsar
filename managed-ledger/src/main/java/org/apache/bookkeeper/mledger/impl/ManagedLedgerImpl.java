@@ -54,6 +54,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ConcurrentSkipListMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
@@ -102,6 +103,9 @@ import org.apache.bookkeeper.mledger.ManagedCursor;
 import org.apache.bookkeeper.mledger.ManagedLedger;
 import org.apache.bookkeeper.mledger.ManagedLedgerAttributes;
 import org.apache.bookkeeper.mledger.ManagedLedgerConfig;
+import org.apache.bookkeeper.mledger.ManagedLedgerEventListener;
+import org.apache.bookkeeper.mledger.ManagedLedgerEventListener.LedgerRollEvent;
+import org.apache.bookkeeper.mledger.ManagedLedgerEventListener.LedgerRollReason;
 import org.apache.bookkeeper.mledger.ManagedLedgerException;
 import org.apache.bookkeeper.mledger.ManagedLedgerException.BadVersionException;
 import org.apache.bookkeeper.mledger.ManagedLedgerException.CursorNotFoundException;
@@ -1800,7 +1804,7 @@ public class ManagedLedgerImpl implements ManagedLedger, CreateCallback {
                         + " The last add confirmed position in memory is {}, and the value"
                         + " stored in metadata store is {}.", name, lh.getId(), currentLedger.getLastAddConfirmed(),
                         lh.getLastAddConfirmed());
-                ledgerClosed(currentLedger, lh.getLastAddConfirmed());
+                ledgerClosed(currentLedger, lh.getLastAddConfirmed(), LedgerRollReason.ConcurrentModification);
             } else {
                 log.error("[{}] Fencing the topic to ensure durability and consistency(the current ledger was"
                     + " concurrent modified by a other bookie client, which is not expected)."
@@ -1815,14 +1819,15 @@ public class ManagedLedgerImpl implements ManagedLedger, CreateCallback {
         }, null, true);
     }
 
-    synchronized void ledgerClosed(final LedgerHandle lh) {
-        ledgerClosed(lh, null);
+    @VisibleForTesting
+    public synchronized void ledgerClosedWithReason(final LedgerHandle lh, LedgerRollReason ledgerRollReason) {
+        ledgerClosed(lh, null, ledgerRollReason);
     }
 
     // //////////////////////////////////////////////////////////////////////
     // Private helpers
 
-    synchronized void ledgerClosed(final LedgerHandle lh, Long lastAddConfirmed) {
+    synchronized void ledgerClosed(final LedgerHandle lh, Long lastAddConfirmed, LedgerRollReason ledgerRollReason) {
         final State state = STATE_UPDATER.get(this);
         LedgerHandle currentLedger = this.currentLedger;
         if (currentLedger == lh && (state == State.ClosingLedger || state == State.LedgerOpened)) {
@@ -1855,7 +1860,7 @@ public class ManagedLedgerImpl implements ManagedLedger, CreateCallback {
 
         maybeOffloadInBackground(NULL_OFFLOAD_PROMISE);
 
-        createLedgerAfterClosed();
+        createLedgerAfterClosed(ledgerRollReason);
     }
 
     @Override
@@ -1865,12 +1870,17 @@ public class ManagedLedgerImpl implements ManagedLedger, CreateCallback {
         }
     }
 
-    synchronized void createLedgerAfterClosed() {
+    @VisibleForTesting
+    public synchronized void createLedgerAfterClosed(LedgerRollReason ledgerRollReason) {
         if (isNeededCreateNewLedgerAfterCloseLedger()) {
             log.info("[{}] Creating a new ledger after closed {}", name,
                     currentLedger == null ? "null" : currentLedger.getId());
             STATE_UPDATER.set(this, State.CreatingLedger);
             this.lastLedgerCreationInitiationTimestamp = System.currentTimeMillis();
+            notifyRollLedgerEvent(LedgerRollEvent.builder()
+                    .ledgerId(currentLedger == null ? -1 : currentLedger.getId())
+                    .reason(ledgerRollReason)
+                    .build());
             mbean.startDataLedgerCreateOp();
             // Use the executor here is to avoid use the Zookeeper thread to create the ledger which will lead
             // to deadlock at the zookeeper client, details to see https://github.com/apache/pulsar/issues/13736
@@ -1909,7 +1919,7 @@ public class ManagedLedgerImpl implements ManagedLedger, CreateCallback {
                                 name, lh.getId(), BKException.getMessage(rc));
                     }
 
-                    ledgerClosed(lh);
+                    ledgerClosedWithReason(lh, LedgerRollReason.FULL);
                 }
             }, null);
         }
@@ -3045,10 +3055,13 @@ public class ManagedLedgerImpl implements ManagedLedger, CreateCallback {
                     metadataMutex.unlock();
                     trimmerMutex.unlock();
 
+                    notifyDeleteLedgerEvent(ledgersToDelete.toArray(new LedgerInfo[0]));
                     for (LedgerInfo ls : ledgersToDelete) {
                         log.info("[{}] Removing ledger {} - size: {}", name, ls.getLedgerId(), ls.getSize());
                         asyncDeleteLedger(ls.getLedgerId(), ls);
                     }
+
+                    notifyDeleteLedgerEvent(offloadedLedgersToDelete.toArray(new LedgerInfo[0]));
                     for (LedgerInfo ls : offloadedLedgersToDelete) {
                         log.info("[{}] Deleting offloaded ledger {} from bookkeeper - size: {}", name, ls.getLedgerId(),
                                 ls.getSize());
@@ -4719,14 +4732,15 @@ public class ManagedLedgerImpl implements ManagedLedger, CreateCallback {
             }, null);
             futures.add(future);
         }
-        CompletableFuture<Void> future = new CompletableFuture();
+        CompletableFuture<List<LedgerInfo>> future = new CompletableFuture();
         FutureUtil.waitForAll(futures).thenAccept(p -> {
             internalTrimLedgers(true, future);
         }).exceptionally(e -> {
             future.completeExceptionally(e);
             return null;
         });
-        return future;
+        return future.thenRun(() -> {
+        });
     }
 
     @Override
@@ -4907,7 +4921,7 @@ public class ManagedLedgerImpl implements ManagedLedger, CreateCallback {
                                 name, lh.getId(), BKException.getMessage(rc));
                     }
 
-                    ledgerClosed(lh);
+                    ledgerClosedWithReason(lh, LedgerRollReason.INACTIVE);
                     // we do not create ledger here, since topic is inactive for a long time.
                 }, null);
                 return true;
@@ -4982,5 +4996,33 @@ public class ManagedLedgerImpl implements ManagedLedger, CreateCallback {
     @Override
     public long getMetadataCreationTimestamp() {
         return ledgersStat != null ? ledgersStat.getCreationTimestamp() : 0;
+    }
+
+    private final List<ManagedLedgerEventListener> ledgerEventListeners = new CopyOnWriteArrayList<>();
+
+    @Override
+    public void addLedgerEventListener(ManagedLedgerEventListener listener) {
+        Objects.requireNonNull(listener);
+        ledgerEventListeners.add(listener);
+    }
+
+    private void notifyRollLedgerEvent(LedgerRollEvent event) {
+        for (ManagedLedgerEventListener listener : ledgerEventListeners) {
+            try {
+                listener.onLedgerRoll(event);
+            } catch (Exception e) {
+                log.warn("Exception in ledger rolled listener for ledger {}", event, e);
+            }
+        }
+    }
+
+    private void notifyDeleteLedgerEvent(LedgerInfo... ledgerInfos) {
+        for (ManagedLedgerEventListener listener : ledgerEventListeners) {
+            try {
+                listener.onLedgerDelete(ledgerInfos);
+            } catch (Exception e) {
+                log.warn("Exception in ledger delete listener", e);
+            }
+        }
     }
 }

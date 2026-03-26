@@ -490,8 +490,8 @@ public class Consumer {
         }
     }
 
-    public void doUnsubscribe(final long requestId, boolean force) {
-        subscription.doUnsubscribe(this, force).thenAccept(v -> {
+    public CompletableFuture<Void> doUnsubscribe(final long requestId, boolean force) {
+       return subscription.doUnsubscribe(this, force).thenAccept(v -> {
             log.info("Unsubscribed successfully from {}", subscription);
             cnx.removedConsumer(this);
             cnx.getCommandSender().sendSuccessResponse(requestId);

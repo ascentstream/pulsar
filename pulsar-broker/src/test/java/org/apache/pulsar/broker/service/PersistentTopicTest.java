@@ -116,6 +116,7 @@ import org.apache.pulsar.client.api.PulsarClient;
 import org.apache.pulsar.client.api.Schema;
 import org.apache.pulsar.client.api.transaction.TxnID;
 import org.apache.pulsar.client.impl.ConnectionPool;
+import org.apache.pulsar.client.impl.LookupService;
 import org.apache.pulsar.client.impl.ProducerBuilderImpl;
 import org.apache.pulsar.client.impl.PulsarClientImpl;
 import org.apache.pulsar.client.impl.conf.ProducerConfigurationData;
@@ -130,6 +131,7 @@ import org.apache.pulsar.common.api.proto.MessageMetadata;
 import org.apache.pulsar.common.api.proto.ProducerAccessMode;
 import org.apache.pulsar.common.naming.NamespaceBundle;
 import org.apache.pulsar.common.naming.TopicName;
+import org.apache.pulsar.common.partition.PartitionedTopicMetadata;
 import org.apache.pulsar.common.policies.data.Policies;
 import org.apache.pulsar.common.policies.data.TopicPolicies;
 import org.apache.pulsar.common.policies.data.stats.SubscriptionStatsImpl;
@@ -225,14 +227,21 @@ public class PersistentTopicTest extends MockedBookKeeperTestCase {
         doReturn(ctx).when(serverCnx).ctx();
         doReturn(CompletableFuture.completedFuture(Optional.of(true))).when(serverCnx).checkConnectionLiveness();
 
-        NamespaceService nsSvc = pulsarTestContext.getPulsarService().getNamespaceService();
+        NamespaceService nsSvc = mock(NamespaceService.class);
         NamespaceBundle bundle = mock(NamespaceBundle.class);
         doReturn(CompletableFuture.completedFuture(bundle)).when(nsSvc).getBundleAsync(any());
+        doReturn(nsSvc).when(pulsarTestContext.getPulsarService()).getNamespaceService();
         doReturn(true).when(nsSvc).isServiceUnitOwned(any());
         doReturn(CompletableFuture.completedFuture(mock(NamespaceBundle.class))).when(nsSvc).getBundleAsync(any());
         doReturn(CompletableFuture.completedFuture(true)).when(nsSvc).checkBundleOwnership(any(), any());
-        doReturn(CompletableFuture.completedFuture(TopicExistsInfo.newTopicNotExists())).when(nsSvc)
+        doReturn(CompletableFuture.completedFuture(TopicExistsInfo.newNonPartitionedTopicExists())).when(nsSvc)
                 .checkTopicExistsAsync(any());
+        PulsarClientImpl pulsarClient = mock(PulsarClientImpl.class);
+        LookupService lookupService = mock(LookupService.class);
+        doReturn(CompletableFuture.completedFuture(new PartitionedTopicMetadata(0))).when(lookupService)
+                .getPartitionedTopicMetadata(any(), anyBoolean(), anyBoolean());
+        doReturn(lookupService).when(pulsarClient).getLookup();
+        doReturn(pulsarClient).when(pulsarTestContext.getPulsarService()).getClient();
 
         setupMLAsyncCallbackMocks();
     }

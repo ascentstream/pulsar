@@ -683,13 +683,17 @@ public class RGUsageMTAggrWaitForAllMsgsTest extends ProducerConsumerBase {
             for (ResourceGroupMonitoringClass mc : ResourceGroupMonitoringClass.values()) {
                 String mcName = mc.name();
                 int mcIndex = mc.ordinal();
-                double quotaBytes = ResourceGroupService.getRgQuotaByteCount(rgName, mcName, pulsar.getConfiguration().getClusterName(),null);
+                double quotaBytes = ResourceGroupService.getRgQuotaByteCount(rgName, mcName,
+                        pulsar.getConfiguration().getClusterName(), null);
                 totalQuotaBytes[mcIndex] += quotaBytes;
-                double quotaMesgs = ResourceGroupService.getRgQuotaMessageCount(rgName, mcName,pulsar.getConfiguration().getClusterName(),null);
+                double quotaMesgs = ResourceGroupService.getRgQuotaMessageCount(rgName, mcName,
+                        pulsar.getConfiguration().getClusterName(), null);
                 totalQuotaMessages[mcIndex] += quotaMesgs;
-                double usedBytes = ResourceGroupService.getRgLocalUsageByteCount(rgName, mcName,pulsar.getConfiguration().getClusterName(),null);
+                double usedBytes = ResourceGroupService.getRgLocalUsageByteCount(rgName, mcName,
+                        pulsar.getConfiguration().getClusterName(), null);
                 totalUsedBytes[mcIndex] += usedBytes;
-                double usedMesgs = ResourceGroupService.getRgLocalUsageMessageCount(rgName, mcName,pulsar.getConfiguration().getClusterName(),null);
+                double usedMesgs = ResourceGroupService.getRgLocalUsageMessageCount(rgName, mcName,
+                        pulsar.getConfiguration().getClusterName(), null);
                 totalUsedMessages[mcIndex] += usedMesgs;
 
                 double usageReportedCount = ResourceGroup.getRgUsageReportedCount(rgName, mcName);

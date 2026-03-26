@@ -54,6 +54,7 @@ import org.apache.bookkeeper.mledger.Position;
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.pulsar.broker.PulsarServerException;
+import org.apache.pulsar.broker.event.data.ReplicatorStartEventData;
 import org.apache.pulsar.broker.resourcegroup.ResourceGroup;
 import org.apache.pulsar.broker.resourcegroup.ResourceGroupDispatchLimiter;
 import org.apache.pulsar.broker.service.AbstractReplicator;
@@ -61,6 +62,7 @@ import org.apache.pulsar.broker.service.BrokerService;
 import org.apache.pulsar.broker.service.BrokerServiceException;
 import org.apache.pulsar.broker.service.MessageExpirer;
 import org.apache.pulsar.broker.service.Replicator;
+import org.apache.pulsar.broker.service.TopicEventsListener.TopicEvent;
 import org.apache.pulsar.client.api.MessageId;
 import org.apache.pulsar.client.api.Producer;
 import org.apache.pulsar.client.api.PulsarClientException;
@@ -179,6 +181,14 @@ public abstract class PersistentReplicator extends AbstractReplicator
 
             // Rewind the cursor to be sure to read again all non-acked messages sent while restarting
             cursor.rewind();
+            localTopic.getBrokerService()
+                    .getTopicEventsDispatcher()
+                    .newEvent(localTopicName, TopicEvent.REPLICATOR_START)
+                    .data(ReplicatorStartEventData.builder()
+                            .replicatorId(replicatorId)
+                            .localCluster(localCluster)
+                            .remoteCluster(remoteCluster).build())
+                    .dispatch();
             // read entries
             readMoreEntries();
         } else {
@@ -562,12 +572,21 @@ public abstract class PersistentReplicator extends AbstractReplicator
         brokerService.executor().schedule(this::readMoreEntries, waitTimeMillis, TimeUnit.MILLISECONDS);
     }
 
+    /**
+     * @deprecated Use purgeBacklog() instead.
+     */
+    @Deprecated
     public CompletableFuture<Void> clearBacklog() {
-        CompletableFuture<Void> future = new CompletableFuture<>();
+        return purgeBacklog().thenAccept(ignored -> {
+        });
+    }
 
+    public CompletableFuture<Long> purgeBacklog() {
+        CompletableFuture<Long> future = new CompletableFuture<>();
+
+        long numberOfEntriesInBacklog = cursor.getNumberOfEntriesInBacklog(false);
         if (log.isDebugEnabled()) {
-            log.debug("[{}] Backlog size before clearing: {}", replicatorId,
-                    cursor.getNumberOfEntriesInBacklog(false));
+            log.debug("[{}] Backlog size before clearing: {}", replicatorId, numberOfEntriesInBacklog);
         }
 
         cursor.asyncClearBacklog(new ClearBacklogCallback() {
@@ -577,7 +596,7 @@ public abstract class PersistentReplicator extends AbstractReplicator
                     log.debug("[{}] Backlog size after clearing: {}", replicatorId,
                             cursor.getNumberOfEntriesInBacklog(false));
                 }
-                future.complete(null);
+                future.complete(numberOfEntriesInBacklog);
             }
 
             @Override

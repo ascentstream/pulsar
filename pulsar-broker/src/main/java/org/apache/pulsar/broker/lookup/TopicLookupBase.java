@@ -34,9 +34,12 @@ import org.apache.commons.lang3.StringUtils;
 import org.apache.pulsar.broker.PulsarServerException;
 import org.apache.pulsar.broker.PulsarService;
 import org.apache.pulsar.broker.ServiceConfiguration;
+import org.apache.pulsar.broker.admin.AdminResource;
 import org.apache.pulsar.broker.authentication.AuthenticationDataSource;
+import org.apache.pulsar.broker.event.data.TopicLookupEventData;
 import org.apache.pulsar.broker.namespace.LookupOptions;
-import org.apache.pulsar.broker.web.PulsarWebResource;
+import org.apache.pulsar.broker.service.ServerCnx;
+import org.apache.pulsar.broker.service.TopicEventsListener.TopicEvent;
 import org.apache.pulsar.broker.web.RestException;
 import org.apache.pulsar.common.api.proto.CommandLookupTopicResponse.LookupType;
 import org.apache.pulsar.common.api.proto.ServerError;
@@ -53,7 +56,7 @@ import org.apache.pulsar.metadata.api.MetadataStoreException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-public class TopicLookupBase extends PulsarWebResource {
+public class TopicLookupBase extends AdminResource {
 
     private static final String LOOKUP_PATH_V1 = "/lookup/v2/destination/";
     private static final String LOOKUP_PATH_V2 = "/lookup/v2/topic/";
@@ -130,6 +133,17 @@ public class TopicLookupBase extends PulsarWebResource {
                             if (log.isDebugEnabled()) {
                                 log.debug("Redirect lookup for topic {} to {}", topicName, redirect);
                             }
+                            var eventDataBuilder =
+                                    TopicLookupEventData.builder().authoritative(newAuthoritative);
+                            if (isRequestHttps()) {
+                                eventDataBuilder.httpUrlTls(redirect.toString());
+                            } else {
+                                eventDataBuilder.httpUrl(redirect.toString());
+                            }
+                            eventDataBuilder.address(formatHttpAddress());
+                            newTopicEvent(topicName, TopicEvent.LOOKUP)
+                                    .data(eventDataBuilder.build())
+                                    .dispatch();
                             throw new WebApplicationException(Response.temporaryRedirect(redirect).build());
                         } else {
                             // Found broker owning the topic
@@ -138,6 +152,17 @@ public class TopicLookupBase extends PulsarWebResource {
                                         result.getLookupData());
                             }
                             pulsar().getBrokerService().getLookupRequestSemaphore().release();
+                            newTopicEvent(topicName, TopicEvent.LOOKUP)
+                                    .data(TopicLookupEventData.builder()
+                                            .authoritative(authoritative)
+                                            .redirect(false)
+                                            .httpUrl(result.getLookupData().getHttpUrl())
+                                            .httpUrlTls(result.getLookupData().getHttpUrlTls())
+                                            .brokerUrl(result.getLookupData().getBrokerUrl())
+                                            .brokerUrlTls(result.getLookupData().getBrokerUrlTls())
+                                            .address(formatHttpAddress())
+                                            .build())
+                                    .dispatch();
                             return result.getLookupData();
                         }
                     });
@@ -146,6 +171,24 @@ public class TopicLookupBase extends PulsarWebResource {
                     throw FutureUtil.wrapToCompletionException(ex);
                 });
     }
+
+    private String formatHttpAddress() {
+        if (httpRequest == null) {
+            return "[L:/-:-1 - R:/-:-1]";
+        }
+
+        String id = "0x" + Integer.toHexString(System.identityHashCode(httpRequest));
+
+        String localAddr = httpRequest.getLocalAddr();
+        int localPort = httpRequest.getLocalPort();
+        String remoteAddr = httpRequest.getRemoteAddr();
+        int remotePort = httpRequest.getRemotePort();
+
+        return "[id: " + id + ", L:/" + localAddr + ':' + localPort
+                + " - R:/" + remoteAddr + ':' + remotePort
+                + "]";
+    }
+
 
     protected String internalGetNamespaceBundle(TopicName topicName) {
         validateNamespaceOperation(topicName.getNamespaceObject(), NamespaceOperation.GET_BUNDLE);
@@ -186,7 +229,7 @@ public class TopicLookupBase extends PulsarWebResource {
                                                               AuthenticationDataSource authenticationData,
                                                               AuthenticationDataSource originalAuthenticationData,
                                                               long requestId, final String advertisedListenerName,
-                                                              Map<String, String> properties) {
+                                                              Map<String, String> properties, ServerCnx cnx) {
 
         final CompletableFuture<ByteBuf> validationFuture = new CompletableFuture<>();
         final CompletableFuture<ByteBuf> lookupfuture = new CompletableFuture<>();
@@ -200,6 +243,21 @@ public class TopicLookupBase extends PulsarWebResource {
                     log.debug("[{}] Redirecting the lookup call to {}/{} cluster={}", clientAppId,
                             differentClusterData.getBrokerServiceUrl(), differentClusterData.getBrokerServiceUrlTls(),
                             cluster);
+                }
+                if (cnx != null) {
+                    cnx.newTopicEvent(topicName.toString(), TopicEvent.LOOKUP)
+                            .data(TopicLookupEventData.builder()
+                                    .authoritative(authoritative)
+                                    .httpUrl(differentClusterData.getBrokerServiceUrl())
+                                    .httpUrlTls(differentClusterData.getBrokerServiceUrlTls())
+                                    .brokerUrl(differentClusterData.getBrokerServiceUrl())
+                                    .brokerUrlTls(differentClusterData.getBrokerServiceUrlTls())
+                                    .authoritative(true)
+                                    .redirect(true)
+                                    .proxyThroughServiceUrl(false)
+                                    .address(cnx.toString())
+                                    .build())
+                            .dispatch();
                 }
                 validationFuture.complete(newLookupResponse(differentClusterData.getBrokerServiceUrl(),
                         differentClusterData.getBrokerServiceUrlTls(), true, LookupType.Redirect,
@@ -295,16 +353,43 @@ public class TopicLookupBase extends PulsarWebResource {
 
                             LookupData lookupData = lookupResult.get().getLookupData();
                             printWarnLogIfLookupResUnexpected(topicName, lookupData, options, pulsarService);
+                            boolean proxyThroughServiceUrl;
+                            boolean newAuthoritative;
                             if (lookupResult.get().isRedirect()) {
-                                boolean newAuthoritative = lookupResult.get().isAuthoritativeRedirect();
+                                proxyThroughServiceUrl = false;
+                                newAuthoritative = lookupResult.get().isAuthoritativeRedirect();
                                 lookupfuture.complete(
                                         newLookupResponse(lookupData.getBrokerUrl(), lookupData.getBrokerUrlTls(),
-                                                newAuthoritative, LookupType.Redirect, requestId, false));
+                                                newAuthoritative, LookupType.Redirect, requestId,
+                                                proxyThroughServiceUrl));
                             } else {
                                 ServiceConfiguration conf = pulsarService.getConfiguration();
+                                proxyThroughServiceUrl = shouldRedirectThroughServiceUrl(conf, lookupData);
+                                newAuthoritative = true;
                                 lookupfuture.complete(newLookupResponse(lookupData.getBrokerUrl(),
-                                        lookupData.getBrokerUrlTls(), true /* authoritative */, LookupType.Connect,
-                                        requestId, shouldRedirectThroughServiceUrl(conf, lookupData)));
+                                        lookupData.getBrokerUrlTls(), newAuthoritative /* authoritative */,
+                                        LookupType.Connect,
+                                        requestId, proxyThroughServiceUrl));
+                            }
+                            if (cnx != null) {
+                                lookupfuture.whenComplete((__, ex) -> {
+                                    if (ex == null) {
+                                        cnx.newTopicEvent(topicName.toString(), TopicEvent.LOOKUP)
+                                                .clientVersion(cnx.getClientVersion())
+                                                .proxyVersion(cnx.getProxyVersion())
+                                                .data(TopicLookupEventData.builder()
+                                                        .authoritative(newAuthoritative)
+                                                        .httpUrl(lookupData.getHttpUrl())
+                                                        .httpUrlTls(lookupData.getHttpUrlTls())
+                                                        .brokerUrl(lookupData.getBrokerUrl())
+                                                        .brokerUrlTls(lookupData.getBrokerUrlTls())
+                                                        .redirect(lookupResult.get().isRedirect())
+                                                        .proxyThroughServiceUrl(proxyThroughServiceUrl)
+                                                        .address(cnx.toString())
+                                                        .build())
+                                                .dispatch();
+                                    }
+                                });
                             }
                         }).exceptionally(ex -> {
                             handleLookupError(lookupfuture, topicName.toString(), clientAppId, requestId, ex);

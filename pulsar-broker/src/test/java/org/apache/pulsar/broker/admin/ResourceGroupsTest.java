@@ -113,9 +113,9 @@ public class ResourceGroupsTest extends MockedPulsarServiceBaseTest  {
         }).isInstanceOf(PulsarAdminException.class);
 
         // delete the ResourceGroups we created.
-        Iterator<String> rg_Iterator = expectedRgNames.iterator();
-        while (rg_Iterator.hasNext()) {
-            admin.resourcegroups().deleteResourceGroup(rg_Iterator.next());
+        Iterator<String> rgIterator = expectedRgNames.iterator();
+        while (rgIterator.hasNext()) {
+            admin.resourcegroups().deleteResourceGroup(rgIterator.next());
         }
     }
 

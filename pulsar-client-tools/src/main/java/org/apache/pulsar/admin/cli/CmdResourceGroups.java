@@ -179,7 +179,7 @@ public class CmdResourceGroups extends CmdBase {
         }
     }
 
-    @Command(description ="Get replicator rate limiter from a resourcegroup")
+    @Command(description = "Get replicator rate limiter from a resourcegroup")
     private class GetReplicatorDispatchRate extends CliCommand {
         @Parameters(description = "resourcegroup-name", arity = "1")
         private String resourceGroupName;

@@ -957,7 +957,8 @@ public class AdminTest extends MockedPulsarServiceBaseTest {
         future.completeExceptionally(new RuntimeException("500 error contains error message"));
         NamespaceService namespaceService = pulsar.getNamespaceService();
         doReturn(future).when(namespaceService).checkTopicExists(any());
-        persistentTopics.createPartitionedTopic(response1, property, cluster, namespace, partitionedTopicName, 5, false);
+        persistentTopics.createPartitionedTopic(response1, property, cluster, namespace, partitionedTopicName, 5,
+                false);
         verify(response1, timeout(5000).times(1)).resume(responseCaptor.capture());
         Assert.assertEquals(responseCaptor.getValue().getResponse().getStatus(),
                 Status.INTERNAL_SERVER_ERROR.getStatusCode());
