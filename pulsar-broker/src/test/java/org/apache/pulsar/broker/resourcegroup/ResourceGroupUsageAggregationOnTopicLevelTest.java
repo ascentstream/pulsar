@@ -46,6 +46,7 @@ import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.Test;
 
 @Slf4j
+@Test(groups = "flaky")
 public class ResourceGroupUsageAggregationOnTopicLevelTest extends ProducerConsumerBase {
 
     private final String tenantName = "pulsar-test";
