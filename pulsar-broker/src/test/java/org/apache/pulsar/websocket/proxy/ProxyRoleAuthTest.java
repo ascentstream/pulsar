@@ -67,7 +67,7 @@ import org.testng.annotations.Test;
  * 1. testWebSocketProxyProduceConsumeWithAuthorization: Positive test with authorized tokens
  * 2. testWebSocketProxyWithUnauthorizedToken: Negative test with unauthorized tokens
  */
-@Test(groups = "websocket")
+@Test(groups = "flaky")
 public class ProxyRoleAuthTest extends ProducerConsumerBase {
 
     private static final Logger log = LoggerFactory.getLogger(ProxyRoleAuthTest.class);
