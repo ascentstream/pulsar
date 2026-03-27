@@ -71,6 +71,7 @@ public class ReplicatedSubscriptionsControllerTest {
         ServiceConfiguration config = new ServiceConfiguration();
         config.setReplicatorPrefix("pulsar.repl");
         config.setEnableReplicatedSubscriptions(true);
+        config.setClusterName("test-cluster");
         OpenTelemetryReplicatedSubscriptionStats stats = mock(OpenTelemetryReplicatedSubscriptionStats.class);
         MonotonicClock monotonicClock = System::nanoTime;
         BacklogQuotaManager backlogQuotaManager = mock(BacklogQuotaManager.class);
