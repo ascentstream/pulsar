@@ -231,16 +231,6 @@ public class ServerCnx extends PulsarHandler implements TransportCnx {
     private final BrokerInterceptor brokerInterceptor;
     private State state;
     private volatile boolean isActive = true;
-    private String authRole = null;
-    private volatile AuthenticationDataSource authenticationData;
-    private AuthenticationProvider authenticationProvider;
-    private AuthenticationState authState;
-    // In case of proxy, if the authentication credentials are forwardable,
-    // it will hold the credentials of the original client
-    private AuthenticationState originalAuthState;
-    private volatile AuthenticationDataSource originalAuthData;
-    // Keep temporarily in order to verify after verifying proxy's authData
-    private AuthData originalAuthDataCopy;
     private boolean pendingAuthChallengeResponse = false;
     private ScheduledFuture<?> authRefreshTask;
 
@@ -978,7 +968,7 @@ public class ServerCnx extends PulsarHandler implements TransportCnx {
     private void maybeScheduleAuthenticationCredentialsRefresh() {
         assert ctx.executor().inEventLoop();
         assert authRefreshTask == null;
-        if (authState == null) {
+        if (getAuthRole() == null) {
             // Authentication is disabled or there's no local state to refresh
             return;
         }
@@ -3678,7 +3668,7 @@ public class ServerCnx extends PulsarHandler implements TransportCnx {
     }
 
     public String getRole() {
-        return authRole;
+        return binaryAuthSession != null ? binaryAuthSession.getAuthRole() : null;
     }
 
     @Override

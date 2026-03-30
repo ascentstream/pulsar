@@ -1185,8 +1185,8 @@ public class BrokerServiceTest extends BrokerTestBase {
         pulsar.getNamespaceService().getOwnershipCache().updateBundleState(bundle, false).join();
 
         // try to create topic which should fail as bundle is disable
-        TopicLoadingContext topicLoadingContext =
-                TopicLoadingContext.builder().topicName(topic).createIfMissing(true).properties(null).build();
+        TopicLoadingContext topicLoadingContext = TopicLoadingContext.builder().topicFuture(new CompletableFuture<>())
+                .topicName(topic).createIfMissing(true).properties(null).build();
         CompletableFuture<Optional<Topic>> futureResult = pulsar.getBrokerService()
                 .loadOrCreatePersistentTopic(topicLoadingContext);
 

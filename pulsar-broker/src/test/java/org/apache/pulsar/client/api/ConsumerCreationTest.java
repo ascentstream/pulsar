@@ -23,6 +23,7 @@ import static org.testng.Assert.assertThrows;
 import lombok.Cleanup;
 import org.apache.pulsar.client.admin.PulsarAdminException;
 import org.apache.pulsar.client.api.PulsarClientException.NotAllowedException;
+import org.apache.pulsar.client.api.PulsarClientException.NotFoundException;
 import org.apache.pulsar.common.naming.TopicDomain;
 import org.apache.pulsar.common.naming.TopicName;
 import org.testng.annotations.AfterMethod;
@@ -86,7 +87,7 @@ public class ConsumerCreationTest extends ProducerConsumerBase {
         }
 
         // Partition index is out of range.
-        assertThrows(NotAllowedException.class, () -> {
+        assertThrows(NotFoundException.class, () -> {
             @Cleanup
             Consumer<byte[]> ignored =
                     pulsarClient.newConsumer().topic(TopicName.get(partitionedTopic).getPartition(100).toString())
@@ -112,16 +113,9 @@ public class ConsumerCreationTest extends ProducerConsumerBase {
         admin.topics().delete(TopicName.get(partitionedTopic).getPartition(1).toString());
 
         // Non-persistent topic only have the metadata, and no partition, so it works fine.
-        if (allowAutoTopicCreation || domain.equals(TopicDomain.non_persistent)) {
-            @Cleanup
-            Consumer<byte[]> ignored =
-                    pulsarClient.newConsumer().topic(partitionedTopic).subscriptionName("my-sub").subscribe();
-        } else {
-            assertThrows(PulsarClientException.NotFoundException.class, () -> {
-                @Cleanup
-                Consumer<byte[]> ignored =
-                        pulsarClient.newConsumer().topic(partitionedTopic).subscriptionName("my-sub").subscribe();
-            });
-        }
+        //When metadata exists, persistent topic will automatically create deleted partitions.
+        @Cleanup
+        Consumer<byte[]> ignored =
+                pulsarClient.newConsumer().topic(partitionedTopic).subscriptionName("my-sub").subscribe();
     }
 }

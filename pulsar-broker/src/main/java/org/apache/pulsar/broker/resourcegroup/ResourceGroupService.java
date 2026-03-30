@@ -990,7 +990,8 @@ public class ResourceGroupService implements AutoCloseable{
     }
 
     private void initialize() {
-        long resourceUsagePublishPeriodInMS = TimeUnit.SECONDS.toMillis(this.resourceUsagePublishPeriodInSeconds);
+        long resourceUsagePublishPeriodInMS =
+                TimeUnit.SECONDS.toMillis(pulsar.getConfiguration().getResourceUsageTransportPublishIntervalInSecs());
         long statsCacheInMS = resourceUsagePublishPeriodInMS * 2;
         topicProduceStats = newStatsCache(statsCacheInMS);
         topicConsumeStats = newStatsCache(statsCacheInMS);

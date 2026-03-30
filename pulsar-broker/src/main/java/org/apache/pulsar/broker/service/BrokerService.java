@@ -1550,20 +1550,9 @@ public class BrokerService implements Closeable {
                                 return null;
                             });
                 }).exceptionally(e -> {
-                    log.warn("CheckTopicNsOwnership fail when createNonPersistentTopic! {}", topic, e.getCause());
-                    dispatchEvent.accept(null);
-                    // CheckTopicNsOwnership fail dont create nonPersistentTopic, when topic do lookup will find the
-                    // correct
-                    // broker. When client get non-persistent-partitioned topic
-                    // metadata will the non-persistent-topic will be created.
-                    // so we should add checkTopicNsOwnership logic otherwise the topic will be created
-                    // if it dont own by this broker,we should return success
-                    // otherwise it will keep retrying getPartitionedTopicMetadata
-                    topicFuture.complete(Optional.of(nonPersistentTopic));
-                    // after get metadata return success, we should delete this topic from this broker, because this
-                    // topic not
-                    // owner by this broker and it don't initialize and checkReplication
-                    pulsar.getExecutor().execute(() -> topics.remove(topic, topicFuture));
+                    Throwable throwable = FutureUtil.unwrapCompletionException(e);
+                    dispatchEvent.accept(throwable);
+                    topicFuture.completeExceptionally(throwable);
                     return null;
                 });
 

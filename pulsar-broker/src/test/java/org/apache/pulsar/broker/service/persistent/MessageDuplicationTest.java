@@ -255,6 +255,7 @@ public class MessageDuplicationTest extends BrokerTestBase {
         serviceConfiguration.setBrokerDeduplicationEntriesInterval(BROKER_DEDUPLICATION_ENTRIES_INTERVAL);
         serviceConfiguration.setBrokerDeduplicationMaxNumberOfProducers(BROKER_DEDUPLICATION_MAX_NUMBER_PRODUCERS);
         serviceConfiguration.setReplicatorPrefix(REPLICATOR_PREFIX);
+        serviceConfiguration.setClusterName("test-cluster");
 
         doReturn(serviceConfiguration).when(pulsarService).getConfiguration();
         doReturn(mock(PulsarResources.class)).when(pulsarService).getPulsarResources();
