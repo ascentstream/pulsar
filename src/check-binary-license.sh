@@ -53,7 +53,7 @@ EXIT=0
 
 # Check all bundled jars are mentioned in LICENSE
 for J in $JARS; do
-    echo $J | grep -q "org.apache.pulsar"
+    echo $J | grep -q "com.ascentstream.pulsar"
     if [ $? == 0 ]; then
         continue
     fi
