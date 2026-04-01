@@ -469,6 +469,21 @@ public class CustomizedManagedLedgerStorageForTest extends ManagedLedgerClientFa
         }
 
         @Override
+        public CompletableFuture<Void> asyncAddLedgerProperty(long ledgerId, String key, String value) {
+            return delegate.asyncAddLedgerProperty(ledgerId, key, value);
+        }
+
+        @Override
+        public CompletableFuture<Void> asyncRemoveLedgerProperty(long ledgerId, String key) {
+            return delegate.asyncRemoveLedgerProperty(ledgerId, key);
+        }
+
+        @Override
+        public CompletableFuture<String> asyncGetLedgerProperty(long ledgerId, String key) {
+            return delegate.asyncGetLedgerProperty(ledgerId, key);
+        }
+
+        @Override
         public Position terminate() throws InterruptedException, ManagedLedgerException {
             return delegate.terminate();
         }
