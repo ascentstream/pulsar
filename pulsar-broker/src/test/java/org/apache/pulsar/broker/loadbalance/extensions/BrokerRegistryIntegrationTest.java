@@ -70,11 +70,7 @@ public class BrokerRegistryIntegrationTest {
         if (bk != null) {
             bk.stop();
         }
-        // Guard against regressions where the broker hangs on shutdown (e.g. blocked health
-        // checks or stuck registrations). Keep the threshold generous enough to tolerate CI
-        // variability in BrokerRegistryMetadataStoreIntegrationTest, while still catching the
-        // multi-minute hangs this assertion was originally added to detect.
-        if (elapsedMs > 15000) {
+        if (elapsedMs > 5000) {
             throw new RuntimeException("Broker took " + elapsedMs + "ms to close");
         }
     }
