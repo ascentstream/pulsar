@@ -33,7 +33,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
-import javax.servlet.ServletContext;
 import javax.ws.rs.core.Response;
 import javax.ws.rs.core.UriInfo;
 import org.apache.pulsar.broker.admin.v2.Namespaces;
@@ -97,7 +96,7 @@ public class NamespacesV2Test extends MockedPulsarServiceBaseTest {
         super.internalSetup();
 
         namespaces = spy(Namespaces.class);
-        namespaces.setServletContext(mock(ServletContext.class));
+        namespaces.setServletContext(new MockServletContext());
         namespaces.setPulsar(pulsar);
         doReturn(false).when(namespaces).isRequestHttps();
         doReturn("test").when(namespaces).clientAppId();
