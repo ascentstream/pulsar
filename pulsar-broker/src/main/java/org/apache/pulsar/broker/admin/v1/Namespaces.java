@@ -1377,12 +1377,20 @@ public class Namespaces extends NamespacesBase {
             @QueryParam("authoritative") @DefaultValue("false") boolean authoritative) {
         try {
             validateNamespaceName(property, cluster, namespace);
-            internalClearNamespaceBacklog(asyncResponse, authoritative);
         } catch (WebApplicationException wae) {
             asyncResponse.resume(wae);
+            return;
         } catch (Exception e) {
             asyncResponse.resume(new RestException(e));
+            return;
         }
+        internalClearNamespaceBacklogAsync(authoritative)
+                .thenAccept(__ -> asyncResponse.resume(Response.noContent().build()))
+                .exceptionally(ex -> {
+                    log.error("[{}] Failed to clear backlog on namespace {}", clientAppId(), namespaceName, ex);
+                    resumeAsyncResponseExceptionally(asyncResponse, ex);
+                    return null;
+                });
     }
 
     @POST
@@ -1392,12 +1400,20 @@ public class Namespaces extends NamespacesBase {
             @ApiResponse(code = 307, message = "Current broker doesn't serve the namespace"),
             @ApiResponse(code = 403, message = "Don't have admin or operate permission on the namespace"),
             @ApiResponse(code = 404, message = "Namespace does not exist") })
-    public void clearNamespaceBundleBacklog(@PathParam("property") String property,
+    public void clearNamespaceBundleBacklog(@Suspended final AsyncResponse asyncResponse,
+            @PathParam("property") String property,
             @PathParam("cluster") String cluster, @PathParam("namespace") String namespace,
             @PathParam("bundle") String bundleRange,
             @QueryParam("authoritative") @DefaultValue("false") boolean authoritative) {
         validateNamespaceName(property, cluster, namespace);
-        internalClearNamespaceBundleBacklog(bundleRange, authoritative);
+        internalClearNamespaceBundleBacklogAsync(bundleRange, authoritative)
+                .thenAccept(__ -> asyncResponse.resume(Response.noContent().build()))
+                .exceptionally(ex -> {
+                    log.error("[{}] Failed to clear backlog on namespace bundle {}/{}", clientAppId(),
+                            namespaceName, bundleRange, ex);
+                    resumeAsyncResponseExceptionally(asyncResponse, ex);
+                    return null;
+                });
     }
 
     @POST
@@ -1412,12 +1428,21 @@ public class Namespaces extends NamespacesBase {
             @QueryParam("authoritative") @DefaultValue("false") boolean authoritative) {
         try {
             validateNamespaceName(property, cluster, namespace);
-            internalClearNamespaceBacklogForSubscription(asyncResponse, subscription, authoritative);
         } catch (WebApplicationException wae) {
             asyncResponse.resume(wae);
+            return;
         } catch (Exception e) {
             asyncResponse.resume(new RestException(e));
+            return;
         }
+        internalClearNamespaceBacklogForSubscriptionAsync(subscription, authoritative)
+                .thenAccept(__ -> asyncResponse.resume(Response.noContent().build()))
+                .exceptionally(ex -> {
+                    log.error("[{}] Failed to clear backlog for subscription {} on namespace {}", clientAppId(),
+                            subscription, namespaceName, ex);
+                    resumeAsyncResponseExceptionally(asyncResponse, ex);
+                    return null;
+                });
     }
 
     @POST
@@ -1427,12 +1452,20 @@ public class Namespaces extends NamespacesBase {
             @ApiResponse(code = 307, message = "Current broker doesn't serve the namespace"),
             @ApiResponse(code = 403, message = "Don't have admin or operate permission on the namespace"),
             @ApiResponse(code = 404, message = "Namespace does not exist") })
-    public void clearNamespaceBundleBacklogForSubscription(@PathParam("property") String property,
+    public void clearNamespaceBundleBacklogForSubscription(@Suspended final AsyncResponse asyncResponse,
+            @PathParam("property") String property,
             @PathParam("cluster") String cluster, @PathParam("namespace") String namespace,
             @PathParam("subscription") String subscription, @PathParam("bundle") String bundleRange,
             @QueryParam("authoritative") @DefaultValue("false") boolean authoritative) {
         validateNamespaceName(property, cluster, namespace);
-        internalClearNamespaceBundleBacklogForSubscription(subscription, bundleRange, authoritative);
+        internalClearNamespaceBundleBacklogForSubscriptionAsync(subscription, bundleRange, authoritative)
+                .thenAccept(__ -> asyncResponse.resume(Response.noContent().build()))
+                .exceptionally(ex -> {
+                    log.error("[{}] Failed to clear backlog for subscription {} on namespace bundle {}/{}",
+                            clientAppId(), subscription, namespaceName, bundleRange, ex);
+                    resumeAsyncResponseExceptionally(asyncResponse, ex);
+                    return null;
+                });
     }
 
     @POST
