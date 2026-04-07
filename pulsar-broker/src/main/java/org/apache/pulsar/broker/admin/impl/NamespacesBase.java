@@ -57,6 +57,7 @@ import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.mutable.MutableObject;
 import org.apache.pulsar.broker.PulsarServerException;
 import org.apache.pulsar.broker.admin.AdminResource;
+import org.apache.pulsar.broker.loadbalance.LeaderBroker;
 import org.apache.pulsar.broker.loadbalance.extensions.ExtensibleLoadManagerImpl;
 import org.apache.pulsar.broker.service.BrokerServiceException;
 import org.apache.pulsar.broker.service.BrokerServiceException.SubscriptionBusyException;
@@ -489,7 +490,7 @@ public abstract class NamespacesBase extends AdminResource {
                                 // There are still more than one clusters configured for the global namespace
                                 throw new RestException(Status.PRECONDITION_FAILED,
                                     "Cannot delete the global namespace " + nsName + ". There are still more than "
-                                    + "one replication clusters configured or replication clusters is empty.");
+                                    + "one replication clusters configured.");
                             }
                             if (!cluster.equals(config().getClusterName())) {
                                 // the only replication cluster is other cluster, redirect
@@ -617,7 +618,8 @@ public abstract class NamespacesBase extends AdminResource {
                     }
                     return future
                             .thenCompose(__ ->
-                                    validateNamespaceBundleOwnershipAsync(namespaceName, bundleRange,
+                                    validateNamespaceBundleOwnershipAsync(namespaceName, policies.bundles,
+                                            bundleRange,
                                             authoritative, true))
                             .thenCompose(bundle -> {
                                 return pulsar().getNamespaceService().getListOfPersistentTopics(namespaceName)
@@ -1052,51 +1054,48 @@ public abstract class NamespacesBase extends AdminResource {
         if (this.isLeaderBroker()) {
             return CompletableFuture.completedFuture(null);
         }
-        // The authoritative read: waits for an in-progress leader election to settle instead of
-        // failing the request while a re-election is still in flight.
-        return pulsar().getLeaderElectionService().readCurrentLeader().thenCompose(currentLeaderOpt -> {
-            if (currentLeaderOpt.isEmpty()) {
-                String errorStr = "The current leader is empty.";
-                log.error(errorStr);
-                return FutureUtil.failedFuture(new RestException(Response.Status.PRECONDITION_FAILED, errorStr));
-            }
-            String leaderBrokerId = currentLeaderOpt.get().getBrokerId();
-            return pulsar().getNamespaceService()
-                    .createLookupResult(leaderBrokerId, false, null)
-                    .thenCompose(lookupResult -> {
-                        String redirectUrl = isRequestHttps() ? lookupResult.getLookupData().getHttpUrlTls()
-                                : lookupResult.getLookupData().getHttpUrl();
-                        if (redirectUrl == null) {
-                            log.error("Redirected broker's service url is not configured");
-                            return FutureUtil.failedFuture(new RestException(Response.Status.PRECONDITION_FAILED,
-                                    "Redirected broker's service url is not configured."));
-                        }
+        Optional<LeaderBroker> currentLeaderOpt = pulsar().getLeaderElectionService().getCurrentLeader();
+        if (currentLeaderOpt.isEmpty()) {
+            String errorStr = "The current leader is empty.";
+            log.error(errorStr);
+            return FutureUtil.failedFuture(new RestException(Response.Status.PRECONDITION_FAILED, errorStr));
+        }
+        LeaderBroker leaderBroker = pulsar().getLeaderElectionService().getCurrentLeader().get();
+        String leaderBrokerId = leaderBroker.getBrokerId();
+        return pulsar().getNamespaceService()
+                .createLookupResult(leaderBrokerId, false, null)
+                .thenCompose(lookupResult -> {
+                    String redirectUrl = isRequestHttps() ? lookupResult.getLookupData().getHttpUrlTls()
+                            : lookupResult.getLookupData().getHttpUrl();
+                    if (redirectUrl == null) {
+                        log.error("Redirected broker's service url is not configured");
+                        return FutureUtil.failedFuture(new RestException(Response.Status.PRECONDITION_FAILED,
+                                "Redirected broker's service url is not configured."));
+                    }
 
-                        try {
-                            URL url = new URL(redirectUrl);
-                            URI redirect = UriBuilder.fromUri(uri.getRequestUri()).host(url.getHost())
-                                    .port(url.getPort())
-                                    .replaceQueryParam("authoritative",
-                                            false).build();
-                            // Redirect
-                            if (log.isDebugEnabled()) {
-                                log.debug("Redirecting the request call to leader - {}", redirect);
-                            }
-                            return FutureUtil.failedFuture((
-                                    new WebApplicationException(Response.temporaryRedirect(redirect).build())));
-                        } catch (MalformedURLException exception) {
-                            log.error("The redirect url is malformed - {}", redirectUrl);
-                            return FutureUtil.failedFuture(new RestException(exception));
+                    try {
+                        URL url = new URL(redirectUrl);
+                        URI redirect = UriBuilder.fromUri(uri.getRequestUri()).host(url.getHost())
+                                .port(url.getPort())
+                                .replaceQueryParam("authoritative",
+                                        false).build();
+                        // Redirect
+                        if (log.isDebugEnabled()) {
+                            log.debug("Redirecting the request call to leader - {}", redirect);
                         }
-                    });
-        });
+                        return FutureUtil.failedFuture((
+                                new WebApplicationException(Response.temporaryRedirect(redirect).build())));
+                    } catch (MalformedURLException exception) {
+                        log.error("The redirect url is malformed - {}", redirectUrl);
+                        return FutureUtil.failedFuture(new RestException(exception));
+                    }
+                });
     }
 
     public CompletableFuture<Void> setNamespaceBundleAffinityAsync(String bundleRange, String destinationBroker) {
         if (StringUtils.isBlank(destinationBroker)) {
             return CompletableFuture.completedFuture(null);
         }
-
         return pulsar().getLoadManager().get().getAvailableBrokersAsync()
                 .thenCompose(brokers -> {
                     if (!brokers.contains(destinationBroker)) {
@@ -1117,11 +1116,8 @@ public abstract class NamespacesBase extends AdminResource {
                     if (ExtensibleLoadManagerImpl.isLoadManagerExtensionEnabled(pulsar())) {
                         return;
                     }
-                    final String bundleName = pulsar().getNamespaceService().getNamespaceBundleFactory()
-                            .getBundle(namespaceName.toString(), bundleRange)
-                            .toString();
                     // For ExtensibleLoadManager, this operation will be ignored.
-                    pulsar().getLoadManager().get().setNamespaceBundleAffinity(bundleName, destinationBroker);
+                    pulsar().getLoadManager().get().setNamespaceBundleAffinity(bundleRange, destinationBroker);
                 });
     }
 
@@ -1166,8 +1162,9 @@ public abstract class NamespacesBase extends AdminResource {
                     }
                 })
                 .thenCompose(__ -> validatePoliciesReadOnlyAccessAsync())
-                .thenCompose(__ ->
-                        isBundleOwnedByAnyBroker(namespaceName, bundleRange)
+                .thenCompose(__ -> getNamespacePoliciesAsync(namespaceName))
+                .thenCompose(policies ->
+                     isBundleOwnedByAnyBroker(namespaceName, policies.bundles, bundleRange)
                         .thenCompose(flag -> {
                             if (!flag) {
                                 log.info("[{}] Namespace bundle is not owned by any broker {}/{}", clientAppId(),
@@ -1175,7 +1172,7 @@ public abstract class NamespacesBase extends AdminResource {
                                 return CompletableFuture.completedFuture(null);
                             }
                             Optional<String> destinationBrokerOpt = Optional.ofNullable(destinationBroker);
-                            return validateNamespaceBundleOwnershipAsync(namespaceName, bundleRange,
+                            return validateNamespaceBundleOwnershipAsync(namespaceName, policies.bundles, bundleRange,
                                     authoritative, true)
                                     .thenCompose(nsBundle -> pulsar().getNamespaceService()
                                             .unloadNamespaceBundle(nsBundle, destinationBrokerOpt));
@@ -1221,8 +1218,10 @@ public abstract class NamespacesBase extends AdminResource {
                 .thenCompose(__ -> validatePoliciesReadOnlyAccessAsync())
                 .thenCompose(__ -> getBundleRangeAsync(bundleName))
                 .thenCompose(bundleRange -> {
-                    return validateNamespaceBundleOwnershipAsync(namespaceName, bundleRange,
-                            authoritative, false)
+                    return getNamespacePoliciesAsync(namespaceName)
+                            .thenCompose(policies ->
+                                    validateNamespaceBundleOwnershipAsync(namespaceName, policies.bundles, bundleRange,
+                                        authoritative, false))
                             .thenCompose(nsBundle -> pulsar().getNamespaceService().splitAndOwnBundle(nsBundle, unload,
                                     pulsar().getNamespaceService()
                                             .getNamespaceBundleSplitAlgorithmByName(splitAlgorithmName),
@@ -1236,8 +1235,9 @@ public abstract class NamespacesBase extends AdminResource {
             log.debug("[{}] Getting hash position for topic list {}, bundle {}", clientAppId(), topics, bundleRange);
         }
         return validateNamespacePolicyOperationAsync(namespaceName, PolicyName.PERSISTENCE, PolicyOperation.READ)
-                .thenCompose(__ -> {
-                    return validateNamespaceBundleOwnershipAsync(namespaceName, bundleRange,
+                .thenCompose(__ -> getNamespacePoliciesAsync(namespaceName))
+                .thenCompose(policies -> {
+                    return validateNamespaceBundleOwnershipAsync(namespaceName, policies.bundles, bundleRange,
                             false, true)
                             .thenCompose(nsBundle ->
                                     pulsar().getNamespaceService().getOwnedTopicListForNamespaceBundle(nsBundle))
@@ -1568,10 +1568,11 @@ public abstract class NamespacesBase extends AdminResource {
                     // check cluster ownership for a given global namespace: redirect if peer-cluster owns it
                     return validateGlobalNamespaceOwnershipAsync(namespaceName);
                 })
-                .thenCompose(__ ->
+                .thenCompose(__ -> getNamespacePoliciesAsync(namespaceName))
+                .thenCompose(policies ->
                         // Allow acquiring ownership for an unassigned bundle so backlog can be cleared
                         // even if not loaded.
-                        validateNamespaceBundleOwnershipAsync(namespaceName, bundleRange,
+                        validateNamespaceBundleOwnershipAsync(namespaceName, policies.bundles, bundleRange,
                                 authoritative, false))
                 .thenCompose(bundle -> clearBacklogAsync(bundle, null))
                 .thenRun(() -> log.info("[{}] Successfully cleared backlog on namespace bundle {}/{}", clientAppId(),
@@ -1620,10 +1621,11 @@ public abstract class NamespacesBase extends AdminResource {
                     // check cluster ownership for a given global namespace: redirect if peer-cluster owns it
                     return validateGlobalNamespaceOwnershipAsync(namespaceName);
                 })
-                .thenCompose(__ ->
+                .thenCompose(__ -> getNamespacePoliciesAsync(namespaceName))
+                .thenCompose(policies ->
                         // Allow acquiring ownership for an unassigned bundle so backlog can be cleared
                         // even if not loaded.
-                        validateNamespaceBundleOwnershipAsync(namespaceName, bundleRange,
+                        validateNamespaceBundleOwnershipAsync(namespaceName, policies.bundles, bundleRange,
                                 authoritative, false))
                 .thenCompose(bundle -> clearBacklogAsync(bundle, subscription))
                 .thenRun(() -> log.info(
@@ -1675,8 +1677,9 @@ public abstract class NamespacesBase extends AdminResource {
                             .thenCompose(unused -> validateClusterForTenantAsync(namespaceName.getTenant(),
                                     namespaceName.getCluster()));
                 })
-                .thenCompose(__ ->
-                        validateNamespaceBundleOwnershipAsync(namespaceName, bundleRange,
+                .thenCompose(__ -> getNamespacePoliciesAsync(namespaceName))
+                .thenCompose(policies ->
+                        validateNamespaceBundleOwnershipAsync(namespaceName, policies.bundles, bundleRange,
                                 authoritative, false))
                 .thenCompose(bundle -> unsubscribeAsync(bundle, subscription))
                 .thenRun(() -> log.info("[{}] Successfully unsubscribed {} on namespace bundle {}/{}",
@@ -1967,7 +1970,7 @@ public abstract class NamespacesBase extends AdminResource {
             log.info(msg);
             return FutureUtil.failedFuture(new RestException(Status.BAD_REQUEST, msg));
         }
-        pulsar().getBrokerService().setCurrentClusterAllowedWhenCreating(ns, policies);
+        pulsar().getBrokerService().setCurrentClusterAllowedIfNoClusterIsAllowed(ns, policies);
 
         // Validate cluster names and permissions
         return Stream.concat(policies.replication_clusters.stream(), policies.allowed_clusters.stream())
@@ -2639,12 +2642,8 @@ public abstract class NamespacesBase extends AdminResource {
         validateNamespacePolicyOperation(namespaceName, PolicyName.OFFLOAD, PolicyOperation.READ);
 
         Policies policies = getNamespacePolicies(namespaceName);
-        OffloadPoliciesImpl nsLevelOffloadPolicies = (OffloadPoliciesImpl) policies.offload_policies;
-        OffloadPoliciesImpl offloadPolicies = OffloadPoliciesImpl.mergeConfiguration(null,
-                OffloadPoliciesImpl.oldPoliciesCompatible(nsLevelOffloadPolicies, policies),
-                pulsar().getConfig().getProperties());
         LedgerOffloader managedLedgerOffloader = pulsar()
-                .getManagedLedgerOffloader(namespaceName, offloadPolicies);
+                .getManagedLedgerOffloader(namespaceName, (OffloadPoliciesImpl) policies.offload_policies);
 
         String localClusterName = pulsar().getConfiguration().getClusterName();
 
