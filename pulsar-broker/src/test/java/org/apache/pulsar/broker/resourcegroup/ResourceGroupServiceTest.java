@@ -793,6 +793,54 @@ public class ResourceGroupServiceTest extends MockedPulsarServiceBaseTest {
         }
     }
 
+    @Test
+    public void testRemoteUsageMetricsUseCorrectMonitoringClass() throws PulsarAdminException {
+        ResourceUsageTransportManager transportManager = mock(ResourceUsageTransportManager.class);
+        ResourceGroupService resourceGroupService = new ResourceGroupService(
+                pulsar, TimeUnit.HOURS, transportManager, new ResourceQuotaCalculatorImpl(pulsar));
+
+        String rgName = UUID.randomUUID().toString();
+        resourceGroupService.resourceGroupCreate(rgName, new org.apache.pulsar.common.policies.data.ResourceGroup());
+        ResourceGroup rg = resourceGroupService.resourceGroupGet(rgName);
+        String broker = "pulsar://broker-remote";
+        String replicationCluster = "r1";
+
+        double dispatchBytesBefore = ResourceGroup.getRgRemoteUsageByteCount(
+                rgName, ResourceGroupMonitoringClass.Dispatch.name(), broker, "");
+        double dispatchMessagesBefore = ResourceGroup.getRgRemoteUsageMessageCount(
+                rgName, ResourceGroupMonitoringClass.Dispatch.name(), broker, "");
+        double replicationBytesBefore = ResourceGroup.getRgRemoteUsageByteCount(
+                rgName, ResourceGroupMonitoringClass.ReplicationDispatch.name(), broker, replicationCluster);
+        double replicationMessagesBefore = ResourceGroup.getRgRemoteUsageMessageCount(
+                rgName, ResourceGroupMonitoringClass.ReplicationDispatch.name(), broker, replicationCluster);
+        double publishBytesBefore = ResourceGroup.getRgRemoteUsageByteCount(
+                rgName, ResourceGroupMonitoringClass.Publish.name(), broker, "");
+        double publishMessagesBefore = ResourceGroup.getRgRemoteUsageMessageCount(
+                rgName, ResourceGroupMonitoringClass.Publish.name(), broker, "");
+
+        ResourceUsage remote = new ResourceUsage();
+        remote.setDispatch().setBytesPerPeriod(500).setMessagesPerPeriod(800);
+        remote.addReplicator().setRemoteCluster(replicationCluster)
+                .setNetworkUsage().setBytesPerPeriod(100).setMessagesPerPeriod(50);
+
+        rg.getUsageFromMonitoredEntity(remote, broker);
+
+        Assert.assertEquals(ResourceGroup.getRgRemoteUsageByteCount(
+                rgName, ResourceGroupMonitoringClass.Dispatch.name(), broker, "") - dispatchBytesBefore, 500.0);
+        Assert.assertEquals(ResourceGroup.getRgRemoteUsageMessageCount(
+                rgName, ResourceGroupMonitoringClass.Dispatch.name(), broker, "") - dispatchMessagesBefore, 800.0);
+        Assert.assertEquals(ResourceGroup.getRgRemoteUsageByteCount(
+                rgName, ResourceGroupMonitoringClass.ReplicationDispatch.name(), broker, replicationCluster)
+                - replicationBytesBefore, 100.0);
+        Assert.assertEquals(ResourceGroup.getRgRemoteUsageMessageCount(
+                rgName, ResourceGroupMonitoringClass.ReplicationDispatch.name(), broker, replicationCluster)
+                - replicationMessagesBefore, 50.0);
+        Assert.assertEquals(ResourceGroup.getRgRemoteUsageByteCount(
+                rgName, ResourceGroupMonitoringClass.Publish.name(), broker, "") - publishBytesBefore, 0.0);
+        Assert.assertEquals(ResourceGroup.getRgRemoteUsageMessageCount(
+                rgName, ResourceGroupMonitoringClass.Publish.name(), broker, "") - publishMessagesBefore, 0.0);
+    }
+
     private ResourceGroupService rgs;
     int numAnonymousQuotaCalculations;
 

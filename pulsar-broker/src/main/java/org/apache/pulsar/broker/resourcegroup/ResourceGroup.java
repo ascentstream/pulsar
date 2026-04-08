@@ -572,13 +572,17 @@ public class ResourceGroup implements AutoCloseable{
     }
 
     // Visibility for unit testing
-    protected static double getRgRemoteUsageByteCount (String rgName, String monClassName, String brokerName) {
-        return rgRemoteUsageReportsBytes.labels(rgName, monClassName, brokerName).get();
+    protected static double getRgRemoteUsageByteCount(String rgName, String monClassName, String brokerName,
+                                                      String remoteCluster) {
+        return rgRemoteUsageReportsBytes.labels(rgName, monClassName, brokerName,
+                remoteCluster != null ? remoteCluster : "").get();
     }
 
     // Visibility for unit testing
-    protected static double getRgRemoteUsageMessageCount (String rgName, String monClassName, String brokerName) {
-        return rgRemoteUsageReportsMessages.labels(rgName, monClassName, brokerName).get();
+    protected static double getRgRemoteUsageMessageCount(String rgName, String monClassName, String brokerName,
+                                                         String remoteCluster) {
+        return rgRemoteUsageReportsMessages.labels(rgName, monClassName, brokerName,
+                remoteCluster != null ? remoteCluster : "").get();
     }
 
     // Visibility for unit testing
@@ -742,17 +746,15 @@ public class ResourceGroup implements AutoCloseable{
                 usageStats.usedValues.messages = newMessageCount;
                 usageStats.lastResourceUsageReadTimeMSecsSinceEpoch = System.currentTimeMillis();
                 String remoteCluster = key.getRemoteCluster() != null ? key.getRemoteCluster() : "";
-                rgRemoteUsageReportsBytes.labels(this.ruConsumer.getID(),
-                                ResourceGroupMonitoringClass.Publish.name(), broker, remoteCluster)
+                String monitoringClass = key.getResourceGroupMonitoringClass().name();
+                rgRemoteUsageReportsBytes.labels(this.ruConsumer.getID(), monitoringClass, broker, remoteCluster)
                         .inc(newByteCount);
-                rgRemoteUsageReportsMessages.labels(this.ruConsumer.getID(),
-                                ResourceGroupMonitoringClass.Publish.name(), broker, remoteCluster)
+                rgRemoteUsageReportsMessages.labels(this.ruConsumer.getID(), monitoringClass, broker, remoteCluster)
                         .inc(newMessageCount);
-                rgRemoteUsageReportsBytesGauge.labels(this.ruConsumer.getID(),
-                                ResourceGroupMonitoringClass.Publish.name(), broker, remoteCluster)
+                rgRemoteUsageReportsBytesGauge.labels(this.ruConsumer.getID(), monitoringClass, broker, remoteCluster)
                         .set(newByteCount);
-                rgRemoteUsageReportsMessagesGauge.labels(this.ruConsumer.getID(),
-                                ResourceGroupMonitoringClass.Publish.name(), broker, remoteCluster)
+                rgRemoteUsageReportsMessagesGauge.labels(this.ruConsumer.getID(), monitoringClass, broker,
+                                remoteCluster)
                         .set(newMessageCount);
             } finally {
                 monEntity.usageFromOtherBrokersLock.unlock();
