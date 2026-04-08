@@ -23,12 +23,15 @@ import io.prometheus.client.Summary;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.pulsar.broker.resourcegroup.ResourceGroup.BytesAndMessagesCount;
 import org.apache.pulsar.broker.resourcegroup.ResourceGroup.ResourceGroupMonitoringClass;
 import org.apache.pulsar.broker.resourcegroup.ResourceGroupService.ResourceGroupUsageStatsType;
 import org.apache.pulsar.broker.service.BrokerService;
+import org.apache.pulsar.broker.service.Topic;
 import org.apache.pulsar.client.admin.PulsarAdminException;
 import org.apache.pulsar.client.api.Consumer;
 import org.apache.pulsar.client.api.Message;
@@ -56,7 +59,7 @@ import org.testng.annotations.Test;
 // After sending/receiving all the messages, traffic usage statistics, and Prometheus-metrics
 // are verified on the RGs.
 @Slf4j
-@Test(groups = "flaky")
+//@Test(groups = "flaky")
 public class RGUsageMTAggrWaitForAllMsgsTest extends ProducerConsumerBase {
     @BeforeClass(alwaysRun = true)
     @Override
@@ -397,146 +400,161 @@ public class RGUsageMTAggrWaitForAllMsgsTest extends ProducerConsumerBase {
 
     // Produce/consume messages on the given topics, and verify that the resource-group stats are updated.
     private void testProduceConsumeUsageOnRG(String[] topicStrings) throws Exception {
+        // Snapshot the current Prometheus counter values as the baseline for this invocation.
+        // This ensures correct delta calculations even when a previous attempt failed mid-way
+        // (leaving Prometheus counters incremented without residuals being updated).
+        snapshotResiduals();
+
         createRGs();
         // creating the topics results in exposing a regression.
         // It can be put back after https://github.com/apache/pulsar/issues/11289 is fixed.
         // createTopics(topicStrings);
         registerTenantsAndNamespaces(topicStrings);
 
-        final int totalExpectedMessagesToSend = NUM_TOTAL_MESSAGES;
-        final int totalExpectedMessagesToReceive = totalExpectedMessagesToSend;
+        try {
+            final int totalExpectedMessagesToSend = NUM_TOTAL_MESSAGES;
+            final int totalExpectedMessagesToReceive = totalExpectedMessagesToSend;
 
-        final SubscriptionType consumeSubscriptionType = SubscriptionType.Shared;  // Shared, or Exclusive
+            final SubscriptionType consumeSubscriptionType = SubscriptionType.Shared;  // Shared, or Exclusive
 
-        ProducerWithThread[] prodThr = new ProducerWithThread[NUM_PRODUCERS];
-        ConsumerWithThread[] consThr = new ConsumerWithThread[NUM_CONSUMERS];
-        int sentNumBytes = 0;
-        int sentNumMsgs = 0;
-        int numProducerExceptions = 0;
+            ProducerWithThread[] prodThr = new ProducerWithThread[NUM_PRODUCERS];
+            ConsumerWithThread[] consThr = new ConsumerWithThread[NUM_CONSUMERS];
+            int sentNumBytes = 0;
+            int sentNumMsgs = 0;
+            int numProducerExceptions = 0;
 
-        // Fork some consumers to receive the messages.
-        for (int ix = 0; ix < NUM_CONSUMERS; ix++) {
-            consThr[ix] = new ConsumerWithThread();
-            ConsumeMessages cm = new ConsumeMessages(ix, NUM_MESSAGES_PER_CONSUMER, totalExpectedMessagesToReceive,
-                    consumeSubscriptionType, topicStrings);
-            Thread thr = new Thread(cm);
-            thr.start();
-            consThr[ix].consumer = cm;
-            consThr[ix].thread = thr;
-        }
-
-        // Wait for all consumers to be ready, before forking producers, so we don't lose messages.
-        int numReadyConsumers;
-        do {
-            Thread.sleep(500);
-            numReadyConsumers = 0;
+            // Fork some consumers to receive the messages.
             for (int ix = 0; ix < NUM_CONSUMERS; ix++) {
-                if (consThr[ix].consumer.isConsumerReady()) {
-                    numReadyConsumers++;
-                }
+                consThr[ix] = new ConsumerWithThread();
+                ConsumeMessages cm = new ConsumeMessages(ix, NUM_MESSAGES_PER_CONSUMER, totalExpectedMessagesToReceive,
+                        consumeSubscriptionType, topicStrings);
+                Thread thr = new Thread(cm);
+                thr.start();
+                consThr[ix].consumer = cm;
+                consThr[ix].thread = thr;
             }
-            log.debug("{} consumers are not yet ready", NUM_CONSUMERS - numReadyConsumers);
-        } while (numReadyConsumers < NUM_CONSUMERS);
 
-        // Fork some producers to send the messages.
-        for (int ix = 0; ix < NUM_PRODUCERS; ix++) {
-            prodThr[ix] = new ProducerWithThread();
-            ProduceMessages pm = new ProduceMessages(ix, NUM_MESSAGES_PER_PRODUCER, topicStrings);
-            Thread thr = new Thread(pm);
-            thr.start();
-            prodThr[ix].producer = pm;
-            prodThr[ix].thread = thr;
-        }
+            // Wait for all consumers to be ready, before forking producers, so we don't lose messages.
+            int numReadyConsumers;
+            do {
+                Thread.sleep(500);
+                numReadyConsumers = 0;
+                for (int ix = 0; ix < NUM_CONSUMERS; ix++) {
+                    if (consThr[ix].consumer.isConsumerReady()) {
+                        numReadyConsumers++;
+                    }
+                }
+                log.debug("{} consumers are not yet ready", NUM_CONSUMERS - numReadyConsumers);
+            } while (numReadyConsumers < NUM_CONSUMERS);
 
-        // Wait for the producers to complete.
-        int sentMsgs, sentBytes;
-        for (int ix = 0; ix < NUM_PRODUCERS; ix++) {
-            prodThr[ix].thread.join();
-            sentBytes = prodThr[ix].producer.getNumBytesSent();
-            sentMsgs = prodThr[ix].producer.getNumMessagesSent();
-            numProducerExceptions += prodThr[ix].producer.getNumExceptions();
+            // Fork some producers to send the messages.
+            for (int ix = 0; ix < NUM_PRODUCERS; ix++) {
+                prodThr[ix] = new ProducerWithThread();
+                ProduceMessages pm = new ProduceMessages(ix, NUM_MESSAGES_PER_PRODUCER, topicStrings);
+                Thread thr = new Thread(pm);
+                thr.start();
+                prodThr[ix].producer = pm;
+                prodThr[ix].thread = thr;
+            }
 
-            log.debug("Producer={} sent {} mesgs and {} bytes", ix, sentMsgs, sentBytes);
-            sentNumBytes += sentBytes;
-            sentNumMsgs += sentMsgs;
-        }
-        Assert.assertEquals(sentNumMsgs, totalExpectedMessagesToSend);
-        Assert.assertEquals(numProducerExceptions, 0);
+            // Wait for the producers to complete.
+            int sentMsgs, sentBytes;
+            for (int ix = 0; ix < NUM_PRODUCERS; ix++) {
+                prodThr[ix].thread.join();
+                sentBytes = prodThr[ix].producer.getNumBytesSent();
+                sentMsgs = prodThr[ix].producer.getNumMessagesSent();
+                numProducerExceptions += prodThr[ix].producer.getNumExceptions();
 
-        int recvdNumMsgs;
-        int numConsumerExceptions = 0;
+                log.debug("Producer={} sent {} mesgs and {} bytes", ix, sentMsgs, sentBytes);
+                sentNumBytes += sentBytes;
+                sentNumMsgs += sentMsgs;
+            }
+            Assert.assertEquals(sentNumMsgs, totalExpectedMessagesToSend);
+            Assert.assertEquals(numProducerExceptions, 0);
 
-        // Wait for the consumers to receive all the messages.
-        do {
-            Thread.sleep(2000);
+            int recvdNumMsgs;
+            int numConsumerExceptions = 0;
+
+            // Wait for the consumers to receive all the messages.
+            do {
+                Thread.sleep(2000);
+                recvdNumMsgs = 0;
+                int consNumMesgsRecvd;
+                for (int ix = 0; ix < NUM_CONSUMERS; ix++) {
+                    consNumMesgsRecvd = consThr[ix].consumer.getNumMessagesRecvd();
+                    recvdNumMsgs += consNumMesgsRecvd;
+                    log.debug("consumer={} received {} messages (current total {}, expected {})",
+                            ix, consNumMesgsRecvd, recvdNumMsgs, totalExpectedMessagesToReceive);
+                }
+            } while (recvdNumMsgs < totalExpectedMessagesToReceive);
+
+            // Tell the consumers that all expected messages have been received (but don't close them yet).
+            for (int ix = 0; ix < NUM_CONSUMERS; ix++) {
+                consThr[ix].consumer.setAllMessagesReceived();
+                log.debug("consumer={} told to stop", ix);
+            }
+
+            boolean[] joinedConsumers = new boolean[NUM_CONSUMERS];
+
+            int recvdNumBytes = 0;
             recvdNumMsgs = 0;
-            int consNumMesgsRecvd;
-            for (int ix = 0; ix < NUM_CONSUMERS; ix++) {
-                consNumMesgsRecvd = consThr[ix].consumer.getNumMessagesRecvd();
-                recvdNumMsgs += consNumMesgsRecvd;
-                log.debug("consumer={} received {} messages (current total {}, expected {})",
-                        ix, consNumMesgsRecvd, recvdNumMsgs, totalExpectedMessagesToReceive);
-            }
-        } while (recvdNumMsgs < totalExpectedMessagesToReceive);
+            int numConsumersDone = 0;
+            int recvdMsgs, recvdBytes;
+            while (numConsumersDone < NUM_CONSUMERS) {
+                for (int ix = 0; ix < NUM_CONSUMERS; ix++) {
+                    if (!joinedConsumers[ix]) {
+                        consThr[ix].thread.join();
+                        joinedConsumers[ix] = true;
+                        log.debug("Joined consumer={}", ix);
 
-        // Tell the consumers that all expected messages have been received (but don't close them yet).
-        for (int ix = 0; ix < NUM_CONSUMERS; ix++) {
-            consThr[ix].consumer.setAllMessagesReceived();
-            log.debug("consumer={} told to stop", ix);
-        }
+                        recvdBytes = consThr[ix].consumer.getNumBytesRecvd();
+                        recvdMsgs = consThr[ix].consumer.getNumMessagesRecvd();
+                        numConsumerExceptions += consThr[ix].consumer.getNumExceptions();
+                        log.debug("Consumer={} received {} mesgs and {} bytes", ix, recvdMsgs, recvdBytes);
 
-        boolean[] joinedConsumers = new boolean[NUM_CONSUMERS];
-
-        int recvdNumBytes = 0;
-        recvdNumMsgs = 0;
-        int numConsumersDone = 0;
-        int recvdMsgs, recvdBytes;
-        while (numConsumersDone < NUM_CONSUMERS) {
-            for (int ix = 0; ix < NUM_CONSUMERS; ix++) {
-                if (!joinedConsumers[ix]) {
-                    consThr[ix].thread.join();
-                    joinedConsumers[ix] = true;
-                    log.debug("Joined consumer={}", ix);
-
-                    recvdBytes = consThr[ix].consumer.getNumBytesRecvd();
-                    recvdMsgs = consThr[ix].consumer.getNumMessagesRecvd();
-                    numConsumerExceptions += consThr[ix].consumer.getNumExceptions();
-                    log.debug("Consumer={} received {} mesgs and {} bytes", ix, recvdMsgs, recvdBytes);
-
-                    recvdNumBytes += recvdBytes;
-                    recvdNumMsgs += recvdMsgs;
-                    numConsumersDone++;
+                        recvdNumBytes += recvdBytes;
+                        recvdNumMsgs += recvdMsgs;
+                        numConsumersDone++;
+                    }
                 }
             }
+
+            // Close the consumers.
+            for (int ix = 0; ix < NUM_CONSUMERS; ix++) {
+                consThr[ix].consumer.closeConsumer();
+            }
+
+            Assert.assertEquals(recvdNumMsgs, totalExpectedMessagesToReceive);
+            Assert.assertEquals(numConsumerExceptions, 0);
+
+            boolean tenantRGEqualsNsRG = tenantRGEqualsNamespaceRG(topicStrings);
+            // If the tenant and NS are on different RGs, the bytes/messages get counted once on the
+            // tenant RG, and again on the namespace RG. This double-counting is avoided if tenant-RG == NS-RG.
+            // This is a known (and discussed) artifact in the implementation.
+            // 'ScaleFactor' is a way to incorporate that effect in the verification.
+            final int scaleFactor = tenantRGEqualsNsRG ? 1 : 2;
+
+            // Verify producer and consumer side stats.
+            this.verifyRGProdConsStats(topicStrings, sentNumBytes, sentNumMsgs, recvdNumBytes, recvdNumMsgs, scaleFactor,
+                    true, true);
+
+            // Verify the metrics corresponding to the operations in this test.
+            this.verifyRGMetrics(sentNumBytes, sentNumMsgs, recvdNumBytes, recvdNumMsgs, scaleFactor, true, true);
+        } finally {
+            // Always unregister and destroy even on failure, so Prometheus counters stay consistent
+            // with residuals on the next attempt.
+            try {
+                unRegisterTenantsAndNamespaces(topicStrings);
+            } catch (Exception e) {
+                log.warn("Error unregistering tenants/namespaces during cleanup", e);
+            }
+            cleanupTopics(topicStrings);
+            try {
+                destroyRGs();
+            } catch (Exception e) {
+                log.warn("Error destroying resource groups during cleanup", e);
+            }
         }
-
-        // Close the consumers.
-        for (int ix = 0; ix < NUM_CONSUMERS; ix++) {
-            consThr[ix].consumer.closeConsumer();
-        }
-
-        Assert.assertEquals(recvdNumMsgs, totalExpectedMessagesToReceive);
-        Assert.assertEquals(numConsumerExceptions, 0);
-
-        boolean tenantRGEqualsNsRG = tenantRGEqualsNamespaceRG(topicStrings);
-        // If the tenant and NS are on different RGs, the bytes/messages get counted once on the
-        // tenant RG, and again on the namespace RG. This double-counting is avoided if tenant-RG == NS-RG.
-        // This is a known (and discussed) artifact in the implementation.
-        // 'ScaleFactor' is a way to incorporate that effect in the verification.
-        final int scaleFactor = tenantRGEqualsNsRG ? 1 : 2;
-
-        // Verify producer and consumer side stats.
-        this.verifyRGProdConsStats(topicStrings, sentNumBytes, sentNumMsgs, recvdNumBytes, recvdNumMsgs, scaleFactor,
-                true, true);
-
-        // Verify the metrics corresponding to the operations in this test.
-        this.verifyRGMetrics(sentNumBytes, sentNumMsgs, recvdNumBytes, recvdNumMsgs, scaleFactor, true, true);
-
-        unRegisterTenantsAndNamespaces(topicStrings);
-        // destroyTopics can be called after createTopics() is added back
-        // (see comment above regarding https://github.com/apache/pulsar/issues/11289).
-        // destroyTopics(topicStrings);
-        destroyRGs();
     }
 
     // Verify the app stats with what we see from the broker-service, and the resource-group (which in turn internally
@@ -595,14 +613,12 @@ public class RGUsageMTAggrWaitForAllMsgsTest extends ProducerConsumerBase {
 
                     final String tenantRGName = topicToTenantRGName(topic);
                     if (!rgsWithPublishStatsGathered.contains(tenantRGName)) {
-                        prodCounts = this.rgservice.getRGUsage(tenantRGName, ResourceGroupMonitoringClass.Publish,
-                                getCumulativeUsageStats).entrySet().iterator().next().getValue();
+                        prodCounts = getTotalUsageForRG(tenantRGName, ResourceGroupMonitoringClass.Publish);
                         totalTenantRGProdCounts = ResourceGroup.accumulateBMCount(totalTenantRGProdCounts, prodCounts);
                         rgsWithPublishStatsGathered.add(tenantRGName);
                     }
                     if (!rgsWithDispatchStatsGathered.contains(tenantRGName)) {
-                        consCounts = this.rgservice.getRGUsage(tenantRGName, ResourceGroupMonitoringClass.Dispatch,
-                                getCumulativeUsageStats).entrySet().iterator().next().getValue();
+                        consCounts = getTotalUsageForRG(tenantRGName, ResourceGroupMonitoringClass.Dispatch);
                         totalTenantRGConsCounts = ResourceGroup.accumulateBMCount(totalTenantRGConsCounts, consCounts);
                         rgsWithDispatchStatsGathered.add(tenantRGName);
                     }
@@ -612,14 +628,12 @@ public class RGUsageMTAggrWaitForAllMsgsTest extends ProducerConsumerBase {
                     // We will do the same here, to get the expected stats.
                     if (tenantRGName.compareTo(nsRGName) != 0) {
                         if (!rgsWithPublishStatsGathered.contains(nsRGName)) {
-                            prodCounts = this.rgservice.getRGUsage(nsRGName, ResourceGroupMonitoringClass.Publish,
-                                    getCumulativeUsageStats).entrySet().iterator().next().getValue();
+                            prodCounts = getTotalUsageForRG(nsRGName, ResourceGroupMonitoringClass.Publish);
                             totalNsRGProdCounts = ResourceGroup.accumulateBMCount(totalNsRGProdCounts, prodCounts);
                             rgsWithPublishStatsGathered.add(nsRGName);
                         }
                         if (!rgsWithDispatchStatsGathered.contains(nsRGName)) {
-                            consCounts = this.rgservice.getRGUsage(nsRGName, ResourceGroupMonitoringClass.Dispatch,
-                                    getCumulativeUsageStats).entrySet().iterator().next().getValue();
+                            consCounts = getTotalUsageForRG(nsRGName, ResourceGroupMonitoringClass.Dispatch);
                             totalNsRGConsCounts = ResourceGroup.accumulateBMCount(totalNsRGConsCounts, consCounts);
                             rgsWithDispatchStatsGathered.add(nsRGName);
                         }
@@ -827,9 +841,6 @@ public class RGUsageMTAggrWaitForAllMsgsTest extends ProducerConsumerBase {
     // Keep track of the namespaces that were created, so we don't dup and get exceptions
     HashSet<String> createdNamespaces = new HashSet<>();
 
-    // Keep track of the topics that were created, so we don't dup and get exceptions
-    HashSet<String> createdTopics = new HashSet<>();
-
     // Keep track of the tenants that have been registered to their RGs, so we don't dup and get exceptions
     HashSet<String> registeredTenants = new HashSet<>();
 
@@ -846,28 +857,6 @@ public class RGUsageMTAggrWaitForAllMsgsTest extends ProducerConsumerBase {
     long residualRecvdNumBytes;
     long residualRecvdNumMessages;
 
-    // Create the topics provided
-    private void createTopics(String[] topics) {
-        BrokerService bs = this.pulsar.getBrokerService();
-        for (String topic : topics) {
-            if (!createdTopics.contains(topic)) {
-                bs.getOrCreateTopic(topic);
-                createdTopics.add(topic);
-            }
-        }
-    }
-
-    // Destroy the topics provided
-    private void destroyTopics(String[] topics) {
-        BrokerService bs = this.pulsar.getBrokerService();
-        for (String topic : topics) {
-            if (!createdTopics.contains(topic)) {
-                bs.deleteTopic(topic, true);
-                createdTopics.remove(topic);
-            }
-        }
-    }
-
     // Create all the RGs named in RGNames[]
     private void createRGs() throws Exception {
         for (String rgname : rgNames) {
@@ -879,6 +868,60 @@ public class RGUsageMTAggrWaitForAllMsgsTest extends ProducerConsumerBase {
     private void destroyRGs() throws Exception {
         for (String rgname : rgNames) {
             this.rgservice.resourceGroupDelete(rgname);
+        }
+    }
+
+    // Snapshot the current Prometheus counter values into the residual fields.
+    // Called at the start of each testProduceConsumeUsageOnRG() invocation so that residuals always
+    // reflect the correct baseline, even when a previous attempt failed before verifyRGMetrics() could
+    // update them.
+    private void snapshotResiduals() {
+        residualTenantRegs = 0;
+        residualNamespaceRegs = 0;
+        residualSentNumMessages = 0;
+        residualSentNumBytes = 0;
+        residualRecvdNumMessages = 0;
+        residualRecvdNumBytes = 0;
+        String cluster = pulsar.getConfiguration().getClusterName();
+        for (String rgName : rgNames) {
+            residualTenantRegs += ResourceGroupService.getRgTenantRegistersCount(rgName);
+            residualNamespaceRegs += ResourceGroupService.getRgNamespaceRegistersCount(rgName);
+            for (ResourceGroupMonitoringClass mc : ResourceGroupMonitoringClass.values()) {
+                String mcName = mc.name();
+                if (mc == ResourceGroupMonitoringClass.Publish) {
+                    residualSentNumMessages += ResourceGroupService.getRgLocalUsageMessageCount(
+                            rgName, mcName, cluster, null);
+                    residualSentNumBytes += ResourceGroupService.getRgLocalUsageByteCount(
+                            rgName, mcName, cluster, null);
+                } else if (mc == ResourceGroupMonitoringClass.Dispatch) {
+                    residualRecvdNumMessages += ResourceGroupService.getRgLocalUsageMessageCount(
+                            rgName, mcName, cluster, null);
+                    residualRecvdNumBytes += ResourceGroupService.getRgLocalUsageByteCount(
+                            rgName, mcName, cluster, null);
+                }
+            }
+        }
+    }
+
+    private BytesAndMessagesCount getTotalUsageForRG(String rgName, ResourceGroupMonitoringClass monClass)
+            throws PulsarAdminException {
+        BytesAndMessagesCount total = new BytesAndMessagesCount();
+        this.rgservice.getRGUsage(rgName, monClass, getCumulativeUsageStats)
+                .values()
+                .forEach(value -> {
+                    total.bytes += value.bytes;
+                    total.messages += value.messages;
+                });
+        return total;
+    }
+
+    private void cleanupTopics(String[] topicStrings) {
+        for (String topicString : topicStrings) {
+            CompletableFuture<Optional<Topic>> topicFuture = pulsar.getBrokerService().getTopics().remove(topicString);
+            if (topicFuture == null) {
+                continue;
+            }
+            topicFuture.join();
         }
     }
 

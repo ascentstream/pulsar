@@ -378,6 +378,8 @@ public class ResourceGroupService implements AutoCloseable{
         // Associate this topic-name with the RG.
         this.topicToRGsMap.put(topicName, rg);
         rgTopicRegisters.labels(resourceGroupName).inc();
+
+        maybeStartSchedulers();
     }
 
     /**
@@ -403,6 +405,8 @@ public class ResourceGroupService implements AutoCloseable{
             replicationDispatchStats.invalidateAll(keys);
         }
         aggregateLock.unlock();
+
+        maybeStopSchedulersIfIdle();
     }
 
     /**
@@ -742,9 +746,6 @@ public class ResourceGroupService implements AutoCloseable{
     // Periodically aggregate the usage from all topics known to the BrokerService.
     // Visibility for unit testing.
     protected void aggregateResourceGroupLocalUsages() {
-        if (!shouldRunPeriodicTasks()) {
-            return;
-        }
         final Timer aggrUsageTimer = rgUsageAggregationLatency.startTimer();
         BrokerService bs = this.pulsar.getBrokerService();
         Map<String, TopicStatsImpl> topicStatsMap = bs.getTopicStats();
@@ -805,7 +806,7 @@ public class ResourceGroupService implements AutoCloseable{
                         cancelStatus, this.aggregateLocalUsagePeriodInSeconds, newPeriodInSeconds, timeUnitScale);
             }
             this.aggregateLocalUsagePeriodicTask = pulsar.getExecutor().scheduleAtFixedRate(
-                    catchingAndLoggingThrowables(this::aggregateResourceGroupLocalUsages),
+                    catchingAndLoggingThrowables(this::runAggregateResourceGroupLocalUsages),
                     newPeriodInSeconds,
                     newPeriodInSeconds,
                     timeUnitScale);
@@ -817,7 +818,7 @@ public class ResourceGroupService implements AutoCloseable{
     // from the reports received from other brokers.
     // [Visibility for unit testing.]
     protected void calculateQuotaForAllResourceGroups() {
-        if (!shouldRunPeriodicTasks()) {
+        if (resourceGroupsMap.isEmpty()) {
             return;
         }
         // Calculate the quota for the next window for this RG, based on the observed usage.
@@ -854,12 +855,26 @@ public class ResourceGroupService implements AutoCloseable{
                         cancelStatus, this.resourceUsagePublishPeriodInSeconds, newPeriodInSeconds, timeUnitScale);
             }
             this.calculateQuotaPeriodicTask = pulsar.getExecutor().scheduleAtFixedRate(
-                    catchingAndLoggingThrowables(this::calculateQuotaForAllResourceGroups),
+                    catchingAndLoggingThrowables(this::runCalculateQuotaForAllResourceGroups),
                     newPeriodInSeconds,
                     newPeriodInSeconds,
                     timeUnitScale);
             this.resourceUsagePublishPeriodInSeconds = newPeriodInSeconds;
         }
+    }
+
+    private void runAggregateResourceGroupLocalUsages() {
+        if (!shouldRunPeriodicTasks()) {
+            return;
+        }
+        aggregateResourceGroupLocalUsages();
+    }
+
+    private void runCalculateQuotaForAllResourceGroups() {
+        if (!shouldRunPeriodicTasks()) {
+            return;
+        }
+        calculateQuotaForAllResourceGroups();
     }
 
     // Returns true if at least one tenant or namespace is registered to resource group.
@@ -890,10 +905,10 @@ public class ResourceGroupService implements AutoCloseable{
             final long periodInSecs = pulsar.getConfiguration().getResourceUsageTransportPublishIntervalInSecs();
             this.aggregateLocalUsagePeriodInSeconds = this.resourceUsagePublishPeriodInSeconds = periodInSecs;
             this.aggregateLocalUsagePeriodicTask = pulsar.getExecutor().scheduleAtFixedRate(
-                    catchingAndLoggingThrowables(this::aggregateResourceGroupLocalUsages),
+                    catchingAndLoggingThrowables(this::runAggregateResourceGroupLocalUsages),
                     periodInSecs, periodInSecs, timeUnitScale);
             this.calculateQuotaPeriodicTask = pulsar.getExecutor().scheduleAtFixedRate(
-                    catchingAndLoggingThrowables(this::calculateQuotaForAllResourceGroups),
+                    catchingAndLoggingThrowables(this::runCalculateQuotaForAllResourceGroups),
                     periodInSecs, periodInSecs, timeUnitScale);
             if (log.isInfoEnabled()) {
                 log.info("Started ResourceGroupService periodic tasks with period={} {}", periodInSecs, timeUnitScale);
@@ -1231,5 +1246,12 @@ public class ResourceGroupService implements AutoCloseable{
     @VisibleForTesting
     boolean isSchedulersRunning() {
         return schedulersRunning.get();
+    }
+
+    @VisibleForTesting
+    void clearStats(){
+        this.topicConsumeStats.invalidateAll();
+        this.topicProduceStats.invalidateAll();
+        this.replicationDispatchStats.invalidateAll();
     }
 }

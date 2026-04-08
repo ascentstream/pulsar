@@ -369,8 +369,6 @@ public class ResourceGroupServiceTest extends MockedPulsarServiceBaseTest {
                     .anyMatch(n -> (!n.hasPublish()) && (!n.hasDispatch()) && (n.getReplicatorsCount() == 0)));
         });
 
-        rgs.unRegisterTenant(rgName, tenantName);
-        rgs.unRegisterNameSpace(rgName, tenantAndNamespace);
         rgs.unRegisterTopic(topic);
 
         BytesAndMessagesCount publishQuota = rgs.getPublishRateLimiters(rgName);

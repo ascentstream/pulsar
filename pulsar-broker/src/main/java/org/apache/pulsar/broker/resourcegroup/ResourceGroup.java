@@ -424,6 +424,9 @@ public class ResourceGroup implements AutoCloseable{
         Map<String, BytesAndMessagesCount> retval = new HashMap<>();
         synchronized (this) {
             monitoringClassFieldsMap.forEach((key, monEntity) -> {
+                if (key.getResourceGroupMonitoringClass() != monClass) {
+                    return;
+                }
                 BytesAndMessagesCount bytesAndMessagesCount =
                         retval.computeIfAbsent(key.getRemoteCluster(), k -> new BytesAndMessagesCount());
                 monEntity.localUsageStatsLock.lock();
@@ -431,11 +434,11 @@ public class ResourceGroup implements AutoCloseable{
                     // If the total wasn't accumulated yet (i.e., a report wasn't sent yet), just return the
                     // partial accumulation in usedLocallySinceLastReport.
                     if (monEntity.totalUsedLocally.messages == 0) {
-                        bytesAndMessagesCount.bytes = monEntity.usedLocallySinceLastReport.bytes;
-                        bytesAndMessagesCount.messages = monEntity.usedLocallySinceLastReport.messages;
+                        bytesAndMessagesCount.bytes += monEntity.usedLocallySinceLastReport.bytes;
+                        bytesAndMessagesCount.messages += monEntity.usedLocallySinceLastReport.messages;
                     } else {
-                        bytesAndMessagesCount.bytes = monEntity.totalUsedLocally.bytes;
-                        bytesAndMessagesCount.messages = monEntity.totalUsedLocally.messages;
+                        bytesAndMessagesCount.bytes += monEntity.totalUsedLocally.bytes;
+                        bytesAndMessagesCount.messages += monEntity.totalUsedLocally.messages;
                     }
                 } finally {
                     monEntity.localUsageStatsLock.unlock();
