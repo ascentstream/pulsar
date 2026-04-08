@@ -26,7 +26,7 @@
   <parent>
     <groupId>com.ascentstream.pulsar</groupId>
     <artifactId>pulsar</artifactId>
-    <version>4.0.9.0-ca5c44c-20260403145329-SNAPSHOT</version>
+    <version>4.0.9.0-e67ae54-20260408103954-SNAPSHOT</version>
   </parent>
 
   <artifactId>pulsar-broker-auth-athenz</artifactId>
