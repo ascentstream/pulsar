@@ -535,8 +535,8 @@ public class RGUsageMTAggrWaitForAllMsgsTest extends ProducerConsumerBase {
             final int scaleFactor = tenantRGEqualsNsRG ? 1 : 2;
 
             // Verify producer and consumer side stats.
-            this.verifyRGProdConsStats(topicStrings, sentNumBytes, sentNumMsgs, recvdNumBytes, recvdNumMsgs, scaleFactor,
-                    true, true);
+            this.verifyRGProdConsStats(topicStrings, sentNumBytes, sentNumMsgs, recvdNumBytes, recvdNumMsgs,
+                    scaleFactor, true, true);
 
             // Verify the metrics corresponding to the operations in this test.
             this.verifyRGMetrics(sentNumBytes, sentNumMsgs, recvdNumBytes, recvdNumMsgs, scaleFactor, true, true);
