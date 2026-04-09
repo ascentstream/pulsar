@@ -24,7 +24,7 @@
   <parent>
     <groupId>com.ascentstream.pulsar</groupId>
     <artifactId>pulsar-io-debezium</artifactId>
-    <version>4.0.9.0-e67ae54-20260408103954-SNAPSHOT</version>
+    <version>4.0.9.0-e67ae54-20260409022421-SNAPSHOT</version>
   </parent>
 
   <artifactId>pulsar-io-debezium-mysql</artifactId>
