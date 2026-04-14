@@ -23,10 +23,12 @@ import static org.awaitility.Awaitility.await;
 import com.google.common.collect.Sets;
 import java.time.Duration;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.apache.pulsar.broker.BrokerTestUtil;
 import org.apache.pulsar.broker.service.Dispatcher;
+import org.apache.pulsar.broker.service.Topic;
 import org.apache.pulsar.broker.service.persistent.AbstractPersistentDispatcherMultipleConsumers;
 import org.apache.pulsar.broker.service.persistent.DispatchRateLimiter;
 import org.apache.pulsar.broker.service.persistent.PersistentDispatcherSingleActiveConsumer;
@@ -34,6 +36,7 @@ import org.apache.pulsar.broker.service.persistent.PersistentSubscription;
 import org.apache.pulsar.broker.service.persistent.PersistentTopic;
 import org.apache.pulsar.client.admin.PulsarAdminException;
 import org.apache.pulsar.common.policies.data.DispatchRate;
+import org.apache.pulsar.common.policies.data.ResourceGroup;
 import org.awaitility.Awaitility;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -926,5 +929,30 @@ public class SubscriptionMessageDispatchThrottlingTest extends AbstractMessageDi
         Assert.assertEquals(dispatchRateLimiter.getDispatchRateOnByte(), -1);
 
         log.info("-- Exiting {} test --", methodName);
+    }
+
+    @Test
+    public void testTopicResourceGroupDispatchRateLimit() throws Exception {
+        String topic = newTopicName();
+        String resourceGroupName = "rg-topic-" + UUID.randomUUID();
+
+        ResourceGroup resourceGroup = new ResourceGroup();
+        resourceGroup.setDispatchRateInMsgs(10);
+        resourceGroup.setDispatchRateInBytes(20L);
+        admin.resourcegroups().createResourceGroup(resourceGroupName, resourceGroup);
+
+        admin.topics().createNonPartitionedTopic(topic);
+        admin.topicPolicies().setResourceGroup(topic, resourceGroupName);
+
+        Optional<Topic> topicOptional = pulsar.getBrokerService().getTopicIfExists(topic).get();
+        Awaitility.await().untilAsserted(() -> {
+            assertThat(topicOptional).isPresent();
+            var resourceGroupDispatchRateLimiter = topicOptional.get().getResourceGroupDispatchRateLimiter();
+            assertThat(resourceGroupDispatchRateLimiter).isPresent()
+                    .satisfies(n -> {
+                        assertThat(n.get().getDispatchRateOnMsg()).isEqualTo(10);
+                        assertThat(n.get().getDispatchRateOnByte()).isEqualTo(20L);
+                    });
+        });
     }
 }

@@ -342,6 +342,8 @@ public abstract class AbstractBaseDispatcher extends EntryFilterSupport implemen
             topic.getDispatchRateLimiter().ifPresent(rateLimter ->
                     rateLimter.consumeDispatchQuota(permits, totalBytesSent));
             getRateLimiter().ifPresent(rateLimiter -> rateLimiter.consumeDispatchQuota(permits, totalBytesSent));
+            topic.getResourceGroupDispatchRateLimiter().ifPresent(rateLimiter ->
+                    rateLimiter.consumeDispatchQuota(permits, totalBytesSent));
         }
     }
 
