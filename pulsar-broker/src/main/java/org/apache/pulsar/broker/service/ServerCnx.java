@@ -3064,12 +3064,23 @@ public class ServerCnx extends PulsarHandler implements TransportCnx {
     public void closeConsumer(Consumer consumer) {
         // removes consumer-connection from map and send close command to consumer
         safelyRemoveConsumer(consumer);
+        dispatchCloseConsumerEvent(consumer, DisconnectInitiator.BROKER);
         if (getRemoteEndpointProtocolVersion() >= v5.getValue()) {
-            writeAndFlush(Commands.newCloseConsumer(consumer.consumerId(), -1L));
-            dispatchCloseConsumerEvent(consumer, DisconnectInitiator.BROKER);
+            writeCloseConsumerAndCloseConnectionOnFailure(Commands.newCloseConsumer(consumer.consumerId(), -1L),
+                    consumer.consumerId());
         } else {
             close();
         }
+    }
+
+    private void writeCloseConsumerAndCloseConnectionOnFailure(ByteBuf cmd, long consumerId) {
+        ctx.writeAndFlush(cmd).addListener(future -> {
+            if (!future.isSuccess()) {
+                log.warn("[{}] Forcing connection to close since cannot send close consumer command for consumer {}",
+                        remoteAddress, consumerId, future.cause());
+                close();
+            }
+        });
     }
 
     private void dispatchCloseConsumerEvent(Consumer consumer, DisconnectInitiator initiator) {
