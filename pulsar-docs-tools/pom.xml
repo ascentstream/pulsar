@@ -27,7 +27,7 @@
     <parent>
         <groupId>com.ascentstream.pulsar</groupId>
         <artifactId>pulsar</artifactId>
-        <version>4.0.9.0-76ffeef-20260414101806-SNAPSHOT</version>
+        <version>4.0.9.0-76ffeef-20260415011532-SNAPSHOT</version>
     </parent>
 
     <artifactId>pulsar-docs-tools</artifactId>
