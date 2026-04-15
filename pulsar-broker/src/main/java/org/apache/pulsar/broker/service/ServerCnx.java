@@ -3512,6 +3512,16 @@ public class ServerCnx extends PulsarHandler implements TransportCnx {
         });
     }
 
+    private void writeCloseConsumerAndCloseConnectionOnFailure(ByteBuf cmd, long consumerId) {
+        ctx.writeAndFlush(cmd).addListener(future -> {
+            if (!future.isSuccess()) {
+                log.warn("[{}] Forcing connection to close since cannot send close consumer command for consumer {}",
+                        remoteAddress, consumerId, future.cause());
+                close();
+            }
+        });
+    }
+
     /**
      * It closes the connection with client which triggers {@code channelInactive()} which clears all producers and
      * consumers from connection-map.

@@ -2238,13 +2238,6 @@ public class ServerCnxTest {
                 producerName, Collections.emptyMap(), false);
         channel.writeInbound(createProducer1);
 
-        // Run pending tasks to ensure the producer is registered in the producers map
-        // before the close command is processed. Without this, the close command may not
-        // find the producer (since registration happens in a thenApplyAsync callback),
-        // causing it to skip cancellation and leading to a race between the first and
-        // second producer creation.
-        channel.runPendingTasks();
-
         ByteBuf closeProducer = Commands.newCloseProducer(1 /* producer id */, 2 /* request id */);
         channel.writeInbound(closeProducer);
 
@@ -2495,10 +2488,7 @@ public class ServerCnxTest {
             assertEquals(((CommandError) response).getRequestId(), 5);
 
             // We should receive response for 1st producer, since it was not cancelled by the close
-            Awaitility.await().untilAsserted(() -> {
-                channel.runPendingTasks();
-                assertFalse(channel.outboundMessages().isEmpty());
-            });
+            Awaitility.await().untilAsserted(() -> assertFalse(channel.outboundMessages().isEmpty()));
 
             assertTrue(channel.isActive());
             response = getResponse();
@@ -2613,10 +2603,6 @@ public class ServerCnxTest {
 
         var consumer = mock(Consumer.class);
         when(consumer.consumerId()).thenReturn(1L);
-        var sub = mock(org.apache.pulsar.broker.service.Subscription.class);
-        doReturn("test-sub").when(sub).getName();
-        doReturn(TopicName.get("test-topic").toString()).when(sub).getTopicName();
-        doReturn(sub).when(consumer).getSubscription();
 
         serverCnx.setRemoteEndpointProtocolVersion(ProtocolVersion.v12.getValue());
 
@@ -3038,8 +3024,6 @@ public class ServerCnxTest {
         final long sleepTimeMs = 10;
         final long iterations = TimeUnit.SECONDS.toMillis(10) / sleepTimeMs;
         for (int i = 0; i < iterations; i++) {
-            // Execute tasks submitted to ctx.executor() via thenAcceptAsync/thenRunAsync etc.
-            channel.runPendingTasks();
             if (!channel.outboundMessages().isEmpty()) {
                 Object outObject = channel.outboundMessages().remove();
                 Object cmd = clientChannelHelper.getCommand(outObject);
