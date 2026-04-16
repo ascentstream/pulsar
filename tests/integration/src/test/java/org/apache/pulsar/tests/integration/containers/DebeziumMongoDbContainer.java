@@ -25,12 +25,11 @@ public class DebeziumMongoDbContainer extends ChaosContainer<DebeziumMongoDbCont
     public static final String NAME = "debezium-mongodb-example";
 
     public static final Integer[] PORTS = { 27017 };
-    private static final String IMAGE_NAME = "debezium/example-mongodb:0.10";
+    private static final String IMAGE_NAME =
+            "quay.io/debezium/example-mongodb:" + System.getProperty("debezium.version", "1.9.7.Final");
 
     public DebeziumMongoDbContainer(String clusterName) {
         super(clusterName, IMAGE_NAME);
-        this.withEnv("MONGODB_USER", "mongodb");
-        this.withEnv("MONGODB_PASSWORD", "mongodb");
     }
     @Override
     public String getContainerName() {
@@ -42,6 +41,8 @@ public class DebeziumMongoDbContainer extends ChaosContainer<DebeziumMongoDbCont
         super.configure();
         this.withNetworkAliases(NAME)
                 .withExposedPorts(PORTS)
+                .withEnv("MONGODB_USER", "debezium")
+                .withEnv("MONGODB_PASSWORD", "dbz")
                 .withCreateContainerCmdModifier(createContainerCmd -> {
                     createContainerCmd.withHostName(NAME);
                     createContainerCmd.withName(getContainerName());
