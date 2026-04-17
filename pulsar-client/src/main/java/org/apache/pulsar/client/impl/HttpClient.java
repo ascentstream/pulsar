@@ -18,7 +18,6 @@
  */
 package org.apache.pulsar.client.impl;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import io.netty.channel.EventLoopGroup;
 import io.netty.handler.codec.http.HttpRequest;
 import io.netty.handler.codec.http.HttpResponse;
@@ -239,31 +238,12 @@ public class HttpClient implements Closeable {
 
                     // request not success
                     if (statusCode != HttpURLConnection.HTTP_OK) {
-                        String errorReason = response2.getStatusText();
-                        if ("application/json".equals(response2.getContentType()) || "text/json".equals(
-                                response2.getContentType())) {
-                            String responseBody = response2.getResponseBody();
-                            try {
-                                JsonNode jsonNode =
-                                        ObjectMapperFactory.getMapper().getObjectMapper().readTree(responseBody);
-                                if (jsonNode.has("reason") && jsonNode.get("reason").isTextual()) {
-                                    errorReason = jsonNode.get("reason").asText();
-                                } else if (jsonNode.has("message") && jsonNode.get("message").isTextual()) {
-                                    errorReason = jsonNode.get("message").asText();
-                                }
-                            } catch (IOException e) {
-                                // ignore
-                                if (log.isDebugEnabled()) {
-                                    log.debug("[{}] Failed to parse error response: {}", requestUrl, responseBody);
-                                }
-                            }
-                        }
-                        log.warn("[{}] HTTP get request failed: {}", requestUrl, errorReason);
+                        log.warn("[{}] HTTP get request failed: {}", requestUrl, response2.getStatusText());
                         Exception e;
                         if (statusCode == HttpURLConnection.HTTP_NOT_FOUND) {
-                            e = new NotFoundException("Not found: " + errorReason);
+                            e = new NotFoundException("Not found: " + response2.getStatusText());
                         } else {
-                            e = new PulsarClientException("HTTP get request failed: " + errorReason);
+                            e = new PulsarClientException("HTTP get request failed: " + response2.getStatusText());
                         }
                         future.completeExceptionally(e);
                         return;
