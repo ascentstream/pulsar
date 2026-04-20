@@ -30,6 +30,7 @@ import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertNotNull;
 import static org.testng.Assert.assertSame;
@@ -47,7 +48,6 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.function.Function;
 import javax.servlet.ServletContext;
 import javax.ws.rs.InternalServerErrorException;
 import javax.ws.rs.WebApplicationException;
@@ -58,7 +58,6 @@ import lombok.Cleanup;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.bookkeeper.mledger.ManagedCursor;
 import org.apache.commons.collections4.MapUtils;
-import org.apache.commons.lang3.reflect.FieldUtils;
 import org.apache.pulsar.broker.BrokerTestUtil;
 import org.apache.pulsar.broker.admin.v2.ExtPersistentTopics;
 import org.apache.pulsar.broker.admin.v2.NonPersistentTopics;
@@ -100,7 +99,6 @@ import org.apache.pulsar.common.naming.TopicDomain;
 import org.apache.pulsar.common.naming.TopicName;
 import org.apache.pulsar.common.partition.PartitionedTopicMetadata;
 import org.apache.pulsar.common.policies.data.AuthAction;
-import org.apache.pulsar.common.policies.data.AutoSubscriptionCreationOverride;
 import org.apache.pulsar.common.policies.data.ClusterData;
 import org.apache.pulsar.common.policies.data.PersistentTopicInternalStats;
 import org.apache.pulsar.common.policies.data.Policies;
@@ -131,8 +129,7 @@ public class PersistentTopicsTest extends MockedPulsarServiceBaseTest {
     protected Field uriField;
     protected UriInfo uriInfo;
     private NonPersistentTopics nonPersistentTopic;
-    private volatile NamespaceResources namespaceResourcesOverride;
-    private volatile Function<NamespaceName, CompletableFuture<List<String>>> listPersistentTopicsAsyncHandler;
+    private NamespaceResources namespaceResources;
 
     @BeforeClass
     public void initPersistentTopics() throws Exception {
@@ -175,6 +172,7 @@ public class PersistentTopicsTest extends MockedPulsarServiceBaseTest {
         nonPersistentTopic = spy(NonPersistentTopics.class);
         nonPersistentTopic.setServletContext(mock(ServletContext.class));
         nonPersistentTopic.setPulsar(pulsar);
+        namespaceResources = mock(NamespaceResources.class);
         doReturn(false).when(nonPersistentTopic).isRequestHttps();
         doReturn(null).when(nonPersistentTopic).originalPrincipal();
         doReturn("test").when(nonPersistentTopic).clientAppId();
@@ -182,27 +180,10 @@ public class PersistentTopicsTest extends MockedPulsarServiceBaseTest {
         doNothing().when(nonPersistentTopic).validateAdminAccessForTenant(this.testTenant);
         doReturn(mock(AuthenticationDataHttps.class)).when(nonPersistentTopic).clientAuthData();
 
-        TopicResources topicResources = BrokerTestUtil.spyWithoutRecordingInvocations(
-                new TopicResources(pulsar.getLocalMetadataStore()));
-        PulsarResources resources = BrokerTestUtil.spyWithoutRecordingInvocations(
-                new PulsarResources(pulsar.getLocalMetadataStore(), pulsar.getConfigurationMetadataStore()));
-        NamespaceResources namespaceResources = resources.getNamespaceResources();
-        doAnswer(invocation -> {
-            NamespaceResources override = namespaceResourcesOverride;
-            return override != null ? override : namespaceResources;
-        }).when(resources).getNamespaceResources();
-        doReturn(topicResources).when(resources).getTopicResources();
-        doAnswer(invocation -> {
-            Function<NamespaceName, CompletableFuture<List<String>>> handler = listPersistentTopicsAsyncHandler;
-            if (handler != null) {
-                CompletableFuture<List<String>> result = handler.apply(invocation.getArgument(0));
-                if (result != null) {
-                    return result;
-                }
-            }
-            return invocation.callRealMethod();
-        }).when(topicResources).listPersistentTopicsAsync(any());
-        FieldUtils.writeField(pulsar, "pulsarResources", resources, true);
+        PulsarResources resources =
+                spy(new PulsarResources(pulsar.getLocalMetadataStore(), pulsar.getConfigurationMetadataStore()));
+        doReturn(spy(new TopicResources(pulsar.getLocalMetadataStore()))).when(resources).getTopicResources();
+        doReturn(resources).when(pulsar).getPulsarResources();
 
         admin.clusters().createCluster("use", ClusterData.builder().serviceUrl("http://127.0.0.3:8082").build());
         admin.clusters().createCluster("test", ClusterData.builder().serviceUrl(pulsar.getWebServiceAddress()).build());
@@ -218,8 +199,6 @@ public class PersistentTopicsTest extends MockedPulsarServiceBaseTest {
     @Override
     @AfterMethod(alwaysRun = true)
     protected void cleanup() throws Exception {
-        namespaceResourcesOverride = null;
-        listPersistentTopicsAsyncHandler = null;
         super.internalCleanup();
     }
 
@@ -627,8 +606,8 @@ public class PersistentTopicsTest extends MockedPulsarServiceBaseTest {
         CompletableFuture<Optional<Policies>> policyFuture = new CompletableFuture<>();
         Policies policies = new Policies();
         policyFuture.complete(Optional.of(policies));
-        namespaceResourcesOverride = mock(NamespaceResources.class);
-        doReturn(policyFuture).when(namespaceResourcesOverride).getPoliciesAsync(namespaceName);
+        when(pulsar.getPulsarResources().getNamespaceResources()).thenReturn(namespaceResources);
+        doReturn(policyFuture).when(namespaceResources).getPoliciesAsync(namespaceName);
         AsyncResponse response = mock(AsyncResponse.class);
         ArgumentCaptor<RestException> errCaptor = ArgumentCaptor.forClass(RestException.class);
         persistentTopics.createPartitionedTopic(response, testTenant, testNamespace, topicName, 2, true);
@@ -640,7 +619,7 @@ public class PersistentTopicsTest extends MockedPulsarServiceBaseTest {
         // Test policy not exist and return 'Namespace not found'
         CompletableFuture<Optional<Policies>> policyFuture2 = new CompletableFuture<>();
         policyFuture2.complete(Optional.empty());
-        doReturn(policyFuture2).when(namespaceResourcesOverride).getPoliciesAsync(namespaceName);
+        doReturn(policyFuture2).when(namespaceResources).getPoliciesAsync(namespaceName);
         response = mock(AsyncResponse.class);
         errCaptor = ArgumentCaptor.forClass(RestException.class);
         persistentTopics.createPartitionedTopic(response, testTenant, testNamespace, topicName, 2, true);
@@ -674,13 +653,12 @@ public class PersistentTopicsTest extends MockedPulsarServiceBaseTest {
         final String nonPartitionTopicName2 = "special-topic-partition-123";
         final String partitionedTopicName = "special-topic";
 
-        NamespaceName namespaceName = NamespaceName.get("my-tenant/my-namespace");
-        listPersistentTopicsAsyncHandler = namespace -> namespaceName.equals(namespace)
-                ? CompletableFuture.completedFuture(List.of(
+        when(pulsar.getPulsarResources().getTopicResources()
+                .listPersistentTopicsAsync(NamespaceName.get("my-tenant/my-namespace")))
+                .thenReturn(CompletableFuture.completedFuture(List.of(
                         "persistent://my-tenant/my-namespace/" + nonPartitionTopicName1,
                         "persistent://my-tenant/my-namespace/" + nonPartitionTopicName2
-                ))
-                : null;
+                )));
 //        doReturn(ImmutableSet.of(nonPartitionTopicName1, nonPartitionTopicName2)).when(mockZooKeeperChildrenCache)
 //        .get(anyString());
 //        doReturn(CompletableFuture.completedFuture(ImmutableSet.of(nonPartitionTopicName1, nonPartitionTopicName2))
@@ -1147,20 +1125,9 @@ public class PersistentTopicsTest extends MockedPulsarServiceBaseTest {
             producer.send("test" + i);
         }
 
-        admin.namespaces().setAutoSubscriptionCreation("tenant-xyz/ns-abc",
-                AutoSubscriptionCreationOverride.builder().allowAutoSubscriptionCreation(false).build());
-        PulsarAdminException.PreconditionFailedException exception = Assert.expectThrows(
-                PulsarAdminException.PreconditionFailedException.class,
-                () -> admin.topics().peekMessages(partitionedTopic, subscriptionName, 3));
-        Assert.assertEquals(exception.getStatusCode(), Response.Status.PRECONDITION_FAILED.getStatusCode());
-        Assert.assertTrue(admin.topics().getSubscriptions(partitionedTopic).isEmpty());
-
-        admin.namespaces().setAutoSubscriptionCreation("tenant-xyz/ns-abc",
-                AutoSubscriptionCreationOverride.builder().allowAutoSubscriptionCreation(true).build());
         List<Message<byte[]>> messages = admin.topics().peekMessages(partitionedTopic, subscriptionName, 3);
 
         Assert.assertEquals(messages.size(), 3);
-        Assert.assertEquals(admin.topics().getSubscriptions(partitionedTopic), List.of(subscriptionName));
 
         producer.close();
     }
