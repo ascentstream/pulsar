@@ -48,7 +48,7 @@ END
 )
 DEPENDENCY_BLOCK=$(cat <<-END
       <dependency>
-        <groupId>org.apache.pulsar</groupId>
+        <groupId>com.ascentstream.pulsar</groupId>
         <artifactId>@ARTIFACT_ID@</artifactId>
         <version>\${project.version}</version>
       </dependency>
