@@ -24,6 +24,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.PrimitiveIterator;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
@@ -32,8 +33,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.pulsar.common.policies.data.DrainingHash;
 import org.apache.pulsar.common.policies.data.stats.ConsumerStatsImpl;
 import org.apache.pulsar.common.policies.data.stats.DrainingHashImpl;
-import org.apache.pulsar.common.util.collections.LongBitmap;
-import org.apache.pulsar.common.util.collections.LongBitmaps;
+import org.roaringbitmap.RoaringBitmap;
 
 /**
  * A thread-safe map to store draining hashes in the consumer.
@@ -142,7 +142,7 @@ public class DrainingHashesTracker {
     }
 
     private class ConsumerDrainingHashesStats {
-        private final LongBitmap drainingHashes = LongBitmaps.create();
+        private final RoaringBitmap drainingHashes = new RoaringBitmap();
         private long drainingHashesClearedTotal;
         private final ReentrantReadWriteLock statsLock = new ReentrantReadWriteLock();
 
@@ -163,7 +163,11 @@ public class DrainingHashesTracker {
                 boolean empty = drainingHashes.isEmpty();
                 if (log.isDebugEnabled()) {
                     log.debug("[{}] Cleared hash {} in stats. empty={} totalCleared={} hashes={}",
-                            dispatcherName, hash, empty, drainingHashesClearedTotal, drainingHashes.cardinality());
+                            dispatcherName, hash, empty, drainingHashesClearedTotal, drainingHashes.getCardinality());
+                }
+                if (empty) {
+                    // reduce memory usage by trimming the bitmap when the RoaringBitmap instance is empty
+                    drainingHashes.trim();
                 }
                 return empty;
             } finally {
@@ -174,15 +178,16 @@ public class DrainingHashesTracker {
         public void updateConsumerStats(Consumer consumer, ConsumerStatsImpl consumerStats) {
             statsLock.readLock().lock();
             try {
+                int drainingHashesUnackedMessages = 0;
                 List<DrainingHash> drainingHashesStats = new ArrayList<>();
-                int[] drainingHashesUnackedMessages = {0};
-                drainingHashes.forEachLong(hashLong -> {
-                    int hash = (int) hashLong;
+                PrimitiveIterator.OfInt hashIterator = drainingHashes.stream().iterator();
+                while (hashIterator.hasNext()) {
+                    int hash = hashIterator.nextInt();
                     DrainingHashEntry entry = getEntry(hash);
                     if (entry == null) {
                         log.debug("[{}] Draining hash {} not found in the tracker for consumer {}", dispatcherName,
                                 hash, consumer);
-                        return;
+                        continue;
                     }
                     int unackedMessages = entry.getRefCount();
                     DrainingHashImpl drainingHash = new DrainingHashImpl();
@@ -190,11 +195,11 @@ public class DrainingHashesTracker {
                     drainingHash.unackMsgs = unackedMessages;
                     drainingHash.blockedAttempts = entry.getBlockedCount();
                     drainingHashesStats.add(drainingHash);
-                    drainingHashesUnackedMessages[0] += unackedMessages;
-                });
+                    drainingHashesUnackedMessages += unackedMessages;
+                }
                 consumerStats.drainingHashesCount = drainingHashesStats.size();
                 consumerStats.drainingHashesClearedTotal = drainingHashesClearedTotal;
-                consumerStats.drainingHashesUnackedMessages = drainingHashesUnackedMessages[0];
+                consumerStats.drainingHashesUnackedMessages = drainingHashesUnackedMessages;
                 consumerStats.drainingHashes = drainingHashesStats;
             } finally {
                 statsLock.readLock().unlock();
