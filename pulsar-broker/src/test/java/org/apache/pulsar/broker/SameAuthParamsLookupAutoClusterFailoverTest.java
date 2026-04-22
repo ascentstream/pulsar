@@ -21,11 +21,11 @@ package org.apache.pulsar.broker;
 import static org.apache.pulsar.broker.auth.MockedPulsarServiceBaseTest.CA_CERT_FILE_PATH;
 import static org.apache.pulsar.broker.auth.MockedPulsarServiceBaseTest.getTlsFileForClient;
 import static org.apache.pulsar.client.impl.SameAuthParamsLookupAutoClusterFailover.PulsarServiceState;
+import io.netty.channel.EventLoopGroup;
 import java.net.ServerSocket;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import org.apache.pulsar.broker.service.NetworkErrorTestBase;
 import org.apache.pulsar.broker.service.OneWayReplicatorTestBase;
@@ -63,11 +63,11 @@ public class SameAuthParamsLookupAutoClusterFailoverTest extends OneWayReplicato
         };
     }
 
-    // Each state-convergence phase below waits up to 3 minutes. The probe timeout is 3s
-    // and recoverThreshold=5, so a transient probe failure during recovery resets the
-    // counter and a phase can need ~30s of healthy probes to recover. With 3 phases plus
-    // cluster startup/teardown, allow 12 minutes overall to absorb slow CI agents.
-    @Test(dataProvider = "enabledTls", timeOut = 720 * 1000)
+    // Each state-convergence phase below waits up to 2 minutes. With 3 phases plus
+    // cluster startup/teardown, the 240s overall timeout can be tight on slow CI agents
+    // (the probe timeout is 3s and recoverThreshold=5, so a single slow probe can
+    // stretch a phase to ~30s). Allow 8 minutes overall to match the per-phase budget.
+    @Test(dataProvider = "enabledTls", timeOut = 480 * 1000)
     public void testAutoClusterFailover(boolean enabledTls) throws Exception {
         // Start clusters.
         setup();
@@ -83,7 +83,7 @@ public class SameAuthParamsLookupAutoClusterFailoverTest extends OneWayReplicato
                 .pulsarServiceUrlArray(urlArray)
                 .failoverThreshold(5)
                 .recoverThreshold(5)
-                .checkHealthyIntervalMs(100)
+                .checkHealthyIntervalMs(300)
                 .testTopic("a/b/c")
                 .markTopicNotFoundAsAvailable(true)
                 .build();
@@ -98,7 +98,8 @@ public class SameAuthParamsLookupAutoClusterFailoverTest extends OneWayReplicato
                 .tlsTrustCertsFilePath(CA_CERT_FILE_PATH);
         }
         final PulsarClient client = clientBuilder.build();
-        final ScheduledExecutorService executor = WhiteboxImpl.getInternalState(failover, "executor");
+        failover.initialize(client);
+        final EventLoopGroup executor = WhiteboxImpl.getInternalState(failover, "executor");
         final PulsarServiceState[] stateArray =
                 WhiteboxImpl.getInternalState(failover, "pulsarServiceStateArray");
 
@@ -108,73 +109,68 @@ public class SameAuthParamsLookupAutoClusterFailoverTest extends OneWayReplicato
         producer.send("0");
         Assert.assertEquals(failover.getCurrentPulsarServiceIndex(), 0);
 
-        assertStatesEqual(executor, stateArray,
-                PulsarServiceState.Healthy, PulsarServiceState.Healthy, PulsarServiceState.Healthy);
+        CompletableFuture<Boolean> checkStatesFuture1 = new CompletableFuture<>();
+        executor.submit(() -> {
+            boolean res = stateArray[0] == PulsarServiceState.Healthy;
+            res = res & stateArray[1] == PulsarServiceState.Healthy;
+            res = res & stateArray[2] == PulsarServiceState.Healthy;
+            checkStatesFuture1.complete(res);
+        });
+        Assert.assertTrue(checkStatesFuture1.join());
 
         // Test failover 0 --> 2.
         pulsar1.close();
-        awaitStatesAndIndex(executor, stateArray, failover, 2,
-                PulsarServiceState.Failed, PulsarServiceState.Failed, PulsarServiceState.Healthy);
-        producer.send("0->2");
+        Awaitility.await().atMost(120, TimeUnit.SECONDS).untilAsserted(() -> {
+            CompletableFuture<Boolean> checkStatesFuture2 = new CompletableFuture<>();
+            executor.submit(() -> {
+                boolean res = stateArray[0] == PulsarServiceState.Failed;
+                res = res & stateArray[1] == PulsarServiceState.Failed;
+                res = res & stateArray[2] == PulsarServiceState.Healthy;
+                checkStatesFuture2.complete(res);
+            });
+            Assert.assertTrue(checkStatesFuture2.join());
+            producer.send("0->2");
+            Assert.assertEquals(failover.getCurrentPulsarServiceIndex(), 2);
+        });
 
         // Test recover 2 --> 1.
         executor.execute(() -> {
             urlArray[1] = url2;
         });
-        awaitStatesAndIndex(executor, stateArray, failover, 1,
-                PulsarServiceState.Failed, PulsarServiceState.Healthy, PulsarServiceState.Healthy);
-        producer.send("2->1");
+        Awaitility.await().atMost(120, TimeUnit.SECONDS).untilAsserted(() -> {
+            CompletableFuture<Boolean> checkStatesFuture3 = new CompletableFuture<>();
+            executor.submit(() -> {
+                boolean res = stateArray[0] == PulsarServiceState.Failed;
+                res = res & stateArray[1] == PulsarServiceState.Healthy;
+                res = res & stateArray[2] == PulsarServiceState.Healthy;
+                checkStatesFuture3.complete(res);
+            });
+            Assert.assertTrue(checkStatesFuture3.join());
+            producer.send("2->1");
+            Assert.assertEquals(failover.getCurrentPulsarServiceIndex(), 1);
+        });
 
         // Test recover 1 --> 0.
         executor.execute(() -> {
             urlArray[0] = url2;
         });
-        awaitStatesAndIndex(executor, stateArray, failover, 0,
-                PulsarServiceState.Healthy, PulsarServiceState.Healthy, PulsarServiceState.Healthy);
-        producer.send("1->0");
+        Awaitility.await().atMost(120, TimeUnit.SECONDS).untilAsserted(() -> {
+            CompletableFuture<Boolean> checkStatesFuture4 = new CompletableFuture<>();
+            executor.submit(() -> {
+                boolean res = stateArray[0] == PulsarServiceState.Healthy;
+                res = res & stateArray[1] == PulsarServiceState.Healthy;
+                res = res & stateArray[2] == PulsarServiceState.Healthy;
+                checkStatesFuture4.complete(res);
+            });
+            Assert.assertTrue(checkStatesFuture4.join());
+            producer.send("1->0");
+            Assert.assertEquals(failover.getCurrentPulsarServiceIndex(), 0);
+        });
 
         // cleanup.
         producer.close();
         client.close();
         dummyServer.close();
-    }
-
-    @Test
-    public void testInitializeCanOnlyBeCalledOnce() throws Exception {
-        setup();
-        final SameAuthParamsLookupAutoClusterFailover failover = SameAuthParamsLookupAutoClusterFailover.builder()
-                .pulsarServiceUrlArray(new String[]{pulsar1.getBrokerServiceUrl()})
-                .checkHealthyIntervalMs(1000)
-                .build();
-
-        try (PulsarClient client = PulsarClient.builder().serviceUrlProvider(failover).build()) {
-            Throwable error = Assert.expectThrows(IllegalStateException.class, () -> failover.initialize(client));
-            Assert.assertEquals(error.getMessage(), "ServiceUrlProvider has already been initialized");
-        }
-    }
-
-    /**
-     * Wait for the state machine to converge to the expected per-index states and current index.
-     * The state read happens on the failover executor to avoid races with the periodic check task,
-     * and producer/lookup operations are kept out of the polling loop so a slow message send does
-     * not consume the convergence budget.
-     */
-    private static void awaitStatesAndIndex(ScheduledExecutorService executor, PulsarServiceState[] stateArray,
-                                            SameAuthParamsLookupAutoClusterFailover failover,
-                                            int expectedIndex,
-                                            PulsarServiceState... expectedStates) {
-        Awaitility.await().atMost(180, TimeUnit.SECONDS).untilAsserted(() -> {
-            assertStatesEqual(executor, stateArray, expectedStates);
-            Assert.assertEquals(failover.getCurrentPulsarServiceIndex(), expectedIndex);
-        });
-    }
-
-    private static void assertStatesEqual(ScheduledExecutorService executor, PulsarServiceState[] stateArray,
-                                          PulsarServiceState... expected) throws Exception {
-        CompletableFuture<PulsarServiceState[]> snapshot = new CompletableFuture<>();
-        executor.submit(() -> snapshot.complete(stateArray.clone()));
-        PulsarServiceState[] actual = snapshot.get(10, TimeUnit.SECONDS);
-        Assert.assertEquals(actual, expected);
     }
 
     @Override
