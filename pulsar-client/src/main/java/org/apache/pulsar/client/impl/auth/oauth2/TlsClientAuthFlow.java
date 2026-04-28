@@ -113,7 +113,11 @@ class TlsClientAuthFlow extends FlowBase {
         assert this.metadata != null;
 
         URL tokenUrl = this.metadata.getTokenEndpoint();
+<<<<<<< HEAD
         this.exchanger = new TokenClient(tokenUrl, getHttpClient());
+=======
+        this.exchanger = new TokenClient(tokenUrl, httpClient);
+>>>>>>> fe6d02812cb ([improve][client] Implement tls_client_auth for AuthenticationOAuth2 (#25538))
 
         initialized = true;
     }
@@ -152,4 +156,8 @@ class TlsClientAuthFlow extends FlowBase {
     String getClientId() {
         return clientId;
     }
+<<<<<<< HEAD
 }
+=======
+}
+>>>>>>> fe6d02812cb ([improve][client] Implement tls_client_auth for AuthenticationOAuth2 (#25538))
