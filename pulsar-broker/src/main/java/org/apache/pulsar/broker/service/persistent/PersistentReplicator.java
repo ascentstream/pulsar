@@ -18,8 +18,6 @@
  */
 package org.apache.pulsar.broker.service.persistent;
 
-import static org.apache.pulsar.broker.service.AbstractReplicator.State.Disconnected;
-import static org.apache.pulsar.broker.service.AbstractReplicator.State.Disconnecting;
 import static org.apache.pulsar.broker.service.AbstractReplicator.State.Started;
 import static org.apache.pulsar.broker.service.AbstractReplicator.State.Starting;
 import static org.apache.pulsar.broker.service.AbstractReplicator.State.Terminated;
@@ -38,6 +36,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
+import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.Getter;
 import org.apache.bookkeeper.mledger.AsyncCallbacks;
@@ -95,7 +94,7 @@ public abstract class PersistentReplicator extends AbstractReplicator
             resourceGroupDispatchRateLimiter = Optional.ofNullable(v);
     private final Object dispatchRateLimiterLock = new Object();
 
-    private volatile int readBatchSize;
+    private int readBatchSize;
     private final int readMaxSizeBytes;
 
     private final int producerQueueThreshold;
@@ -139,8 +138,10 @@ public abstract class PersistentReplicator extends AbstractReplicator
         this.expiryMonitor = new PersistentMessageExpiryMonitor(localTopic,
                 Codec.decode(cursor.getName()), cursor, null);
 
-        readBatchSize = getMaxReadBatchSize();
-        readMaxSizeBytes = brokerService.pulsar().getConfiguration().getDispatcherMaxReadSizeBytes();
+        readBatchSize = Math.min(
+                producerQueueSize,
+                localTopic.getBrokerService().pulsar().getConfiguration().getDispatcherMaxReadBatchSize());
+        readMaxSizeBytes = localTopic.getBrokerService().pulsar().getConfiguration().getDispatcherMaxReadSizeBytes();
         producerQueueThreshold = (int) (producerQueueSize * 0.9);
 
         this.initializeDispatchRateLimiterIfNeeded();
@@ -148,12 +149,15 @@ public abstract class PersistentReplicator extends AbstractReplicator
         startProducer();
     }
 
-    private int getMaxReadBatchSize() {
-        return Math.min(producerQueueSize, brokerService.pulsar().getConfiguration().getDispatcherMaxReadBatchSize());
-    }
-
     @Override
     protected void setProducerAndTriggerReadEntries(Producer<byte[]> producer) {
+        // Repeat until there are no read operations in progress
+        if (STATE_UPDATER.get(this) == State.Starting && hasPendingRead() && !cursor.cancelPendingReadRequest()) {
+            brokerService.getPulsar().getExecutor()
+                    .schedule(() -> setProducerAndTriggerReadEntries(producer), 10, TimeUnit.MILLISECONDS);
+            return;
+        }
+
         /**
          * 1. Try change state to {@link Started}.
          * 2. Atoms modify multiple properties if change state success, to avoid another thread get a null value
@@ -225,151 +229,107 @@ public abstract class PersistentReplicator extends AbstractReplicator
         this.cursor.setInactive();
     }
 
-    private record ReadLimits(int messages, long bytes) {
+    @Data
+    @AllArgsConstructor
+    private static class AvailablePermits {
+        private int messages;
+        private long bytes;
+
+        /**
+         * messages, bytes
+         * 0, O:  Producer queue is full, no permits.
+         * -1, -1:  Rate Limiter reaches limit.
+         * >0, >0:  available permits for read entries.
+         */
+        public boolean isExceeded() {
+            return messages == -1 && bytes == -1;
+        }
+
         public boolean isReadable() {
             return messages > 0 && bytes > 0;
         }
     }
 
     /**
-     * Calculate read limits for a read operation. Takes the rate limiter into account if it's enabled.
-     * Also limits to current readBatchSize and readMaxSizeBytes.
+     * Calculate available permits for read entries.
      */
-    private ReadLimits getReadLimits(int permits) {
+    private AvailablePermits getRateLimiterAvailablePermits(int availablePermits) {
 
         // return 0, if Producer queue is full, it will pause read entries.
-        if (permits <= 0) {
+        if (availablePermits <= 0) {
             if (log.isDebugEnabled()) {
-                log.debug("[{}] Producer queue is full, permits: {}, pause reading", replicatorId, permits);
+                log.debug("[{}] Producer queue is full, availablePermits: {}, pause reading",
+                        replicatorId, availablePermits);
             }
-            return new ReadLimits(0, 0);
+            return new AvailablePermits(0, 0);
         }
 
-        long readLimitOnMsg = permits;
-        long readLimitOnByte = readMaxSizeBytes;
+        long availablePermitsOnMsg = -1;
+        long availablePermitsOnByte = -1;
 
-        // Apply topic replicator dispatch rate limit.
-        DispatchRateLimiter dispatchRateLimiter = this.dispatchRateLimiter.orElse(null);
-        if (dispatchRateLimiter != null && dispatchRateLimiter.isDispatchRateLimitingEnabled()) {
-            long availableOnMsg = dispatchRateLimiter.getAvailableDispatchRateLimitOnMsg();
-            long availableOnByte = dispatchRateLimiter.getAvailableDispatchRateLimitOnByte();
-
-            if (availableOnMsg == 0 || availableOnByte == 0) {
+        // handle rate limit
+        if (dispatchRateLimiter.isPresent() && dispatchRateLimiter.get().isDispatchRateLimitingEnabled()) {
+            DispatchRateLimiter rateLimiter = dispatchRateLimiter.get();
+            // if dispatch-rate is in msg then read only msg according to available permit
+            availablePermitsOnMsg = rateLimiter.getAvailableDispatchRateLimitOnMsg();
+            availablePermitsOnByte = rateLimiter.getAvailableDispatchRateLimitOnByte();
+            // no permits from rate limit
+            if (availablePermitsOnByte == 0 || availablePermitsOnMsg == 0) {
                 if (log.isDebugEnabled()) {
-                    log.debug("[{}] Message-read exceeded topic replicator rate limit,"
-                                    + " dispatchRateOnMsg: {}, dispatchRateOnByte: {},"
-                                    + " availableOnMsg: {}, availableOnByte: {}",
+                    log.debug("[{}] message-read exceeded topic replicator message-rate {}/{},"
+                                    + " schedule after a {}",
                             replicatorId,
-                            dispatchRateLimiter.getDispatchRateOnMsg(),
-                            dispatchRateLimiter.getDispatchRateOnByte(),
-                            availableOnMsg,
-                            availableOnByte);
-                }
-                return new ReadLimits(-1, -1);
-            }
-
-            readLimitOnMsg = applyLimit(readLimitOnMsg, availableOnMsg);
-            readLimitOnByte = applyLimit(readLimitOnByte, availableOnByte);
-        }
-
-        // Apply resource group dispatch rate limit.
-        ResourceGroupDispatchLimiter resourceGroupLimiter = resourceGroupDispatchRateLimiter.orElse(null);
-        if (resourceGroupLimiter != null) {
-            long availableOnMsg = resourceGroupLimiter.getAvailableDispatchRateLimitOnMsg();
-            long availableOnByte = resourceGroupLimiter.getAvailableDispatchRateLimitOnByte();
-
-            if (availableOnMsg == 0 || availableOnByte == 0) {
-                if (log.isDebugEnabled()) {
-                    log.debug("[{}] Message-read exceeded resource group rate limit {}/{},"
-                                    + " schedule after {} ms",
-                            replicatorId,
-                            resourceGroupLimiter.getDispatchRateOnMsg(),
-                            resourceGroupLimiter.getDispatchRateOnByte(),
+                            rateLimiter.getDispatchRateOnMsg(),
+                            rateLimiter.getDispatchRateOnByte(),
                             MESSAGE_RATE_BACKOFF_MS);
                 }
-                return new ReadLimits(-1, -1);
+                return new AvailablePermits(-1, -1);
             }
-
-            readLimitOnMsg = applyLimit(readLimitOnMsg, availableOnMsg);
-            readLimitOnByte = applyLimit(readLimitOnByte, availableOnByte);
         }
 
-        // Apply per-read batch limits.
-        readLimitOnMsg = Math.min(readLimitOnMsg, readBatchSize);
-
-        return new ReadLimits((int) readLimitOnMsg, readLimitOnByte);
-    }
-
-    /**
-     * Applies {@code available} to the current limit.
-     *
-     * <p>{@code -1} means no limit is configured.
-     */
-    private static long applyLimit(long current, long available) {
-        return available < 0 ? current : Math.min(current, available);
-    }
-
-    public void disconnectIfNoTrafficAndBacklog() {
-        // Disabled the feature.
-        int threshold = brokerService.getPulsar().getConfig().getBrokerReplicationInactiveThresholdSeconds();
-        if (threshold <= 0) {
-            return;
-        }
-        // Has backlog.
-        long backlog = getNumberOfEntriesInBacklog();
-        if (backlog > 0) {
-            return;
-        }
-        // Already disconnected.
-        if (state != Started) {
-            return;
+        if (resourceGroupDispatchRateLimiter.isPresent()) {
+            ResourceGroupDispatchLimiter rateLimiter = resourceGroupDispatchRateLimiter.get();
+            long rgAvailablePermitsOnMsg = rateLimiter.getAvailableDispatchRateLimitOnMsg();
+            long rgAvailablePermitsOnByte = rateLimiter.getAvailableDispatchRateLimitOnByte();
+            if (rgAvailablePermitsOnMsg == 0 || rgAvailablePermitsOnByte == 0) {
+                if (log.isDebugEnabled()) {
+                    log.debug("[{}] message-read exceeded resourcegroup message-rate {}/{},"
+                                    + " schedule after a {}",
+                            replicatorId,
+                            rateLimiter.getDispatchRateOnMsg(),
+                            rateLimiter.getDispatchRateOnByte(),
+                            MESSAGE_RATE_BACKOFF_MS);
+                }
+                return new AvailablePermits(-1, -1);
+            }
+            if (availablePermitsOnMsg == -1) {
+                availablePermitsOnMsg = rgAvailablePermitsOnMsg;
+            } else {
+                availablePermitsOnMsg = Math.min(rgAvailablePermitsOnMsg, availablePermitsOnMsg);
+            }
+            if (availablePermitsOnByte == -1) {
+                availablePermitsOnByte = rgAvailablePermitsOnByte;
+            } else {
+                availablePermitsOnByte = Math.min(rgAvailablePermitsOnByte, availablePermitsOnByte);
+            }
         }
 
-        // Disconnect if no backlog and no traffic for a long time.
-        if (System.currentTimeMillis() - latestPublishTime > threshold * 1000L) {
-            log.info("Disconnecting replication producers since no producer is active for a long time."
-                    + " brokerReplicationInactiveThresholdSeconds: {}", threshold);
-            disconnect();
-        }
+        availablePermitsOnMsg =
+                availablePermitsOnMsg == -1 ? availablePermits : Math.min(availablePermits, availablePermitsOnMsg);
+        availablePermitsOnMsg = Math.min(availablePermitsOnMsg, readBatchSize);
+
+        availablePermitsOnByte =
+                availablePermitsOnByte == -1 ? readMaxSizeBytes : Math.min(readMaxSizeBytes, availablePermitsOnByte);
+
+        return new AvailablePermits((int) availablePermitsOnMsg, availablePermitsOnByte);
     }
 
     protected void readMoreEntries() {
         if (state.equals(Terminated) || state.equals(Terminating)) {
             return;
         }
-        InFlightTask newInFlightTask = null;
-        ReadLimits readLimits = null;
-        synchronized (inFlightTasks) {
-            if (hasPendingRead()) {
-                log.debug("Skip the reading because there is a pending read task");
-            } else if (waitForCursorRewindingRefCnf > 0) {
-                log.debug("Skip the reading due to new detected schema");
-            } else if (state != Started) {
-                log.debug("Skip the reading because producer has not started");
-            } else {
-                int permits = getPermitsIfNoPendingRead();
-                if (permits > 0) {
-                    if (!isWritable()) {
-                        log.debug("Throttling replication traffic to a single message permit because producer is not "
-                                + "writable");
-                        // Minimize the read size if the producer is disconnected or the window is already full.
-                        permits = 1;
-                    }
-
-                    readLimits = getReadLimits(permits);
-                    if (readLimits.isReadable()) {
-                        newInFlightTask = createOrRecycleInFlightTaskIntoQueue(cursor.getReadPosition(),
-                                readLimits.messages);
-                    } else {
-                        // no rate limiter permits from rate limit
-                        if (log.isDebugEnabled()) {
-                            log.debug("[{}] Throttling replication traffic. Messages To Read {}, Bytes To Read {}",
-                                    replicatorId, readLimits.messages, readLimits.bytes);
-                        }
-                    }
-                }
-            }
-        }
+        // Acquire permits and check state of producer.
+        InFlightTask newInFlightTask = acquirePermitsIfNotFetchingSchema();
         if (newInFlightTask == null) {
             // no permits from rate limit
             if (log.isDebugEnabled()) {
@@ -378,14 +338,48 @@ public abstract class PersistentReplicator extends AbstractReplicator
             if (!hasPendingRead()) {
                 topic.getBrokerService().executor().schedule(
                         () -> readMoreEntries(), MESSAGE_RATE_BACKOFF_MS, TimeUnit.MILLISECONDS);
+                return;
+            } else {
+                return;
             }
+        }
+        // If disabled RateLimiter.
+        if (!dispatchRateLimiter.isPresent() || !dispatchRateLimiter.get().isDispatchRateLimitingEnabled()) {
+            cursor.asyncReadEntriesOrWait(newInFlightTask.readingEntries, -1, this,
+                    newInFlightTask/* Context object */, topic.getMaxReadPosition());
             return;
         }
-        if (log.isDebugEnabled()) {
-            log.debug("[{}] Schedule read of {} messages or {} bytes", replicatorId,
-                    newInFlightTask.readingEntries, readLimits.bytes);
+        // No permits of RateLimiter.
+        AvailablePermits availablePermits = getRateLimiterAvailablePermits(newInFlightTask.readingEntries);
+        if (!availablePermits.isReadable()) {
+            // no rate limiter permits from rate limit
+            if (log.isDebugEnabled()) {
+                log.debug("[{}] Throttling replication traffic. Messages To Read {}, Bytes To Read {}",
+                        replicatorId, availablePermits.getMessages(), availablePermits.getBytes());
+            }
+            topic.getBrokerService().executor().schedule(
+                    () -> readMoreEntries(), MESSAGE_RATE_BACKOFF_MS, TimeUnit.MILLISECONDS);
+            return;
         }
-        cursor.asyncReadEntriesOrWait(newInFlightTask.readingEntries, readLimits.bytes, this,
+        // Has permits of RateLimiter.
+        int messagesToRead = availablePermits.getMessages();
+        long bytesToRead = availablePermits.getBytes();
+        if (!isWritable()) {
+            if (log.isDebugEnabled()) {
+                log.debug("[{}] Throttling replication traffic because producer is not writable", replicatorId);
+            }
+            // Minimize the read size if the producer is disconnected or the window is already full
+            messagesToRead = 1;
+        }
+        // Update acquired permits exceeds limitation.
+        if (messagesToRead < newInFlightTask.readingEntries) {
+            newInFlightTask.setReadingEntries(messagesToRead);
+        }
+        if (log.isDebugEnabled()) {
+            log.debug("[{}] Schedule read of {} messages or {} bytes", replicatorId, newInFlightTask.readingEntries,
+                    bytesToRead);
+        }
+        cursor.asyncReadEntriesOrWait(newInFlightTask.readingEntries, bytesToRead, this,
                 newInFlightTask/* Context object */, topic.getMaxReadPosition());
     }
 
@@ -395,81 +389,10 @@ public abstract class PersistentReplicator extends AbstractReplicator
             log.debug("[{}] Read entries complete of {} messages", replicatorId, entries.size());
         }
         InFlightTask inFlightTask = (InFlightTask) ctx;
-
-        latestPublishTime = System.currentTimeMillis();
-        // The read result must be discarded because the replicator is terminating or the cursor was
-        // rewound while this read was in flight (e.g. after a failed publish or a schema change).
-        if (state == State.Terminated || state == State.Terminating
-                || inFlightTask.isSkipReadResultDueToCursorRewind()) {
-            for (Entry entry : entries) {
-                entry.release();
-            }
-            boolean resumeReads = state != State.Terminated && state != State.Terminating;
-            // Hold the inFlightTasks lock (the same lock doRewindCursor() and readMoreEntries()'s
-            // read-scheduling path use) so completing the task and rewinding the cursor here are atomic with
-            // respect to readMoreEntries(), which reads both the free read slot and the cursor read position
-            // under that lock; otherwise a concurrent read could observe the freed slot but the stale
-            // (advanced) read position.
-            synchronized (inFlightTasks) {
-                if (resumeReads) {
-                    // The discarded read already advanced the cursor read position past these still-unacked
-                    // messages (ManagedCursor advances the read position when a read completes), which
-                    // overwrites the earlier doRewindCursor(). Rewind again so the messages are re-read;
-                    // otherwise they stay stranded behind the read position and the backlog never drains.
-                    // rewind() resets the read position to the mark-delete position, so only unacked
-                    // messages are re-read; entries already acknowledged (replicated) are skipped on the
-                    // re-read. This makes the recovery at-least-once, with duplicates bounded to the
-                    // messages that were in flight when the rewind happened.
-                    cursor.rewind();
-                }
-                // Complete the task with an empty result so it releases its permit and no longer counts
-                // as a pending cursor read. Without this, a pending read that could not be cancelled
-                // (cursor.cancelPendingReadRequest() returns false for an already-dispatched read, which
-                // is the common case when there is a backlog) would stay entries == null forever, keeping
-                // hasPendingRead() permanently true and stalling replication.
-                if (inFlightTask.getEntries() == null) {
-                    inFlightTask.setEntries(Collections.emptyList());
-                }
-            }
-            if (resumeReads) {
-                // Resume reading on the broker executor rather than calling readMoreEntries() directly:
-                // cursor reads can complete inline (cache hit), so a direct call risks deep
-                // readEntriesComplete -> readMoreEntries recursion (StackOverflowError), the same hazard
-                // PersistentDispatcherMultipleConsumers.readMoreEntriesAsync() guards against.
-                topic.getBrokerService().executor().execute(this::readMoreEntries);
-            }
-            return;
-        }
-
-        // Retry to trigger read completes if it is not started.
-        Runnable retryReplicateEntries = () -> {
-            long estimatedTimeStampProducerConnected = this.estimatedTimeStampProducerConnected;
-            long delayMillis;
-            if (estimatedTimeStampProducerConnected > System.currentTimeMillis()) {
-                delayMillis = (estimatedTimeStampProducerConnected - System.currentTimeMillis()) + 100;
-            } else {
-                delayMillis = 100;
-            }
-            cursor.scheduleReadCallback(() -> readEntriesComplete(entries, ctx), delayMillis, TimeUnit.MILLISECONDS);
-        };
-
-        // Retry.
-        if (state == Disconnecting ||  state == Starting) {
-            retryReplicateEntries.run();
-            return;
-        }
-        // Start producer and retry.
-        if (state == Disconnected) {
-            startProducer();
-            retryReplicateEntries.run();
-            return;
-        }
-
-        // After set entries, the next reading can be start.
         inFlightTask.setEntries(entries);
 
         // After the replicator starts, the speed will be gradually increased.
-        int maxReadBatchSize = getMaxReadBatchSize();
+        int maxReadBatchSize = topic.getBrokerService().pulsar().getConfiguration().getDispatcherMaxReadBatchSize();
         if (readBatchSize < maxReadBatchSize) {
             int newReadBatchSize = Math.min(readBatchSize * 2, maxReadBatchSize);
             if (log.isDebugEnabled()) {
@@ -529,9 +452,6 @@ public abstract class PersistentReplicator extends AbstractReplicator
                 // cursor should be rewound since it was incremented when readMoreEntries
                 replicator.beforeTerminateOrCursorRewinding(ReasonOfWaitForCursorRewinding.Failed_Publishing);
                 replicator.doRewindCursor(false);
-                // The failed send has completed from the producer queue perspective. The cursor rewind
-                // makes the entry readable again, so this in-flight task must release its permit.
-                inFlightTask.incCompletedEntries();
             } else {
                 if (log.isDebugEnabled()) {
                     log.debug("[{}] Message persisted on remote broker", replicator.replicatorId, exception);
@@ -619,7 +539,7 @@ public abstract class PersistentReplicator extends AbstractReplicator
 
     @Override
     public void readEntriesFailed(ManagedLedgerException exception, Object ctx) {
-        completeFailedReadTask(ctx);
+        InFlightTask inFlightTask = (InFlightTask) ctx;
         if (state != Started) {
             log.info("[{}] Replicator was disconnected while reading entries."
                             + " Stop reading. Replicator state: {}",
@@ -628,7 +548,7 @@ public abstract class PersistentReplicator extends AbstractReplicator
         }
 
         // Reduce read batch size to avoid flooding bookies with retries
-        readBatchSize = brokerService.pulsar().getConfiguration().getDispatcherMinReadBatchSize();
+        readBatchSize = topic.getBrokerService().pulsar().getConfiguration().getDispatcherMinReadBatchSize();
 
         long waitTimeMillis = readFailureBackoff.next();
 
@@ -640,9 +560,11 @@ public abstract class PersistentReplicator extends AbstractReplicator
             terminate();
             return;
         } else if (!(exception instanceof TooManyRequestsException)) {
+            inFlightTask.setEntries(Collections.emptyList());
             log.error("[{}] Error reading entries at {}. Retrying to read in {}s. ({})",
                     replicatorId, ctx, waitTimeMillis / 1000.0, exception.getMessage(), exception);
         } else {
+            inFlightTask.setEntries(Collections.emptyList());
             log.debug("[{}] Throttled by bookies while reading at {}. Retrying to read in {}s. ({})",
                     replicatorId, ctx, waitTimeMillis / 1000.0, exception.getMessage(),
                     exception);
@@ -650,22 +572,6 @@ public abstract class PersistentReplicator extends AbstractReplicator
 
         brokerService.executor().schedule(this::readMoreEntries, waitTimeMillis, TimeUnit.MILLISECONDS);
     }
-
-    private void completeFailedReadTask(Object ctx) {
-        if (!(ctx instanceof InFlightTask)) {
-            log.error("[{}] Unexpected read entries failed context {}", replicatorId, ctx);
-            return;
-        }
-
-        InFlightTask inFlightTask = (InFlightTask) ctx;
-        if (inFlightTask.entries == null) {
-            inFlightTask.setEntries(Collections.emptyList());
-        } else {
-            log.error("[{}] Unexpected completed in-flight task in read entries failed callback. inFlightTask={}",
-                    replicatorId, inFlightTask);
-        }
-    }
-
 
     /**
      * @deprecated Use purgeBacklog() instead.
@@ -1032,6 +938,29 @@ public abstract class PersistentReplicator extends AbstractReplicator
         }
     }
 
+    protected InFlightTask acquirePermitsIfNotFetchingSchema() {
+        synchronized (inFlightTasks) {
+            if (hasPendingRead()) {
+                log.info("[{}] Skip the reading because there is a pending read task", replicatorId);
+                return null;
+            }
+            if (waitForCursorRewindingRefCnf > 0) {
+                log.info("[{}] Skip the reading due to new detected schema", replicatorId);
+                return null;
+            }
+            if (state != Started) {
+                log.info("[{}] Skip the reading because producer has not started [{}]", replicatorId, state);
+                return null;
+            }
+            // Guarantee that there is a unique cursor reading task.
+            int permits = getPermitsIfNoPendingRead();
+            if (permits == 0) {
+                return null;
+            }
+            return createOrRecycleInFlightTaskIntoQueue(cursor.getReadPosition(), permits);
+        }
+    }
+
     protected int getPermitsIfNoPendingRead() {
         synchronized (inFlightTasks) {
             for (InFlightTask task : inFlightTasks) {
@@ -1071,8 +1000,13 @@ public abstract class PersistentReplicator extends AbstractReplicator
                             .TopicBusyException("Cannot close a replicator with backlog"));
                 }
             }
+            beforeTerminateOrCursorRewinding(ReasonOfWaitForCursorRewinding.Disconnecting);
             return CompletableFuture.completedFuture(null);
         }
+    }
+
+    protected void afterDisconnected() {
+        doRewindCursor(false);
     }
 
     protected void beforeTerminateOrCursorRewinding(ReasonOfWaitForCursorRewinding reason) {
