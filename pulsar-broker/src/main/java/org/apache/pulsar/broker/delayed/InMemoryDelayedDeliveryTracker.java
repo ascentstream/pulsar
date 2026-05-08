@@ -126,10 +126,16 @@ public class InMemoryDelayedDeliveryTracker extends AbstractDelayedDeliveryTrack
         }
 
         long timestamp = trimLowerBit(deliverAt, timestampPrecisionBitCnt);
-        delayedMessageMap.computeIfAbsent(timestamp, k -> new Long2ObjectRBTreeMap<>())
-                .computeIfAbsent(ledgerId, k -> new Roaring64Bitmap())
-                .add(entryId);
-        delayedMessagesCount.incrementAndGet();
+        Roaring64Bitmap bitmap = delayedMessageMap.computeIfAbsent(timestamp, k -> new Long2ObjectRBTreeMap<>())
+            .computeIfAbsent(ledgerId, k -> new Roaring64Bitmap());
+        // Roaring64Bitmap does not store duplicates, so track if it a new element
+        // so we can keep delayedMessagesCount in sync
+        boolean isNew = !bitmap.contains(entryId);
+
+        if (isNew) {
+            bitmap.add(entryId);
+            delayedMessagesCount.incrementAndGet();
+        }
 
         updateTimer();
 
