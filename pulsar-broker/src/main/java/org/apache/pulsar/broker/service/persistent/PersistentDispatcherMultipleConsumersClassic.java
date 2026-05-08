@@ -92,7 +92,7 @@ public class PersistentDispatcherMultipleConsumersClassic extends AbstractPersis
     protected final MessageRedeliveryController redeliveryMessages;
     protected final RedeliveryTracker redeliveryTracker;
 
-    private volatile Optional<DelayedDeliveryTracker> delayedDeliveryTracker = Optional.empty();
+    private Optional<DelayedDeliveryTracker> delayedDeliveryTracker = Optional.empty();
 
     protected volatile boolean havePendingRead = false;
     protected volatile boolean havePendingReplayRead = false;
@@ -534,13 +534,11 @@ public class PersistentDispatcherMultipleConsumersClassic extends AbstractPersis
             this.delayedDeliveryTracker = Optional.empty();
         }
 
-        CompletableFuture<Void> closeTrackerFuture = delayedDeliveryTracker
-                .map(DelayedDeliveryTracker::closeAsync)
-                .orElseGet(() -> CompletableFuture.completedFuture(null));
+        delayedDeliveryTracker.ifPresent(DelayedDeliveryTracker::close);
         dispatchRateLimiter.ifPresent(DispatchRateLimiter::close);
 
-        return closeTrackerFuture.thenCompose(__ -> disconnectConsumers
-                ? disconnectAllConsumers(false, assignedBrokerLookupData) : CompletableFuture.completedFuture(null));
+        return disconnectConsumers
+                ? disconnectAllConsumers(false, assignedBrokerLookupData) : CompletableFuture.completedFuture(null);
     }
 
     @Override
@@ -620,7 +618,7 @@ public class PersistentDispatcherMultipleConsumersClassic extends AbstractPersis
             log.debug("[{}] Distributing {} messages to {} consumers", name, entries.size(), consumerList.size());
         }
 
-        long size = getTotalBytesSize(entries);
+        long size = entries.stream().mapToLong(Entry::getLength).sum();
         updatePendingBytesToDispatch(size);
 
         // dispatch messages to a separate thread, but still in order for this subscription
@@ -1200,12 +1198,12 @@ public class PersistentDispatcherMultipleConsumersClassic extends AbstractPersis
         return true;
     }
 
-    protected boolean shouldPauseDeliveryForDelayTracker() {
-        return delayedDeliveryTracker.map(DelayedDeliveryTracker::shouldPauseAllDeliveries).orElse(false);
+    protected synchronized boolean shouldPauseDeliveryForDelayTracker() {
+        return delayedDeliveryTracker.isPresent() && delayedDeliveryTracker.get().shouldPauseAllDeliveries();
     }
 
     @Override
-    public long getNumberOfDelayedMessages() {
+    public synchronized long getNumberOfDelayedMessages() {
         return delayedDeliveryTracker.map(DelayedDeliveryTracker::getNumberOfDelayedMessages).orElse(0L);
     }
 
@@ -1283,15 +1281,21 @@ public class PersistentDispatcherMultipleConsumersClassic extends AbstractPersis
         return topic;
     }
 
-    public long getDelayedTrackerMemoryUsage() {
+
+    public synchronized long getDelayedTrackerMemoryUsage() {
         return delayedDeliveryTracker.map(DelayedDeliveryTracker::getBufferMemoryUsage).orElse(0L);
     }
 
-    public Map<String, TopicMetricBean> getBucketDelayedIndexStats() {
-        return delayedDeliveryTracker
-                .filter(BucketDelayedDeliveryTracker.class::isInstance)
-                .map(tracker -> ((BucketDelayedDeliveryTracker) tracker).genTopicMetricMap())
-                .orElse(Collections.emptyMap());
+    public synchronized Map<String, TopicMetricBean> getBucketDelayedIndexStats() {
+        if (delayedDeliveryTracker.isEmpty()) {
+            return Collections.emptyMap();
+        }
+
+        if (delayedDeliveryTracker.get() instanceof BucketDelayedDeliveryTracker) {
+            return ((BucketDelayedDeliveryTracker) delayedDeliveryTracker.get()).genTopicMetricMap();
+        }
+
+        return Collections.emptyMap();
     }
 
     @Override

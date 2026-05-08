@@ -72,6 +72,7 @@ import org.apache.pulsar.broker.transaction.exception.buffer.TransactionBufferEx
 import org.apache.pulsar.common.api.proto.CommandSubscribe.SubType;
 import org.apache.pulsar.common.api.proto.MessageMetadata;
 import org.apache.pulsar.common.policies.data.stats.TopicMetricBean;
+import org.apache.pulsar.common.protocol.Commands;
 import org.apache.pulsar.common.util.Backoff;
 import org.apache.pulsar.common.util.Codec;
 import org.apache.pulsar.common.util.FutureUtil;
@@ -90,7 +91,7 @@ public class PersistentDispatcherMultipleConsumers extends AbstractPersistentDis
     protected final MessageRedeliveryController redeliveryMessages;
     protected final RedeliveryTracker redeliveryTracker;
 
-    private volatile Optional<DelayedDeliveryTracker> delayedDeliveryTracker = Optional.empty();
+    private Optional<DelayedDeliveryTracker> delayedDeliveryTracker = Optional.empty();
 
     protected volatile boolean havePendingRead = false;
     protected volatile boolean havePendingReplayRead = false;
@@ -141,6 +142,7 @@ public class PersistentDispatcherMultipleConsumers extends AbstractPersistentDis
     protected enum ReadType {
         Normal, Replay
     }
+    private Position lastMarkDeletePositionBeforeReadMoreEntries;
     private volatile long readMoreEntriesCallCount;
 
     public PersistentDispatcherMultipleConsumers(PersistentTopic topic, ManagedCursor cursor,
@@ -355,6 +357,17 @@ public class PersistentDispatcherMultipleConsumers extends AbstractPersistentDis
 
         // increment the counter for readMoreEntries calls, to track the number of times readMoreEntries is called
         readMoreEntriesCallCount++;
+
+        // remove possible expired messages from redelivery tracker and pending acks
+        Position markDeletePosition = cursor.getMarkDeletedPosition();
+        if (lastMarkDeletePositionBeforeReadMoreEntries != markDeletePosition) {
+            redeliveryMessages.removeAllUpTo(markDeletePosition.getLedgerId(), markDeletePosition.getEntryId());
+            for (Consumer consumer : consumerList) {
+                consumer.getPendingAcks()
+                        .removeAllUpTo(markDeletePosition.getLedgerId(), markDeletePosition.getEntryId());
+            }
+            lastMarkDeletePositionBeforeReadMoreEntries = markDeletePosition;
+        }
 
         // totalAvailablePermits may be updated by other threads
         int firstAvailableConsumerPermits = getFirstAvailableConsumerPermits();
@@ -593,18 +606,6 @@ public class PersistentDispatcherMultipleConsumers extends AbstractPersistentDis
     }
 
     @Override
-    public void markDeletePositionMoveForward() {
-        Position markDeletePosition = cursor.getMarkDeletedPosition();
-        if (markDeletePosition != null) {
-            redeliveryMessages.removeAllUpTo(markDeletePosition.getLedgerId(), markDeletePosition.getEntryId());
-            for (Consumer consumer : consumerList) {
-                consumer.removePendingAcksUpToPositionAndDecrementUnacked(
-                        markDeletePosition.getLedgerId(), markDeletePosition.getEntryId());
-            }
-        }
-    }
-
-    @Override
     public synchronized boolean canUnsubscribe(Consumer consumer) {
         return consumerList.size() == 1 && consumerSet.contains(consumer);
     }
@@ -620,13 +621,11 @@ public class PersistentDispatcherMultipleConsumers extends AbstractPersistentDis
             this.delayedDeliveryTracker = Optional.empty();
         }
 
-        CompletableFuture<Void> closeTrackerFuture = delayedDeliveryTracker
-                .map(DelayedDeliveryTracker::closeAsync)
-                .orElseGet(() -> CompletableFuture.completedFuture(null));
+        delayedDeliveryTracker.ifPresent(DelayedDeliveryTracker::close);
         dispatchRateLimiter.ifPresent(DispatchRateLimiter::close);
 
-        return closeTrackerFuture.thenCompose(__ -> disconnectConsumers
-                ? disconnectAllConsumers(false, assignedBrokerLookupData) : CompletableFuture.completedFuture(null));
+        return disconnectConsumers
+                ? disconnectAllConsumers(false, assignedBrokerLookupData) : CompletableFuture.completedFuture(null);
     }
 
     @Override
@@ -706,7 +705,7 @@ public class PersistentDispatcherMultipleConsumers extends AbstractPersistentDis
             log.debug("[{}] Distributing {} messages to {} consumers", name, entries.size(), consumerList.size());
         }
 
-        long totalBytesSize = getTotalBytesSize(entries);
+        long totalBytesSize = entries.stream().mapToLong(Entry::getLength).sum();
         updatePendingBytesToDispatch(totalBytesSize);
 
         // dispatch messages to a separate thread, but still in order for this subscription
@@ -799,11 +798,10 @@ public class PersistentDispatcherMultipleConsumers extends AbstractPersistentDis
             if (entry instanceof EntryAndMetadata) {
                 metadata = ((EntryAndMetadata) entry).getMetadata();
             } else {
+                metadata = Commands.peekAndCopyMessageMetadata(entry.getDataBuffer(), subscription.toString(), -1);
                 // cache the metadata in the entry with EntryAndMetadata for later use to avoid re-parsing the metadata
                 // and to carry the metadata and calculated stickyKeyHash with the entry
-                EntryAndMetadata entryAndMetadata = EntryAndMetadata.create(entry);
-                metadata = entryAndMetadata.getMetadata();
-                entries.set(i, entryAndMetadata);
+                entries.set(i, EntryAndMetadata.create(entry, metadata));
             }
             if (metadata != null) {
                 remainingMessages += metadata.getNumMessagesInBatch();
@@ -1363,12 +1361,13 @@ public class PersistentDispatcherMultipleConsumers extends AbstractPersistentDis
     }
 
 
-    protected boolean shouldPauseDeliveryForDelayTracker() {
-        return delayedDeliveryTracker.map(DelayedDeliveryTracker::shouldPauseAllDeliveries).orElse(false);
+
+    protected synchronized boolean shouldPauseDeliveryForDelayTracker() {
+        return delayedDeliveryTracker.isPresent() && delayedDeliveryTracker.get().shouldPauseAllDeliveries();
     }
 
     @Override
-    public long getNumberOfDelayedMessages() {
+    public synchronized long getNumberOfDelayedMessages() {
         return delayedDeliveryTracker.map(DelayedDeliveryTracker::getNumberOfDelayedMessages).orElse(0L);
     }
 
@@ -1452,15 +1451,20 @@ public class PersistentDispatcherMultipleConsumers extends AbstractPersistentDis
     }
 
 
-    public long getDelayedTrackerMemoryUsage() {
+    public synchronized long getDelayedTrackerMemoryUsage() {
         return delayedDeliveryTracker.map(DelayedDeliveryTracker::getBufferMemoryUsage).orElse(0L);
     }
 
-    public Map<String, TopicMetricBean> getBucketDelayedIndexStats() {
-        return delayedDeliveryTracker
-                .filter(BucketDelayedDeliveryTracker.class::isInstance)
-                .map(tracker -> ((BucketDelayedDeliveryTracker) tracker).genTopicMetricMap())
-                .orElse(Collections.emptyMap());
+    public synchronized Map<String, TopicMetricBean> getBucketDelayedIndexStats() {
+        if (delayedDeliveryTracker.isEmpty()) {
+            return Collections.emptyMap();
+        }
+
+        if (delayedDeliveryTracker.get() instanceof BucketDelayedDeliveryTracker) {
+            return ((BucketDelayedDeliveryTracker) delayedDeliveryTracker.get()).genTopicMetricMap();
+        }
+
+        return Collections.emptyMap();
     }
 
     @Override
