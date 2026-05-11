@@ -78,7 +78,7 @@
     </dependency>
 
     <dependency>
-      <groupId>org.apache.bookkeeper</groupId>
+      <groupId>${bookkeeper.groupId}</groupId>
       <artifactId>bookkeeper-server</artifactId>
     </dependency>
 

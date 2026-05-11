@@ -34,17 +34,17 @@
 
   <dependencies>
     <dependency>
-      <groupId>org.apache.bookkeeper</groupId>
+      <groupId>${bookkeeper.groupId}</groupId>
       <artifactId>bookkeeper-server</artifactId>
     </dependency>
 
     <dependency>
-      <groupId>org.apache.bookkeeper.stats</groupId>
+      <groupId>${bookkeeper.groupId}.stats</groupId>
       <artifactId>prometheus-metrics-provider</artifactId>
     </dependency>
 
     <dependency>
-      <groupId>org.apache.bookkeeper.stats</groupId>
+      <groupId>${bookkeeper.groupId}.stats</groupId>
       <artifactId>codahale-metrics-provider</artifactId>
       <version>${bookkeeper.version}</version>
       <exclusions>
