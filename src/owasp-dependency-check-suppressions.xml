@@ -347,18 +347,18 @@
 
     <!-- Solr misdetection.
     Cannot be tied to a sha1,
-    mismatches org.apache.pulsar:pulsar-io-solr:2.10.0-SNAPSHOT
+    mismatches com.ascentstream.pulsar:pulsar-io-solr:2.10.0-SNAPSHOT
     -->
     <suppress>
         <notes><![CDATA[
-       file name: org.apache.pulsar:pulsar-io-solr:2.10.0-SNAPSHOT
+       file name: com.ascentstream.pulsar:pulsar-io-solr:2.10.0-SNAPSHOT
        ]]></notes>
         <packageUrl regex="true">^pkg:maven/org\.apache\.pulsar/pulsar\-io\-solr@.*-SNAPSHOT$</packageUrl>
         <cpe>cpe:/a:apache:pulsar</cpe>
     </suppress>
     <suppress>
         <notes><![CDATA[
-       file name: org.apache.pulsar:pulsar-io-solr:2.10.0-SNAPSHOT
+       file name: com.ascentstream.pulsar:pulsar-io-solr:2.10.0-SNAPSHOT
        ]]></notes>
         <packageUrl regex="true">^pkg:maven/org\.apache\.pulsar/pulsar\-io\-solr@.*-SNAPSHOT$</packageUrl>
         <cpe>cpe:/a:apache:solr</cpe>
