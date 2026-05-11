@@ -365,7 +365,7 @@ public class PulsarRegistrationClientTest extends BaseMetadataStoreTest {
         final String zksConnectionString = zks.getConnectionString();
         final String ledgersRoot = "/test/ledgers-" + UUID.randomUUID();
         // prepare registration manager
-        ZooKeeper zk = new ZooKeeper(zksConnectionString, 5000, new ZooKeeperWatcherBase(1000));
+        ZooKeeper zk = new ZooKeeper(zksConnectionString, 5000, new ZooKeeperWatcherBase(1000, false));
         final ServerConfiguration serverConfiguration = new ServerConfiguration();
         serverConfiguration.setZkLedgersRootPath(ledgersRoot);
         final FaultInjectableZKRegistrationManager rm = new FaultInjectableZKRegistrationManager(serverConfiguration, zk);

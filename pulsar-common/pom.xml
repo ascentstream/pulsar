@@ -95,7 +95,7 @@
     </dependency>
 
     <dependency>
-      <groupId>org.apache.bookkeeper</groupId>
+      <groupId>${bookkeeper.groupId}</groupId>
       <artifactId>bookkeeper-common-allocator</artifactId>
       <exclusions>
         <exclusion>
@@ -106,7 +106,7 @@
     </dependency>
 
     <dependency>
-      <groupId>org.apache.bookkeeper</groupId>
+      <groupId>${bookkeeper.groupId}</groupId>
       <artifactId>cpu-affinity</artifactId>
     </dependency>
 
@@ -116,7 +116,7 @@
     </dependency>
 
     <dependency>
-      <groupId>org.apache.bookkeeper</groupId>
+      <groupId>${bookkeeper.groupId}</groupId>
       <artifactId>circe-checksum</artifactId>
       <version>${bookkeeper.version}</version>
       <exclusions>

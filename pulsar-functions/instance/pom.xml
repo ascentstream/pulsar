@@ -102,7 +102,7 @@
     </dependency>
 
     <dependency>
-      <groupId>org.apache.bookkeeper</groupId>
+      <groupId>${bookkeeper.groupId}</groupId>
       <artifactId>stream-storage-java-client</artifactId>
       <exclusions>
         <exclusion>
@@ -139,7 +139,7 @@
     </dependency>
 
     <dependency>
-      <groupId>org.apache.bookkeeper</groupId>
+      <groupId>${bookkeeper.groupId}</groupId>
       <artifactId>bookkeeper-common</artifactId>
       <exclusions>
         <exclusion>
