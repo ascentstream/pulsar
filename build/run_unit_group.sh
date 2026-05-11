@@ -163,7 +163,7 @@ function test_group_proxy() {
 
 function test_group_other() {
   mvn_test --clean --install \
-           -pl '!org.apache.pulsar:distribution,!org.apache.pulsar:pulsar-offloader-distribution,!org.apache.pulsar:pulsar-server-distribution,!org.apache.pulsar:pulsar-io-distribution,!org.apache.pulsar:pulsar-all-docker-image' \
+           -pl '!com.ascentstream.pulsar:distribution,!com.ascentstream.pulsar:pulsar-offloader-distribution,!com.ascentstream.pulsar:pulsar-server-distribution,!com.ascentstream.pulsar:pulsar-io-distribution,!com.ascentstream.pulsar:pulsar-all-docker-image' \
            -PskipTestsForUnitGroupOther -DdisableIoMainProfile=true -DdisableSqlMainProfile=true -DskipIntegrationTests \
            -Dexclude='**/ManagedLedgerTest.java,
                    **/OffloadersCacheTest.java
