@@ -91,4 +91,9 @@ public interface TransportCnx {
      * is null if the connection liveness check is disabled.
      */
     CompletableFuture<Boolean> checkConnectionLiveness();
+
+    default boolean isClientSupportsReplDedupByLidAndEid() {
+        return getFeatures() != null && getFeatures().hasSupportsReplDedupByLidAndEid()
+                && getFeatures().isSupportsReplDedupByLidAndEid();
+    }
 }
