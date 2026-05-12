@@ -142,7 +142,7 @@
                   <include>javax.ws.rs:*</include>
                   <include>javax.xml.bind:jaxb-api</include>
                   <include>net.jcip:jcip-annotations</include>
-                  <include>org.apache.bookkeeper:*</include>
+                  <include>${bookkeeper.groupId}:*</include>
                   <include>org.apache.commons:commons-compress</include>
                   <include>org.apache.commons:commons-lang3</include>
                   <include>com.ascentstream.pulsar:pulsar-client-admin-original</include>

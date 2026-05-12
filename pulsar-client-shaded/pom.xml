@@ -159,7 +159,7 @@
                   <include>javax.ws.rs:*</include>
                   <include>net.jcip:jcip-annotations</include>
                   <include>org.apache.avro:*</include>
-                  <include>org.apache.bookkeeper:*</include>
+                  <include>${bookkeeper.groupId}:*</include>
                   <include>org.apache.commons:commons-compress</include>
                   <include>org.apache.commons:commons-lang3</include>
                   <!-- Issue #6834, Since Netty ByteBuf shaded, we need also shade this module -->
