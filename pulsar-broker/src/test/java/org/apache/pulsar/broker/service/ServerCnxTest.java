@@ -2575,6 +2575,7 @@ public class ServerCnxTest {
         setChannelConnected();
 
         var ctx = mock(ChannelHandlerContext.class);
+        when(ctx.channel()).thenReturn(channel);
         var writeFuture = mock(ChannelFuture.class);
         var writeFailure = new RuntimeException("close consumer write failed");
         when(ctx.writeAndFlush(any())).thenReturn(writeFuture);
