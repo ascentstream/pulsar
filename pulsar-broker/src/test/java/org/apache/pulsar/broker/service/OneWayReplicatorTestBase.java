@@ -171,10 +171,6 @@ public abstract class OneWayReplicatorTestBase extends TestRetrySupport {
         admin1.namespaces().setSchemaCompatibilityStrategy(sourceClusterAlwaysSchemaCompatibleNamespace,
                 SchemaCompatibilityStrategy.ALWAYS_COMPATIBLE);
         admin1.namespaces().createNamespace(nonReplicatedNamespace);
-        admin1.namespaces().createNamespace(
-                sourceClusterAlwaysSchemaCompatibleNamespace, Sets.newHashSet(cluster1, cluster2));
-        admin1.namespaces().setSchemaCompatibilityStrategy(sourceClusterAlwaysSchemaCompatibleNamespace,
-                SchemaCompatibilityStrategy.ALWAYS_COMPATIBLE);
 
         if (!usingGlobalZK) {
             admin2.clusters().createCluster(cluster1, ClusterData.builder()
@@ -198,9 +194,6 @@ public abstract class OneWayReplicatorTestBase extends TestRetrySupport {
             admin2.namespaces().setSchemaCompatibilityStrategy(sourceClusterAlwaysSchemaCompatibleNamespace,
                     SchemaCompatibilityStrategy.FORWARD);
             admin2.namespaces().createNamespace(nonReplicatedNamespace);
-            admin2.namespaces().createNamespace(sourceClusterAlwaysSchemaCompatibleNamespace);
-            admin2.namespaces().setSchemaCompatibilityStrategy(sourceClusterAlwaysSchemaCompatibleNamespace,
-                    SchemaCompatibilityStrategy.FORWARD);
         }
 
     }
