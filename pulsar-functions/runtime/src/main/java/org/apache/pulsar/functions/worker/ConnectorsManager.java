@@ -23,7 +23,6 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.util.Collection;
 import java.util.List;
-import java.util.Map;
 import java.util.TreeMap;
 import java.util.stream.Collectors;
 import lombok.Getter;
@@ -39,7 +38,7 @@ import org.apache.pulsar.functions.utils.io.ReloadConnectorsResult;
 public class ConnectorsManager implements AutoCloseable {
 
     @Getter
-    private volatile Map<String, Connector> connectors;
+    private volatile TreeMap<String, Connector> connectors;
 
     @VisibleForTesting
     public ConnectorsManager() {
@@ -50,7 +49,7 @@ public class ConnectorsManager implements AutoCloseable {
         this.connectors = createConnectors(workerConfig);
     }
 
-    private static Map<String, Connector> createConnectors(WorkerConfig workerConfig) throws IOException {
+    private static TreeMap<String, Connector> createConnectors(WorkerConfig workerConfig) throws IOException {
         boolean enableClassloading = isEnableClassloading(workerConfig);
         return ConnectorUtils.searchForConnectors(workerConfig.getConnectorsDirectory(),
                 workerConfig.getNarExtractionDirectory(), enableClassloading);
@@ -120,7 +119,7 @@ public class ConnectorsManager implements AutoCloseable {
         });
     }
 
-    private void closeConnectors(Map<String, Connector> connectorMap) {
+    private void closeConnectors(TreeMap<String, Connector> connectorMap) {
         closeConnectors(connectorMap.values());
         connectorMap.clear();
     }

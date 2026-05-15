@@ -19,11 +19,19 @@
 package org.apache.pulsar.functions.utils.io;
 
 import java.util.List;
+<<<<<<< HEAD
 import java.util.Map;
+=======
+import java.util.TreeMap;
+>>>>>>> 308aa0f33bf ([improve][fn] make built-in connector reload incremental (#25773))
 
 /**
  * Result of {@link ConnectorUtils#reloadConnectors}: the new connector map and connectors evicted from the active set
  * that the caller must close.
  */
+<<<<<<< HEAD
 public record ReloadConnectorsResult(Map<String, Connector> connectors, List<Connector> connectorsToClose) {
+=======
+public record ReloadConnectorsResult(TreeMap<String, Connector> connectors, List<Connector> connectorsToClose) {
+>>>>>>> 308aa0f33bf ([improve][fn] make built-in connector reload incremental (#25773))
 }
