@@ -109,7 +109,7 @@
                             <artifactSet>
                                 <includes>
                                     <include>org.apache.pulsar:*</include>
-                                    <include>org.apache.bookkeeper:*</include>
+                                    <include>${bookkeeper.groupId}:*</include>
                                     <include>commons-*:*</include>
                                     <include>org.apache.commons:*</include>
                                     <include>com.fasterxml.jackson.*:*</include>
