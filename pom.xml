@@ -32,12 +32,12 @@
   <groupId>com.ascentstream.pulsar</groupId>
   <artifactId>pulsar</artifactId>
 
-  <version>3.0.18-SNAPSHOT</version>
+  <version>3.0.18.0</version>
 
   <name>Pulsar</name>
   <description>Pulsar is a distributed pub-sub messaging platform with a very
 flexible messaging model and an intuitive client API.</description>
-  <url>https://github.com/apache/pulsar</url>
+  <url>https://github.com/ascentstream/pulsar</url>
 
   <organization>
     <name>Apache Software Foundation</name>
@@ -61,9 +61,9 @@ flexible messaging model and an intuitive client API.</description>
   </licenses>
 
   <scm>
-    <url>https://github.com/apache/pulsar</url>
-    <connection>scm:git:https://github.com/apache/pulsar.git</connection>
-    <developerConnection>scm:git:ssh://git@github.com:apache/pulsar.git</developerConnection>
+    <url>https://github.com/ascentstream/pulsar</url>
+    <connection>scm:git:https://github.com/ascentstream/pulsar.git</connection>
+    <developerConnection>scm:git:ssh://git@github.com:ascentstream/pulsar.git</developerConnection>
   </scm>
 
   <ciManagement>
@@ -92,7 +92,7 @@ flexible messaging model and an intuitive client API.</description>
 
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
-    <project.build.outputTimestamp>2026-04-27T13:52:48Z</project.build.outputTimestamp>
+    <project.build.outputTimestamp>2026-05-15T08:58:11Z</project.build.outputTimestamp>
     <redirectTestOutputToFile>true</redirectTestOutputToFile>
 
     <!-- By default build for local Docker platform.
