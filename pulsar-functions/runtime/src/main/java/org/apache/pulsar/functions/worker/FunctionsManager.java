@@ -21,7 +21,6 @@ package org.apache.pulsar.functions.worker;
 import com.google.common.annotations.VisibleForTesting;
 import java.io.IOException;
 import java.nio.file.Path;
-import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
@@ -31,11 +30,10 @@ import org.apache.pulsar.common.functions.FunctionDefinition;
 import org.apache.pulsar.functions.runtime.thread.ThreadRuntimeFactory;
 import org.apache.pulsar.functions.utils.functions.FunctionArchive;
 import org.apache.pulsar.functions.utils.functions.FunctionUtils;
-import org.apache.pulsar.functions.utils.functions.ReloadFunctionsResult;
 
 @Slf4j
 public class FunctionsManager implements AutoCloseable {
-    private volatile Map<String, FunctionArchive> functions;
+    private Map<String, FunctionArchive> functions;
 
     @VisibleForTesting
     public FunctionsManager() {
@@ -64,25 +62,17 @@ public class FunctionsManager implements AutoCloseable {
     }
 
     public void reloadFunctions(WorkerConfig workerConfig) throws IOException {
-        ReloadFunctionsResult reload = FunctionUtils.reloadFunctions(
-                this.functions,
-                workerConfig.getFunctionsDirectory(),
-                workerConfig.getNarExtractionDirectory(),
-                isEnableClassloading(workerConfig));
-        this.functions = reload.functions();
-        closeFunctions(reload.functionsToClose());
+        Map<String, FunctionArchive> oldFunctions = functions;
+        this.functions = createFunctions(workerConfig);
+        closeFunctions(oldFunctions);
     }
 
     private static Map<String, FunctionArchive> createFunctions(WorkerConfig workerConfig) throws IOException {
-        boolean enableClassloading = isEnableClassloading(workerConfig);
+        boolean enableClassloading = workerConfig.getEnableClassloadingOfBuiltinFiles()
+                || ThreadRuntimeFactory.class.getName().equals(workerConfig.getFunctionRuntimeFactoryClassName());
         return FunctionUtils.searchForFunctions(workerConfig.getFunctionsDirectory(),
                 workerConfig.getNarExtractionDirectory(),
                 enableClassloading);
-    }
-
-    private static boolean isEnableClassloading(WorkerConfig workerConfig) {
-        return workerConfig.getEnableClassloadingOfBuiltinFiles()
-                || ThreadRuntimeFactory.class.getName().equals(workerConfig.getFunctionRuntimeFactoryClassName());
     }
 
     @Override
@@ -90,18 +80,14 @@ public class FunctionsManager implements AutoCloseable {
         closeFunctions(functions);
     }
 
-    private void closeFunctions(Collection<FunctionArchive> functions) {
-        functions.forEach(functionArchive -> {
+    private void closeFunctions(Map<String, FunctionArchive> functionMap) {
+        functionMap.values().forEach(functionArchive -> {
             try {
                 functionArchive.close();
             } catch (Exception e) {
                 log.warn("Failed to close function archive", e);
             }
         });
-    }
-
-    private void closeFunctions(Map<String, FunctionArchive> functionMap) {
-        closeFunctions(functionMap.values());
         functionMap.clear();
     }
 }
