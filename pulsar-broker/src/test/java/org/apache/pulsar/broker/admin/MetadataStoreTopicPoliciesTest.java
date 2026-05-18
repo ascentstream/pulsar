@@ -46,6 +46,7 @@ public class MetadataStoreTopicPoliciesTest extends TopicPoliciesTest {
 
     @Test(enabled = false)
     @Override
+<<<<<<< HEAD
     public void testNonPersistentTopicAppliesTopicPolicyOnLoad() throws Exception {
         // This test is specific to SystemTopicBasedTopicPoliciesService (casts the service and uses
         // getPoliciesCacheInit). The non-persistent load-path behavior itself is backend-agnostic and is
@@ -54,6 +55,8 @@ public class MetadataStoreTopicPoliciesTest extends TopicPoliciesTest {
 
     @Test(enabled = false)
     @Override
+=======
+>>>>>>> c333504534e ([feat][broker] PIP-469: Legacy-aware topic policies backend routing and metadata-store topic policies (#25707))
     public void testSystemTopicShouldBeCompacted() throws Exception {
         // Relies on __change_events system topic, which does not exist with MetadataStoreTopicPoliciesService.
     }
