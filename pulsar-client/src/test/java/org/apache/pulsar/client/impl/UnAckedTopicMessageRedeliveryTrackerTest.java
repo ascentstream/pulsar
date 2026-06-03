@@ -70,12 +70,17 @@ public class UnAckedTopicMessageRedeliveryTrackerTest {
         tracker.ackTimeoutMessages.put(msgInAckTimeout, System.currentTimeMillis() + 1_000_000L);
         assertEquals(tracker.size(), 2);
 
+<<<<<<< HEAD
         assertEquals(tracker.removeTopicMessages("persistent://public/default/my-topic-partition-0"), 2);
+=======
+        assertEquals(tracker.removeTopicMessages("my-topic"), 2);
+>>>>>>> 2bd81ae891e ([fix][client] Clean up unacked messages when unsubscribing a topic with ack timeout backoff (#25916))
         assertTrue(tracker.isEmpty());
 
         tracker.close();
     }
 
+<<<<<<< HEAD
     @Test
     @SuppressWarnings("unchecked")
     public void testRemoveTopicMessagesDoesNotMatchPrefixTopic() {
@@ -114,4 +119,6 @@ public class UnAckedTopicMessageRedeliveryTrackerTest {
         tracker.close();
     }
 
+=======
+>>>>>>> 2bd81ae891e ([fix][client] Clean up unacked messages when unsubscribing a topic with ack timeout backoff (#25916))
 }
