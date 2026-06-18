@@ -56,15 +56,26 @@ public class TopicPolicyListenerWrapperTest {
         assertThat(real.updates).isEmpty();
 
         // On completion, the buffered local value wins over the loaded local value; the loaded global value
+<<<<<<< HEAD
         // is applied since none was buffered. The local policy is emitted before the global one.
         TopicPolicies loadedGlobal = globalPolicies();
         wrapper.completeInitialization(loadedGlobal, localPolicies());
         assertThat(real.updates).containsExactly(bufferedLocal, loadedGlobal);
+=======
+        // is applied since none was buffered.
+        TopicPolicies loadedGlobal = globalPolicies();
+        wrapper.completeInitialization(loadedGlobal, localPolicies());
+        assertThat(real.updates).containsExactly(loadedGlobal, bufferedLocal);
+>>>>>>> 2d7b21d417c ([fix][broker] Prevent topic policy initialization race with a buffering listener wrapper (#26044))
 
         // After initialization, updates are forwarded immediately.
         TopicPolicies liveUpdate = localPolicies();
         wrapper.onUpdate(liveUpdate);
+<<<<<<< HEAD
         assertThat(real.updates).containsExactly(bufferedLocal, loadedGlobal, liveUpdate);
+=======
+        assertThat(real.updates).containsExactly(loadedGlobal, bufferedLocal, liveUpdate);
+>>>>>>> 2d7b21d417c ([fix][broker] Prevent topic policy initialization race with a buffering listener wrapper (#26044))
     }
 
     @Test
@@ -78,7 +89,11 @@ public class TopicPolicyListenerWrapperTest {
         wrapper.onUpdate(bufferedLocal);
 
         wrapper.completeInitialization(globalPolicies(), localPolicies());
+<<<<<<< HEAD
         assertThat(real.updates).containsExactly(bufferedLocal, bufferedGlobal);
+=======
+        assertThat(real.updates).containsExactly(bufferedGlobal, bufferedLocal);
+>>>>>>> 2d7b21d417c ([fix][broker] Prevent topic policy initialization race with a buffering listener wrapper (#26044))
     }
 
     @Test
@@ -86,12 +101,19 @@ public class TopicPolicyListenerWrapperTest {
         RecordingListener real = new RecordingListener();
         TopicPolicyListenerWrapper wrapper = new TopicPolicyListenerWrapper(real);
 
+<<<<<<< HEAD
         // The local policy is emitted before the global policy, so a local topic policy takes precedence over a
         // global one once both have been applied.
         TopicPolicies loadedGlobal = globalPolicies();
         TopicPolicies loadedLocal = localPolicies();
         wrapper.completeInitialization(loadedGlobal, loadedLocal);
         assertThat(real.updates).containsExactly(loadedLocal, loadedGlobal);
+=======
+        TopicPolicies loadedGlobal = globalPolicies();
+        TopicPolicies loadedLocal = localPolicies();
+        wrapper.completeInitialization(loadedGlobal, loadedLocal);
+        assertThat(real.updates).containsExactly(loadedGlobal, loadedLocal);
+>>>>>>> 2d7b21d417c ([fix][broker] Prevent topic policy initialization race with a buffering listener wrapper (#26044))
     }
 
     @Test
@@ -120,6 +142,7 @@ public class TopicPolicyListenerWrapperTest {
         wrapper.onUpdate(newerGlobal);
 
         wrapper.completeInitialization(globalPolicies(), localPolicies());
+<<<<<<< HEAD
         // Local (emitted first): the delete (null) wins over the loaded local value; Global: the newer update wins.
         assertThat(real.updates).containsExactly(null, newerGlobal);
     }
@@ -208,5 +231,9 @@ public class TopicPolicyListenerWrapperTest {
         assertThat(real.updates).containsExactly(firstLocal);
         wrapper.completeInitialization(null, null);
         assertThat(real.updates).containsExactly(firstLocal, bufferedGlobal);
+=======
+        // Global: the newer update wins; Local: the delete (null) wins over the loaded local value.
+        assertThat(real.updates).containsExactly(newerGlobal, null);
+>>>>>>> 2d7b21d417c ([fix][broker] Prevent topic policy initialization race with a buffering listener wrapper (#26044))
     }
 }
