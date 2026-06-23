@@ -91,7 +91,8 @@ class OpReadEntries implements ReadEntriesCallback {
         ledger.getLedgerHandle(ledgerId)
                 .thenAccept(this::internalReadFromLedger)
                 .exceptionally(ex -> {
-                    log.error("[{}] Error opening ledger for reading at position {}", ledger.getName(), readPosition, ex);
+                    log.error("[{}] Error opening ledger for reading at position {}",
+                            ledger.getName(), readPosition, ex);
                     readEntriesFailed(ManagedLedgerException.getManagedLedgerException(ex.getCause()), null);
                     return null;
                 });
@@ -194,7 +195,7 @@ class OpReadEntries implements ReadEntriesCallback {
                 return;
             }
             log.warn("[{}] Read failed; skipping non-recoverable data and continuing. readPosition={} "
-                    + "nextReadPosition={} exMsg={}", ledger.getName(), readPosition, skippedTo, exception.getMessage());
+                    + "nextReadPosition={}", ledger.getName(), readPosition, skippedTo);
             updateReadPosition(skippedTo);
             checkReadCompletion();
             return;
