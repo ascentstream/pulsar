@@ -652,6 +652,12 @@ public class CustomizedManagedLedgerStorageForTest extends ManagedLedgerClientFa
         }
 
         @Override
+        public CompletableFuture<List<Entry>> asyncReadEntries(Position startPosition, int numberOfEntries,
+                                                               Position maxPosition) {
+            return delegate.asyncReadEntries(startPosition, numberOfEntries, maxPosition);
+        }
+
+        @Override
         public NavigableMap<Long, MLDataFormats.ManagedLedgerInfo.LedgerInfo> getLedgersInfo() {
             return delegate.getLedgersInfo();
         }
