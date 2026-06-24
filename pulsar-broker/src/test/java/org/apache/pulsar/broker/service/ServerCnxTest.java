@@ -2613,6 +2613,10 @@ public class ServerCnxTest {
 
         var consumer = mock(Consumer.class);
         when(consumer.consumerId()).thenReturn(1L);
+        var sub = mock(org.apache.pulsar.broker.service.Subscription.class);
+        doReturn("test-sub").when(sub).getName();
+        doReturn(TopicName.get("test-topic").toString()).when(sub).getTopicName();
+        doReturn(sub).when(consumer).getSubscription();
 
         serverCnx.setRemoteEndpointProtocolVersion(ProtocolVersion.v12.getValue());
 
