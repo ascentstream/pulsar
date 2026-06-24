@@ -3454,7 +3454,9 @@ public class ServerCnx extends PulsarHandler implements TransportCnx {
      */
     protected void close() {
         if (ctx != null) {
-            ctx.channel().attr(CLOSED_BY_LOCAL_ATTR_KEY).set(true);
+            if (ctx.channel() != null) {
+                ctx.channel().attr(CLOSED_BY_LOCAL_ATTR_KEY).set(true);
+            }
             ctx.close();
             consumers.forEach((n, f) -> {
                 if (f.isDone()) {
