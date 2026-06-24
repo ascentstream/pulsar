@@ -33,7 +33,7 @@
 
   <groupId>com.ascentstream.pulsar</groupId>
   <artifactId>pulsar-bom</artifactId>
-  <version>4.0.11.0</version>
+  <version>4.0.11.1-226281f-20260624110008-SNAPSHOT</version>
   <name>Pulsar BOM</name>
   <description>Pulsar (Bill of Materials)</description>
 
@@ -81,7 +81,7 @@
     <maven.compiler.target>17</maven.compiler.target>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
-    <project.build.outputTimestamp>2026-05-27T07:40:34Z</project.build.outputTimestamp>
+    <project.build.outputTimestamp>2026-06-24T11:00:27Z</project.build.outputTimestamp>
     <license-maven-plugin.version>4.1</license-maven-plugin.version>
     <maven-checkstyle-plugin.version>3.1.2</maven-checkstyle-plugin.version>
     <wagon-ssh-external.version>3.5.3</wagon-ssh-external.version>
