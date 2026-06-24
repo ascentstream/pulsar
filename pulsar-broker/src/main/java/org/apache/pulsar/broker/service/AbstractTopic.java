@@ -69,6 +69,7 @@ import org.apache.pulsar.broker.service.BrokerServiceException.ProducerFencedExc
 import org.apache.pulsar.broker.service.BrokerServiceException.TopicMigratedException;
 import org.apache.pulsar.broker.service.BrokerServiceException.TopicTerminatedException;
 import org.apache.pulsar.broker.service.persistent.DispatchRateLimiter;
+import org.apache.pulsar.broker.service.persistent.PersistentReplicator;
 import org.apache.pulsar.broker.service.plugin.EntryFilter;
 import org.apache.pulsar.broker.service.schema.SchemaRegistryService;
 import org.apache.pulsar.broker.service.schema.exceptions.IncompatibleSchemaException;
@@ -740,6 +741,19 @@ public abstract class AbstractTopic implements Topic, TopicPolicyListener {
         return null;
     }
 
+    protected boolean hasProducersActive() {
+        return !producers.isEmpty();
+    }
+
+    protected boolean hasActiveReplicators() {
+        for (Replicator replicator : getReplicators().values()) {
+            if (replicator.isConnected()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     protected boolean hasLocalProducers() {
         if (producers.isEmpty()) {
             return false;
@@ -750,6 +764,19 @@ public abstract class AbstractTopic implements Topic, TopicPolicyListener {
             }
         }
         return false;
+    }
+
+    public void disconnectReplicatorsIfNoTrafficAndBacklog() {
+        for (Replicator replicator : getReplicators().values()) {
+            if (replicator instanceof PersistentReplicator persistentReplicator) {
+                persistentReplicator.disconnectIfNoTrafficAndBacklog();
+            }
+        }
+        for (Replicator replicator : getShadowReplicators().values()) {
+            if (replicator instanceof PersistentReplicator persistentReplicator) {
+                persistentReplicator.disconnectIfNoTrafficAndBacklog();
+            }
+        }
     }
 
     @Override
