@@ -245,8 +245,8 @@ public abstract class PersistentReplicator extends AbstractReplicator
             return new ReadLimits(0, 0);
         }
 
-        long readLimitOnMsg = -1;
-        long readLimitOnByte = -1;
+        long readLimitOnMsg;
+        long readLimitOnByte;
 
         // handle rate limit
         if (dispatchRateLimiter.isPresent() && dispatchRateLimiter.get().isDispatchRateLimitingEnabled()) {
@@ -268,6 +268,13 @@ public abstract class PersistentReplicator extends AbstractReplicator
                 }
                 return new ReadLimits(-1, -1);
             }
+            // use given permits if no rate limit configured, otherwise limit to returned rate limiter permits
+            readLimitOnMsg = readLimitOnMsg == -1 ? permits : Math.min(permits, readLimitOnMsg);
+            // use readMaxSizeBytes if no rate limit configured, otherwise limit to returned rate limiter permits
+            readLimitOnByte = readLimitOnByte == -1 ? readMaxSizeBytes : Math.min(readMaxSizeBytes, readLimitOnByte);
+        } else {
+            readLimitOnMsg = permits;
+            readLimitOnByte = readMaxSizeBytes;
         }
 
         if (resourceGroupDispatchRateLimiter.isPresent()) {
@@ -285,17 +292,12 @@ public abstract class PersistentReplicator extends AbstractReplicator
                 }
                 return new ReadLimits(-1, -1);
             }
-            readLimitOnMsg =
-                    readLimitOnMsg == -1 ? rgAvailablePermitsOnMsg : Math.min(readLimitOnMsg, rgAvailablePermitsOnMsg);
-            readLimitOnByte = readLimitOnByte == -1 ? rgAvailablePermitsOnByte :
-                    Math.min(readLimitOnByte, rgAvailablePermitsOnByte);
+            readLimitOnMsg = Math.min(readLimitOnMsg, rgAvailablePermitsOnMsg);
+            readLimitOnByte = Math.min(readLimitOnByte, rgAvailablePermitsOnByte);
         }
 
-        readLimitOnMsg = readLimitOnMsg == -1 ? permits : Math.min(permits, readLimitOnMsg);
-
-        readLimitOnByte =
-                readLimitOnByte == -1 ? readMaxSizeBytes : Math.min(readMaxSizeBytes, readLimitOnByte);
-
+        // limit messages to current read batch size
+        readLimitOnMsg = Math.min(readLimitOnMsg, readBatchSize);
 
         return new ReadLimits((int) readLimitOnMsg, readLimitOnByte);
     }
