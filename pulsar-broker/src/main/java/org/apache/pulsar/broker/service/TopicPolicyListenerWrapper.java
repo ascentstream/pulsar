@@ -26,7 +26,6 @@ import org.apache.pulsar.common.policies.data.TopicPolicies;
 
 /**
  * This TopicPolicyListener is used as a wrapper for the real TopicPolicyListener.
-<<<<<<< HEAD
  * This prevents a race condition in initialization where the topic policy state can change while the topic policy
  * state is being applied to the topic in AbstractTopic#initTopicPolicy(). The impact of the race condition is that the
  * topic policy state would be left inconsistent until another update arrives. This is a rare corner case, but possible.
@@ -36,12 +35,6 @@ import org.apache.pulsar.common.policies.data.TopicPolicies;
  * that AbstractTopic#initTopicPolicy() can be run again -- for example to retry it, which this enables but does not
  * implement. {@link #startInitialization()} begins a new buffering phase and initialization completes at most once per
  * phase. Concurrent initialization phases are not supported; {@code initTopicPolicy} runs are serialized by the caller.
-=======
- * This prevents a race condition in initialization where the topic policy state can change while the
- * topic policy state is being applied to the topic in PersistentTopic#initTopicPolicy() method or in
- * NonPersistentTopic#initialize method. The impact of the race conditions is that the topic policy state would
- * be left in an inconsistent state until another update arrives. This is a rare corner case, but possible.
->>>>>>> 2d7b21d417c ([fix][broker] Prevent topic policy initialization race with a buffering listener wrapper (#26044))
  */
 @Slf4j
 public class TopicPolicyListenerWrapper implements TopicPolicyListener {
@@ -54,19 +47,14 @@ public class TopicPolicyListenerWrapper implements TopicPolicyListener {
     private Optional<TopicPolicies> latestGlobalPolicies;
     private Optional<TopicPolicies> latestLocalPolicies;
     private boolean initialized;
-<<<<<<< HEAD
     // Timestamp when the current initialization phase started, set by startInitialization(). Used only to warn if the
     // phase takes too long (i.e. completeInitialization was never called after policy loading started).
     private long initializationStartedNanos;
-=======
-    private final long createdTimestampNanos = System.nanoTime();
->>>>>>> 2d7b21d417c ([fix][broker] Prevent topic policy initialization race with a buffering listener wrapper (#26044))
     private static final long INITIALIZATION_WARNING_LOG_INTERVAL_NANOS = TimeUnit.SECONDS.toNanos(30);
     private int lastIntervalLogged;
 
     public TopicPolicyListenerWrapper(TopicPolicyListener realTopicListener) {
         this.realTopicListener = realTopicListener;
-<<<<<<< HEAD
         startInitialization();
     }
 
@@ -82,8 +70,6 @@ public class TopicPolicyListenerWrapper implements TopicPolicyListener {
         latestGlobalPolicies = null;
         latestLocalPolicies = null;
         initializationStartedNanos = System.nanoTime();
-=======
->>>>>>> 2d7b21d417c ([fix][broker] Prevent topic policy initialization race with a buffering listener wrapper (#26044))
     }
 
     @Override
@@ -113,7 +99,6 @@ public class TopicPolicyListenerWrapper implements TopicPolicyListener {
 
     /**
      * Complete initialization of the TopicPolicyListenerWrapper and emit the latest policies to the real listener.
-<<<<<<< HEAD
      *
      * @param loadedGlobalPolicies the loaded global policies
      * @param loadedLocalPolicies  the loaded local policies
@@ -142,24 +127,11 @@ public class TopicPolicyListenerWrapper implements TopicPolicyListener {
         emitInitialPolicies(latestLocalPolicies, loadedLocalPolicies);
         emitInitialPolicies(latestGlobalPolicies, loadedGlobalPolicies);
 
-=======
-     * @param loadedGlobalPolicies the loaded global policies
-     * @param loadedLocalPolicies the loaded local policies
-     */
-    public synchronized void completeInitialization(TopicPolicies loadedGlobalPolicies,
-                                                    TopicPolicies loadedLocalPolicies) {
-        // The listener might have received a newer value (or a delete) than the loaded one while the loading
-        // was happening; prefer the latest value received during initialization, falling back to the loaded
-        // value only when nothing was received for that scope.
-        emitInitialPolicies(latestGlobalPolicies, loadedGlobalPolicies);
-        emitInitialPolicies(latestLocalPolicies, loadedLocalPolicies);
->>>>>>> 2d7b21d417c ([fix][broker] Prevent topic policy initialization race with a buffering listener wrapper (#26044))
         latestGlobalPolicies = null;
         latestLocalPolicies = null;
         initialized = true;
     }
 
-<<<<<<< HEAD
     /**
      * Completes initialization with no loaded policies, unless it has already completed. Used as a safety net at the
      * end of {@code initTopicPolicy} so the wrapper always leaves the buffering phase -- even when the listener was not
@@ -170,8 +142,6 @@ public class TopicPolicyListenerWrapper implements TopicPolicyListener {
         completeInitialization(null, null);
     }
 
-=======
->>>>>>> 2d7b21d417c ([fix][broker] Prevent topic policy initialization race with a buffering listener wrapper (#26044))
     private void emitInitialPolicies(Optional<TopicPolicies> latestReceived, TopicPolicies loaded) {
         if (latestReceived != null) {
             // A value (or a delete) was received during initialization; it supersedes the loaded value.
@@ -184,20 +154,12 @@ public class TopicPolicyListenerWrapper implements TopicPolicyListener {
     // warn if the initialization takes too long and updates have been received
     // this helps detect issues where completeInitialization didn't get called after loading policies
     private void maybeLogWarning() {
-<<<<<<< HEAD
         long durationNanos = System.nanoTime() - initializationStartedNanos;
-=======
-        long durationNanos = System.nanoTime() - createdTimestampNanos;
->>>>>>> 2d7b21d417c ([fix][broker] Prevent topic policy initialization race with a buffering listener wrapper (#26044))
         int warningLogIntervalCount = (int) (durationNanos / INITIALIZATION_WARNING_LOG_INTERVAL_NANOS);
         if (warningLogIntervalCount > lastIntervalLogged) {
             log.warn("TopicPolicyUpdate buffered. TopicPolicyListenerWrapper initialization phase took too long. "
                             + "completeInitialization should have been called to complete the phase. "
-<<<<<<< HEAD
                             + "topicPolicyListener={} sinceInitializationStartedMs={}",
-=======
-                            + "topicPolicyListener={} sinceCreationMs={}",
->>>>>>> 2d7b21d417c ([fix][broker] Prevent topic policy initialization race with a buffering listener wrapper (#26044))
                     realTopicListener, TimeUnit.NANOSECONDS.toMillis(durationNanos));
             lastIntervalLogged = warningLogIntervalCount;
         }
