@@ -54,13 +54,13 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
-import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicLongFieldUpdater;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.atomic.AtomicReferenceFieldUpdater;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.function.Function;
+import java.util.function.IntFunction;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import java.util.stream.LongStream;
@@ -113,7 +113,6 @@ import org.apache.pulsar.common.util.DateFormatter;
 import org.apache.pulsar.common.util.FutureUtil;
 import org.apache.pulsar.common.util.collections.LongPairRangeSet;
 import org.apache.pulsar.common.util.collections.LongPairRangeSet.LongPairConsumer;
-import org.apache.pulsar.common.util.collections.LongPairRangeSet.RangeBoundConsumer;
 import org.apache.pulsar.metadata.api.Stat;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
@@ -199,11 +198,8 @@ public class ManagedCursorImpl implements ManagedCursor {
 
     private static final LongPairConsumer<Position> positionRangeConverter = PositionFactory::create;
 
-    private static final RangeBoundConsumer<Position> positionRangeReverseConverter =
-            (position) -> new LongPairRangeSet.LongPair(position.getLedgerId(), position.getEntryId());
-
     private static final LongPairConsumer<PositionRecyclable> recyclePositionRangeConverter = PositionRecyclable::get;
-    protected final RangeSetWrapper<Position> individualDeletedMessages;
+    protected final PositionRangeSet individualDeletedMessages;
 
     // Maintain the deletion status for batch messages
     // (ledgerId, entryId) -> deletion indexes
@@ -366,8 +362,8 @@ public class ManagedCursorImpl implements ManagedCursor {
         this.cursorProperties = Collections.emptyMap();
         this.ledger = ledger;
         this.name = cursorName;
-        this.individualDeletedMessages = new RangeSetWrapper<>(positionRangeConverter,
-                positionRangeReverseConverter, this);
+        this.individualDeletedMessages = new PositionRangeSet(positionRangeConverter,
+                getConfig().isPersistentUnackedRangesWithMultipleEntriesEnabled());
         if (getConfig().isDeletionAtBatchIndexLevelEnabled()) {
             this.batchDeletedIndexes = new ConcurrentSkipListMap<>();
         } else {
@@ -703,22 +699,7 @@ public class ManagedCursorImpl implements ManagedCursor {
             try {
                 Map<Long, long[]> rangeMap = rangeList.stream().collect(Collectors.toMap(LongListMap::getKey,
                         list -> list.getValuesList().stream().mapToLong(i -> i).toArray()));
-                // Guarantee compatability for the config "unackedRangesOpenCacheSetEnabled".
-                if (getConfig().isUnackedRangesOpenCacheSetEnabled()) {
-                    individualDeletedMessages.build(rangeMap);
-                } else {
-                    RangeSetWrapper<Position> rangeSetWrapperV2 = new RangeSetWrapper<>(positionRangeConverter,
-                            positionRangeReverseConverter, true,
-                            getConfig().isPersistentUnackedRangesWithMultipleEntriesEnabled());
-                    rangeSetWrapperV2.build(rangeMap);
-                    rangeSetWrapperV2.forEach(range -> {
-                        individualDeletedMessages.addOpenClosed(range.lowerEndpoint().getLedgerId(),
-                                range.lowerEndpoint().getEntryId(), range.upperEndpoint().getLedgerId(),
-                                range.upperEndpoint().getEntryId());
-                        return true;
-                    });
-                    rangeSetWrapperV2.clear();
-                }
+                individualDeletedMessages.build(rangeMap);
             } catch (Exception e) {
                 log.warn("[{}]-{} Failed to recover individualDeletedMessages from serialized data", ledger.getName(),
                         name, e);
@@ -786,6 +767,15 @@ public class ManagedCursorImpl implements ManagedCursor {
         } finally {
             lock.writeLock().unlock();
         }
+    }
+
+    @VisibleForTesting
+    void recoverIndividualDeletedMessages(int count, IntFunction<MessageRange> accessor) {
+        List<MLDataFormats.MessageRange> individualDeletedMessagesList = new ArrayList<>(count);
+        for (int i = 0; i < count; i++) {
+            individualDeletedMessagesList.add(accessor.apply(i));
+        }
+        recoverIndividualDeletedMessages(individualDeletedMessagesList);
     }
 
     private void recoverBatchDeletedIndexes (
@@ -1320,23 +1310,9 @@ public class ManagedCursorImpl implements ManagedCursor {
         lock.readLock().lock();
         try {
             Range<Position> backlogRange = Range.openClosed(markDeletePosition, lastPosition);
-
-            if (getConfig().isUnackedRangesOpenCacheSetEnabled()) {
-                deletedCount = individualDeletedMessages.cardinality(
-                        backlogRange.lowerEndpoint().getLedgerId(), backlogRange.lowerEndpoint().getEntryId(),
-                        backlogRange.upperEndpoint().getLedgerId(), backlogRange.upperEndpoint().getEntryId());
-            } else {
-                AtomicLong deletedCounter = new AtomicLong(0);
-                individualDeletedMessages.forEach((r) -> {
-                    if (r.isConnected(backlogRange)) {
-                        Range<Position> intersection = r.intersection(backlogRange);
-                        long countInRange = ledger.getNumberOfEntries(intersection);
-                        deletedCounter.addAndGet(countInRange);
-                    }
-                    return true;
-                }, recyclePositionRangeConverter);
-                deletedCount = deletedCounter.get();
-            }
+            deletedCount = individualDeletedMessages.cardinality(
+                    backlogRange.lowerEndpoint().getLedgerId(), backlogRange.lowerEndpoint().getEntryId(),
+                    backlogRange.upperEndpoint().getLedgerId(), backlogRange.upperEndpoint().getEntryId());
         } finally {
             lock.readLock().unlock();
         }
@@ -1894,45 +1870,22 @@ public class ManagedCursorImpl implements ManagedCursor {
             log.debug("[{}] getNumberOfEntries. {} allEntries: {}", ledger.getName(), range, allEntries);
         }
 
-        AtomicLong deletedEntries = new AtomicLong(0);
+        long deletedEntriesCount = 0;
 
         lock.readLock().lock();
         try {
-            if (getConfig().isUnackedRangesOpenCacheSetEnabled()) {
-                int cardinality = individualDeletedMessages.cardinality(
-                        range.lowerEndpoint().getLedgerId(), range.lowerEndpoint().getEntryId(),
-                        range.upperEndpoint().getLedgerId(), range.upperEndpoint().getEntryId());
-                deletedEntries.addAndGet(cardinality);
-            } else {
-                individualDeletedMessages.forEach((r) -> {
-                    try {
-                        if (r.isConnected(range)) {
-                            Range<Position> commonEntries = r.intersection(range);
-                            long commonCount = ledger.getNumberOfEntries(commonEntries);
-                            if (log.isDebugEnabled()) {
-                                log.debug("[{}] [{}] Discounting {} entries for already deleted range {}",
-                                        ledger.getName(), name, commonCount, commonEntries);
-                            }
-                            deletedEntries.addAndGet(commonCount);
-                        }
-                        return true;
-                    } finally {
-                        if (r.lowerEndpoint() instanceof PositionRecyclable) {
-                            ((PositionRecyclable) r.lowerEndpoint()).recycle();
-                            ((PositionRecyclable) r.upperEndpoint()).recycle();
-                        }
-                    }
-                }, recyclePositionRangeConverter);
-            }
+            deletedEntriesCount = individualDeletedMessages.cardinality(
+                    range.lowerEndpoint().getLedgerId(), range.lowerEndpoint().getEntryId(),
+                    range.upperEndpoint().getLedgerId(), range.upperEndpoint().getEntryId());
         } finally {
             lock.readLock().unlock();
         }
 
         if (log.isDebugEnabled()) {
-            log.debug("[{}] Found {} entries - deleted: {}", ledger.getName(), allEntries - deletedEntries.get(),
-                    deletedEntries);
+            log.debug("[{}] Found {} entries - deleted: {}", ledger.getName(), allEntries - deletedEntriesCount,
+                    deletedEntriesCount);
         }
-        return allEntries - deletedEntries.get();
+        return allEntries - deletedEntriesCount;
 
     }
 
@@ -3467,16 +3420,7 @@ public class ManagedCursorImpl implements ManagedCursor {
                 .addAllProperties(buildPropertiesMap(mdEntry.properties));
 
         Map<Long, long[]> internalRanges = null;
-        /**
-         * Cursor will create the {@link #individualDeletedMessages} typed {@link LongPairRangeSet.DefaultRangeSet} if
-         * disabled the config {@link ManagedLedgerConfig#unackedRangesOpenCacheSetEnabled}.
-         * {@link LongPairRangeSet.DefaultRangeSet} never implemented the methods below:
-         *   - {@link LongPairRangeSet#toRanges(int)}, which is used to serialize cursor metadata.
-         *   - {@link LongPairRangeSet#build(Map)}, which is used to deserialize cursor metadata.
-         * Do not enable the feature that https://github.com/apache/pulsar/pull/9292 introduced, to avoid serialization
-         * and deserialization error.
-         */
-        if (getConfig().isUnackedRangesOpenCacheSetEnabled() && getConfig().isPersistIndividualAckAsLongArray()) {
+        if (getConfig().isPersistIndividualAckAsLongArray()) {
             lock.readLock().lock();
             try {
                 internalRanges = individualDeletedMessages.toRanges(getConfig().getMaxUnackedRangesToPersist());
