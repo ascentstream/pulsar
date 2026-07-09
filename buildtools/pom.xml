@@ -31,7 +31,7 @@
 
   <groupId>com.ascentstream.pulsar</groupId>
   <artifactId>buildtools</artifactId>
-  <version>4.0.11.1-226281f-20260624110008-SNAPSHOT</version>
+  <version>4.0.11.1-226281f-20260709031812-SNAPSHOT</version>
   <packaging>jar</packaging>
   <name>Pulsar Build Tools</name>
 
@@ -43,7 +43,7 @@
   </developers>
 
   <properties>
-    <project.build.outputTimestamp>2026-06-24T11:00:23Z</project.build.outputTimestamp>
+    <project.build.outputTimestamp>2026-07-09T03:18:27Z</project.build.outputTimestamp>
     <maven.compiler.source>1.8</maven.compiler.source>
     <maven.compiler.target>1.8</maven.compiler.target>
     <maven.compiler.release>8</maven.compiler.release>
