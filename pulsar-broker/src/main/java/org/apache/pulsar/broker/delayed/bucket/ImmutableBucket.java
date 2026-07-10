@@ -121,9 +121,9 @@ class ImmutableBucket extends Bucket {
                                     bucketId, nextSegmentEntryId, ex);
                         }
                     }), BucketSnapshotPersistenceException.class, MaxRetryTimes)
-                    .thenApply(bucketSnapshotSegments -> {
+                    .thenCompose(bucketSnapshotSegments -> {
                         if (CollectionUtils.isEmpty(bucketSnapshotSegments)) {
-                            return Collections.emptyList();
+                            return CompletableFuture.completedFuture(Collections.emptyList());
                         }
 
                         SnapshotSegment snapshotSegment =
@@ -131,9 +131,11 @@ class ImmutableBucket extends Bucket {
                         List<DelayedIndex> indexList = snapshotSegment.getIndexesList();
                         this.setCurrentSegmentEntryId(nextSegmentEntryId);
                         if (isRecover) {
-                            this.asyncUpdateSnapshotLength();
+                            return this.asyncUpdateSnapshotLength()
+                                    .thenAccept(this::setSnapshotLength)
+                                    .thenApply(__ -> indexList);
                         }
-                        return indexList;
+                        return CompletableFuture.completedFuture(indexList);
                     });
         });
     }
@@ -223,8 +225,6 @@ class ImmutableBucket extends Bucket {
             if (ex != null) {
                 log.error("[{}] Failed to get snapshot length, bucketId: {}, bucketKey: {}",
                         dispatcherName, bucketId, bucketKey(), ex);
-            } else {
-                setSnapshotLength(length);
             }
         });
     }

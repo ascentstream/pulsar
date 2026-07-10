@@ -31,7 +31,6 @@ import java.time.Clock;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.NavigableSet;
@@ -109,6 +108,14 @@ public class BucketDelayedDeliveryTracker extends AbstractDelayedDeliveryTracker
     @Getter
     @VisibleForTesting
     private final RangeMap<Long, ImmutableBucket> immutableBuckets;
+
+    @Getter
+    @VisibleForTesting
+    private final AtomicLong bucketsCount = new AtomicLong(0);
+
+    @Getter
+    @VisibleForTesting
+    private final AtomicLong totalSnapshotLengthBytes = new AtomicLong(0);
 
     private final ConcurrentHashMap<SnapshotKey, ImmutableBucket> snapshotSegmentLastIndexMap;
 
@@ -243,15 +250,19 @@ public class BucketDelayedDeliveryTracker extends AbstractDelayedDeliveryTracker
         for (Map.Entry<Range<Long>, ImmutableBucket> mapEntry : toBeDeletedBucketMap.entrySet()) {
             Range<Long> key = mapEntry.getKey();
             ImmutableBucket immutableBucket = mapEntry.getValue();
-            immutableBucketMap.remove(key);
+            removeBucket(key);
             // delete asynchronously without waiting for completion
             immutableBucket.asyncDeleteBucketSnapshot(stats);
         }
 
         MutableLong numberDelayedMessages = new MutableLong(0);
-        immutableBucketMap.values().forEach(bucket -> {
+        long totalLength = 0;
+        for (ImmutableBucket bucket : immutableBucketMap.values()) {
             numberDelayedMessages.add(bucket.numberBucketDelayedMessages);
-        });
+            totalLength += bucket.getSnapshotLength();
+        }
+        totalSnapshotLengthBytes.set(totalLength);
+        bucketsCount.set(immutableBuckets.asMapOfRanges().size());
 
         log.info("[{}] Recover delayed message index bucket snapshot finish, buckets: {}, numberDelayedMessages: {}",
                 context.getName(), immutableBucketMap.size(), numberDelayedMessages.longValue());
@@ -288,12 +299,16 @@ public class BucketDelayedDeliveryTracker extends AbstractDelayedDeliveryTracker
 
     private synchronized void putAndCleanOverlapRange(Range<Long> range, ImmutableBucket immutableBucket,
                                                       Map<Range<Long>, ImmutableBucket> toBeDeletedBucketMap) {
-        RangeMap<Long, ImmutableBucket> subRangeMap = immutableBuckets.subRangeMap(range);
+        Map<Range<Long>, ImmutableBucket> subRangeMap = immutableBuckets.subRangeMap(range).asMapOfRanges();
         boolean canPut = false;
-        if (!subRangeMap.asMapOfRanges().isEmpty()) {
-            for (Map.Entry<Range<Long>, ImmutableBucket> rangeEntry : subRangeMap.asMapOfRanges().entrySet()) {
-                if (range.encloses(rangeEntry.getKey())) {
-                    toBeDeletedBucketMap.put(rangeEntry.getKey(), rangeEntry.getValue());
+        if (!subRangeMap.isEmpty()) {
+            for (Map.Entry<Range<Long>, ImmutableBucket> rangeEntry : subRangeMap.entrySet()) {
+                // Use original key instead of truncated key for encloses check
+                ImmutableBucket bucket = rangeEntry.getValue();
+                Range<Long> originalKey = Range.closed(bucket.startLedgerId, bucket.endLedgerId);
+
+                if (range.encloses(originalKey)) {
+                    toBeDeletedBucketMap.put(originalKey, bucket);
                     canPut = true;
                 }
             }
@@ -302,7 +317,7 @@ public class BucketDelayedDeliveryTracker extends AbstractDelayedDeliveryTracker
         }
 
         if (canPut) {
-            immutableBuckets.put(range, immutableBucket);
+            putBucket(range, immutableBucket);
         }
     }
 
@@ -329,7 +344,7 @@ public class BucketDelayedDeliveryTracker extends AbstractDelayedDeliveryTracker
                                             long startTime) {
         if (immutableBucketDelayedIndexPair != null) {
             ImmutableBucket immutableBucket = immutableBucketDelayedIndexPair.getLeft();
-            immutableBuckets.put(Range.closed(immutableBucket.startLedgerId, immutableBucket.endLedgerId),
+            putBucket(Range.closed(immutableBucket.startLedgerId, immutableBucket.endLedgerId),
                     immutableBucket);
 
             DelayedIndex lastDelayedIndex = immutableBucketDelayedIndexPair.getRight();
@@ -341,7 +356,12 @@ public class BucketDelayedDeliveryTracker extends AbstractDelayedDeliveryTracker
                 CompletableFuture<Long> future = createFuture.handle((bucketId, ex) -> {
                     if (ex == null) {
                         immutableBucket.setSnapshotSegments(null);
-                        immutableBucket.asyncUpdateSnapshotLength();
+                        immutableBucket.asyncUpdateSnapshotLength()
+                                .thenAccept(newLength -> {
+                                    synchronized (BucketDelayedDeliveryTracker.this) {
+                                        updateBucketSnapshotLength(immutableBucket, newLength);
+                                    }
+                                });
                         log.info("[{}] Create bucket snapshot finish, bucketKey: {}", context.getName(),
                                 immutableBucket.bucketKey());
 
@@ -368,7 +388,7 @@ public class BucketDelayedDeliveryTracker extends AbstractDelayedDeliveryTracker
                         });
 
                         immutableBucket.setCurrentSegmentEntryId(immutableBucket.lastSegmentEntryId);
-                        immutableBuckets.asMapOfRanges().remove(
+                        removeBucket(
                                 Range.closed(immutableBucket.startLedgerId, immutableBucket.endLedgerId));
                         snapshotSegmentLastIndexMap.remove(
                                 new SnapshotKey(lastDelayedIndex.getLedgerId(), lastDelayedIndex.getEntryId()));
@@ -406,7 +426,7 @@ public class BucketDelayedDeliveryTracker extends AbstractDelayedDeliveryTracker
             afterCreateImmutableBucket(immutableBucketDelayedIndexPair, createStartTime);
             lastMutableBucket.resetLastMutableBucketRange();
 
-            if (maxNumBuckets > 0 && immutableBuckets.asMapOfRanges().size() > maxNumBuckets
+            if (maxNumBuckets > 0 && bucketsCount.get() > maxNumBuckets
                     && (trimFuture == null || trimFuture.isDone())) {
                 trimFuture = asyncTrimImmutableBuckets()
                         .thenCompose(ignore -> asyncMergeBucketSnapshot())
@@ -484,11 +504,10 @@ public class BucketDelayedDeliveryTracker extends AbstractDelayedDeliveryTracker
     }
 
     private synchronized CompletableFuture<Void> asyncMergeBucketSnapshot() {
-        List<ImmutableBucket> immutableBucketList = immutableBuckets.asMapOfRanges().values().stream().toList();
-        if (maxNumBuckets <= 0 || immutableBucketList.size() <= maxNumBuckets) {
+        if (maxNumBuckets <= 0 || bucketsCount.get() <= maxNumBuckets) {
             return CompletableFuture.completedFuture(null);
         }
-
+        List<ImmutableBucket> immutableBucketList = immutableBuckets.asMapOfRanges().values().stream().toList();
         List<ImmutableBucket> toBeMergeImmutableBuckets = selectMergedBuckets(immutableBucketList, MAX_MERGE_NUM);
 
         if (toBeMergeImmutableBuckets.isEmpty()) {
@@ -521,7 +540,7 @@ public class BucketDelayedDeliveryTracker extends AbstractDelayedDeliveryTracker
                 stats.recordFailEvent(BucketDelayedMessageIndexStats.Type.merge);
             } else {
                 log.info("[{}] Merge bucket snapshot finish, bucketKeys: {}, bucketNum: {}",
-                        context.getName(), bucketsStr, immutableBuckets.asMapOfRanges().size());
+                        context.getName(), bucketsStr, bucketsCount.get());
 
                 stats.recordSuccessEvent(BucketDelayedMessageIndexStats.Type.merge,
                         System.currentTimeMillis() - mergeStartTime);
@@ -588,8 +607,7 @@ public class BucketDelayedDeliveryTracker extends AbstractDelayedDeliveryTracker
                                     });
 
                             for (ImmutableBucket bucket : buckets) {
-                                immutableBuckets.asMapOfRanges()
-                                        .remove(Range.closed(bucket.startLedgerId, bucket.endLedgerId));
+                                removeBucket(Range.closed(bucket.startLedgerId, bucket.endLedgerId));
                             }
                         }
                     });
@@ -697,8 +715,7 @@ public class BucketDelayedDeliveryTracker extends AbstractDelayedDeliveryTracker
                     synchronized (BucketDelayedDeliveryTracker.this) {
                         this.snapshotSegmentLastIndexMap.remove(snapshotKey);
                         if (CollectionUtils.isEmpty(indexList)) {
-                            immutableBuckets.asMapOfRanges()
-                                    .remove(Range.closed(bucket.startLedgerId, bucket.endLedgerId));
+                            removeBucket(Range.closed(bucket.startLedgerId, bucket.endLedgerId));
                             bucket.asyncDeleteBucketSnapshot(stats);
                             return;
                         }
@@ -817,14 +834,16 @@ public class BucketDelayedDeliveryTracker extends AbstractDelayedDeliveryTracker
     }
 
     private CompletableFuture<Void> cleanImmutableBuckets() {
+        Map<Range<Long>, ImmutableBucket> bucketsToDelete =
+                new HashMap<>(immutableBuckets.asMapOfRanges());
+
         List<CompletableFuture<Void>> futures = new ArrayList<>();
-        Iterator<ImmutableBucket> iterator = immutableBuckets.asMapOfRanges().values().iterator();
-        while (iterator.hasNext()) {
-            ImmutableBucket bucket = iterator.next();
-            futures.add(bucket.clear(stats));
+        bucketsToDelete.forEach((range, bucket) -> {
+            removeBucket(range);
             numberDelayedMessages.addAndGet(-bucket.getNumberBucketDelayedMessages());
-            iterator.remove();
-        }
+            futures.add(bucket.clear(stats));
+        });
+
         return FutureUtil.waitForAll(futures);
     }
 
@@ -848,13 +867,9 @@ public class BucketDelayedDeliveryTracker extends AbstractDelayedDeliveryTracker
 
 
     public Map<String, TopicMetricBean> genTopicMetricMap() {
-        stats.recordNumOfBuckets(immutableBuckets.asMapOfRanges().size() + 1);
+        stats.recordNumOfBuckets((int) (bucketsCount.get() + 1));
         stats.recordDelayedMessageIndexLoaded(this.sharedBucketPriorityQueue.size() + this.lastMutableBucket.size());
-        MutableLong totalSnapshotLength = new MutableLong();
-        immutableBuckets.asMapOfRanges().values().forEach(immutableBucket -> {
-            totalSnapshotLength.add(immutableBucket.getSnapshotLength());
-        });
-        stats.recordBucketSnapshotSizeBytes(totalSnapshotLength.longValue());
+        stats.recordBucketSnapshotSizeBytes(totalSnapshotLengthBytes.get());
         return stats.genTopicMetricMap();
     }
 
@@ -903,7 +918,7 @@ public class BucketDelayedDeliveryTracker extends AbstractDelayedDeliveryTracker
                     }
                     synchronized (this) {
                         snapshotSegmentLastIndexMap.entrySet().removeIf(entry -> entry.getValue() == bucket);
-                        immutableBuckets.remove(range);
+                        removeBucket(range);
                         numberDelayedMessages.addAndGet(-bucket.getNumberBucketDelayedMessages());
                     }
                     return null;
@@ -914,5 +929,36 @@ public class BucketDelayedDeliveryTracker extends AbstractDelayedDeliveryTracker
         ManagedCursor cursor = context.getCursor();
         Position mdp = cursor.getMarkDeletedPosition();
         return mdp == null ? null : mdp.getLedgerId();
+    }
+
+    private void putBucket(Range<Long> range, ImmutableBucket bucket) {
+        long removedLength = immutableBuckets.subRangeMap(range).asMapOfRanges().values().stream()
+                .mapToLong(ImmutableBucket::getSnapshotLength)
+                .sum();
+
+        immutableBuckets.put(range, bucket);
+        bucketsCount.set(immutableBuckets.asMapOfRanges().size());
+        totalSnapshotLengthBytes.addAndGet(bucket.getSnapshotLength() - removedLength);
+    }
+
+    private void removeBucket(Range<Long> range) {
+        // Use exact key matching - all callers should provide exact keys
+        ImmutableBucket bucket = immutableBuckets.asMapOfRanges().get(range);
+
+        if (bucket != null) {
+            // Remove even if snapshot length is 0 (for newly created buckets)
+            immutableBuckets.asMapOfRanges().remove(range);
+            bucketsCount.set(immutableBuckets.asMapOfRanges().size());
+            totalSnapshotLengthBytes.addAndGet(-bucket.getSnapshotLength());
+        }
+    }
+
+    private void updateBucketSnapshotLength(ImmutableBucket bucket, long newLength) {
+        if (!immutableBuckets.asMapOfRanges().containsValue(bucket)) {
+            return;
+        }
+        long oldLength = bucket.getSnapshotLength();
+        bucket.setSnapshotLength(newLength);
+        totalSnapshotLengthBytes.addAndGet(newLength - oldLength);
     }
 }
