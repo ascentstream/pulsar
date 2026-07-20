@@ -106,7 +106,7 @@ class MutableBucket extends Bucket implements AutoCloseable {
                 sharedQueue.add(timestamp, ledgerId, entryId);
             }
 
-            bitMap.computeIfAbsent(ledgerId, k -> LongBitmaps.create()).add(entryId, entryId + 1);
+            bitMap.computeIfAbsent(ledgerId, k -> LongBitmaps.create()).add(entryId);
 
             numMessages++;
 
