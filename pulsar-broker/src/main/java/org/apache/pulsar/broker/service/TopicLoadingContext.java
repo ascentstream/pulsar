@@ -21,19 +21,16 @@ package org.apache.pulsar.broker.service;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.TimeUnit;
-import lombok.Builder;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import lombok.Getter;
 import lombok.Setter;
 import org.apache.pulsar.common.naming.TopicName;
+import org.apache.pulsar.common.util.LatencyTracer;
 import org.jspecify.annotations.Nullable;
 
 @Builder
-public class TopicLoadingContext {
+public class TopicLoadingContext extends LatencyTracer {
 
-    private static final String EXAMPLE_LATENCY_OUTPUTS = "1234 ms (queued: 567)";
-
-    private final long startNs = System.nanoTime();
     @Getter
     private final TopicName topicName;
     @Getter
@@ -44,9 +41,7 @@ public class TopicLoadingContext {
     private  CompletableFuture<Optional<Topic>> topicFuture;
     @Getter
     @Setter
-    @Nullable
-    private Map<String, String> properties;
-    private long polledFromQueueNs = -1L;
+    @Nullable private Map<String, String> properties;
 
     @Getter
     @Setter
@@ -55,21 +50,12 @@ public class TopicLoadingContext {
     @Setter
     private String proxyVersion;
 
-    public void polledFromQueue() {
-        polledFromQueueNs = System.nanoTime();
-    }
-
-    public long latencyMs(long nowInNanos) {
-        return TimeUnit.NANOSECONDS.toMillis(nowInNanos - startNs);
-    }
-
-    public String latencyString(long nowInNanos) {
-        final var builder = new StringBuilder(EXAMPLE_LATENCY_OUTPUTS.length());
-        builder.append(latencyMs(nowInNanos));
-        builder.append(" ms");
-        if (polledFromQueueNs >= 0) {
-            builder.append(" (queued: ").append(latencyMs(polledFromQueueNs)).append(")");
-        }
-        return builder.toString();
+    public TopicLoadingContext(TopicName topicName, boolean createIfMissing,
+                               CompletableFuture<Optional<Topic>> topicFuture) {
+        // The topic loading could be ended asynchronously by a timeout event, so we need a thread safe queue here
+        super(new ConcurrentLinkedQueue<>(), System::nanoTime);
+        this.topicName = topicName;
+        this.createIfMissing = createIfMissing;
+        this.topicFuture = topicFuture;
     }
 }
