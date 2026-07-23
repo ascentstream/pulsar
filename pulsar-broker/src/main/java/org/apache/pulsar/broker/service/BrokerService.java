@@ -26,7 +26,6 @@ import static org.apache.commons.lang3.StringUtils.isNotBlank;
 import static org.apache.pulsar.client.util.RetryMessageUtil.DLQ_GROUP_TOPIC_SUFFIX;
 import static org.apache.pulsar.client.util.RetryMessageUtil.RETRY_GROUP_TOPIC_SUFFIX;
 import static org.apache.pulsar.common.naming.SystemTopicNames.isTransactionInternalName;
-import static org.apache.pulsar.common.util.Runnables.catchingAndLoggingThrowables;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.Queues;
 import com.google.common.util.concurrent.RateLimiter;
@@ -233,11 +232,6 @@ public class BrokerService implements Closeable {
 
     private final Map<String, CompletableFuture<Optional<Topic>>> topics = new ConcurrentHashMap<>();
 
-    // A topic can reach the cache-cleanup path through both its close callback and bundle cleanup.
-    // Keep only one cleanup active for a topic future so re-entrant unload listeners cannot duplicate side effects.
-    private final Set<CompletableFuture<Optional<Topic>>> topicCacheRemovalsInProgress =
-            ConcurrentHashMap.newKeySet();
-
     private final Map<String, PulsarClient> replicationClients = new ConcurrentHashMap<>();
     private final Map<String, PulsarAdmin> clusterAdmins = new ConcurrentHashMap<>();
 
@@ -264,7 +258,6 @@ public class BrokerService implements Closeable {
 
     @Getter
     private final SingleThreadNonConcurrentFixedRateScheduler backlogQuotaChecker;
-    private final SingleThreadNonConcurrentFixedRateScheduler subscriptionBacklogAgeChecker;
 
     protected final AtomicReference<Semaphore> lookupRequestSemaphore;
     @Getter
@@ -297,7 +290,6 @@ public class BrokerService implements Closeable {
             .register();
 
     private final SingleThreadNonConcurrentFixedRateScheduler inactivityMonitor;
-    @Getter
     private final SingleThreadNonConcurrentFixedRateScheduler messageExpiryMonitor;
     private final SingleThreadNonConcurrentFixedRateScheduler compactionMonitor;
     private final SingleThreadNonConcurrentFixedRateScheduler consumedLedgersMonitor;
@@ -397,8 +389,6 @@ public class BrokerService implements Closeable {
                 new SingleThreadNonConcurrentFixedRateScheduler("pulsar-consumed-ledgers-monitor");
         this.backlogQuotaManager = new BacklogQuotaManager(pulsar);
         this.backlogQuotaChecker = new SingleThreadNonConcurrentFixedRateScheduler("pulsar-backlog-quota-checker");
-        this.subscriptionBacklogAgeChecker =
-                new SingleThreadNonConcurrentFixedRateScheduler("pulsar-subscription-backlog-age-checker");
         this.authenticationService = new AuthenticationService(pulsar.getConfiguration(),
                 pulsar.getOpenTelemetry().getOpenTelemetry());
         this.topicFactory = createPersistentTopicFactory();
@@ -661,7 +651,6 @@ public class BrokerService implements Closeable {
         this.startCompactionMonitor();
         this.startConsumedLedgersMonitor();
         this.startBacklogQuotaChecker();
-        this.startSubscriptionBacklogAgeChecker();
         this.updateBrokerPublisherThrottlingMaxRate();
         this.updateBrokerDispatchThrottlingMaxRate();
         this.startCheckReplicationPolicies();
@@ -796,19 +785,6 @@ public class BrokerService implements Closeable {
             log.info("Backlog quota check monitoring is disabled");
         }
 
-    }
-
-    protected void startSubscriptionBacklogAgeChecker() {
-        if (pulsar().getConfiguration().isExposeSubscriptionBacklogAgeInPrometheus()) {
-            final int interval = pulsar().getConfiguration().getBacklogQuotaCheckIntervalInSeconds();
-            log.info("Scheduling a thread to refresh subscription backlog age in background after [{}] seconds",
-                    interval);
-            subscriptionBacklogAgeChecker.scheduleAtFixedRateNonConcurrently(
-                    catchingAndLoggingThrowables(() -> refreshSubscriptionBacklogAge().join()), interval, interval,
-                    TimeUnit.SECONDS);
-        } else {
-            log.info("Subscription backlog age monitoring is disabled");
-        }
     }
 
     public void close() throws IOException {
@@ -958,7 +934,6 @@ public class BrokerService implements Closeable {
                                                 compactionMonitor,
                                                 consumedLedgersMonitor,
                                                 backlogQuotaChecker,
-                                                subscriptionBacklogAgeChecker,
                                                 topicOrderedExecutor,
                                                 deduplicationSnapshotMonitor)
                                         .handle());
@@ -1242,8 +1217,8 @@ public class BrokerService implements Closeable {
                             "Broker is unable to load persistent topic"));
                 }
 
-                final var timeoutSeconds = pulsar.getConfiguration().getTopicLoadTimeoutSeconds();
                 if (context.getTopicFuture() == null) {
+                    final var timeoutSeconds = pulsar.getConfiguration().getTopicLoadTimeoutSeconds();
                     final CompletableFuture<Optional<Topic>> topicFuture = FutureUtil.createFutureWithTimeout(
                             Duration.ofSeconds(timeoutSeconds), executor(),
                             () -> FAILED_TO_LOAD_TOPIC_TIMEOUT_EXCEPTION);
@@ -2006,7 +1981,7 @@ public class BrokerService implements Closeable {
                                         .thenCompose(__ -> context.trace("pre-create compacted sub",
                                                 persistentTopic.preCreateSubscriptionForCompactionIfNeeded()))
                                         .thenCompose(__ -> context.trace("replication",
-                                                persistentTopic.initializeCheckReplication()))
+                                                persistentTopic.checkReplication()))
                                         .thenCompose(v -> context.trace("deduplication",
                                                 persistentTopic.checkDeduplicationStatus()))
                                         .thenRun(() -> {
@@ -2235,10 +2210,6 @@ public class BrokerService implements Closeable {
                     .setPersistIndividualAckAsLongArray(serviceConfig.isManagedLedgerPersistIndividualAckAsLongArray());
             managedLedgerConfig.setPersistentUnackedRangesWithMultipleEntriesEnabled(
                     serviceConfig.isPersistentUnackedRangesWithMultipleEntriesEnabled());
-            managedLedgerConfig.setPersistentUnackedRangesWithPerLedgerEntryEnabled(
-                    serviceConfig.isPersistentUnackedRangesWithPerLedgerEntryEnabled());
-            managedLedgerConfig.setPersistentUnackedRangesMaxEntrySize(
-                    serviceConfig.getPersistentUnackedRangesMaxEntrySize());
             managedLedgerConfig.setMaxUnackedRangesToPersistInMetadataStore(
                     serviceConfig.getManagedLedgerMaxUnackedRangesToPersistInMetadataStore());
             managedLedgerConfig.setMaxEntriesPerLedger(serviceConfig.getManagedLedgerMaxEntriesPerLedger());
@@ -2257,6 +2228,8 @@ public class BrokerService implements Closeable {
             managedLedgerConfig
                     .setAddEntryTimeoutSeconds(serviceConfig.getManagedLedgerAddEntryTimeoutSeconds());
             managedLedgerConfig.setMetadataEnsembleSize(serviceConfig.getManagedLedgerDefaultEnsembleSize());
+            managedLedgerConfig.setUnackedRangesOpenCacheSetEnabled(
+                    serviceConfig.isManagedLedgerUnackedRangesOpenCacheSetEnabled());
             managedLedgerConfig.setMetadataWriteQuorumSize(serviceConfig.getManagedLedgerDefaultWriteQuorum());
             managedLedgerConfig.setMetadataAckQuorumSize(serviceConfig.getManagedLedgerDefaultAckQuorum());
             managedLedgerConfig
@@ -2275,22 +2248,9 @@ public class BrokerService implements Closeable {
             managedLedgerConfig.setInactiveOffloadedLedgerEvictionTime(
                     serviceConfig.getManagedLedgerInactiveOffloadedLedgerEvictionTimeSeconds(),
                     TimeUnit.SECONDS);
-            if (serviceConfig.isCacheEvictionByExpectedReadCount()) {
-                managedLedgerConfig.setCacheEvictionByMarkDeletedPosition(false);
-                managedLedgerConfig.setCacheEvictionByExpectedReadCount(true);
-            } else {
-                managedLedgerConfig.setCacheEvictionByMarkDeletedPosition(
-                        serviceConfig.isCacheEvictionByMarkDeletedPosition());
-                managedLedgerConfig.setCacheEvictionByExpectedReadCount(false);
-            }
-            Long continueCachingAddedEntriesAfterLastActiveCursorLeavesMillis =
-                    serviceConfig.getManagedLedgerContinueCachingAddedEntriesAfterLastActiveCursorLeavesMillis();
-            // default to 2 * managedLedgerCacheEvictionTimeThresholdMillis if the value is unset
-            managedLedgerConfig.setContinueCachingAddedEntriesAfterLastActiveCursorLeavesMillis(
-                    continueCachingAddedEntriesAfterLastActiveCursorLeavesMillis != null
-                            ? continueCachingAddedEntriesAfterLastActiveCursorLeavesMillis
-                            : 2 * serviceConfig.getManagedLedgerCacheEvictionTimeThresholdMillis());
-            managedLedgerConfig.setBatchReadEnabled(serviceConfig.isManagedLedgerBatchReadEnabled());
+
+            managedLedgerConfig.setCacheEvictionByMarkDeletedPosition(
+                    serviceConfig.isCacheEvictionByMarkDeletedPosition());
             managedLedgerConfig.setMinimumBacklogCursorsForCaching(
                     serviceConfig.getManagedLedgerMinimumBacklogCursorsForCaching());
             managedLedgerConfig.setMinimumBacklogEntriesForCaching(
@@ -2540,19 +2500,6 @@ public class BrokerService implements Closeable {
         });
     }
 
-    public CompletableFuture<Void> refreshSubscriptionBacklogAge() {
-        if (!pulsar.getConfiguration().isExposeSubscriptionBacklogAgeInPrometheus()) {
-            return CompletableFuture.completedFuture(null);
-        }
-
-        List<CompletableFuture<Void>> futures = new ArrayList<>();
-        forEachPersistentTopic(topic -> futures.add(topic.updateSubscriptionOldPositionInfo()));
-        return FutureUtil.waitForAll(futures).exceptionally(throwable -> {
-            log.warn("Error when refreshSubscriptionBacklogAge()", throwable);
-            return null;
-        });
-    }
-
     public CompletableFuture<Boolean> isTopicNsOwnedByBrokerAsync(TopicName topicName) {
         return pulsar.getNamespaceService().isServiceUnitOwnedAsync(topicName)
                 .handle((hasOwnership, t) -> {
@@ -2672,19 +2619,13 @@ public class BrokerService implements Closeable {
     }
 
     public void cleanUnloadedTopicFromCache(NamespaceBundle serviceUnit) {
-        topics.forEach((topic, topicFuture) -> {
+        for (String topic : topics.keySet()) {
             TopicName topicName = TopicName.get(topic);
-            Optional<Topic> topicRef = extractTopic(topicFuture);
-            // The bundle cleanup should only remove topics already fenced by close/unload.
-            if (serviceUnit.includes(topicName) && topicRef.isPresent() && isTopicBeingUnloaded(topicRef.get())) {
+            if (serviceUnit.includes(topicName) && getTopicReference(topic).isPresent()) {
                 log.info("[{}][{}] Clean unloaded topic from cache.", serviceUnit.toString(), topic);
-                removeTopicFromCache(topicName.toString(), serviceUnit, topicFuture);
+                pulsar.getBrokerService().removeTopicFromCache(topicName.toString(), serviceUnit, null);
             }
-        });
-    }
-
-    private boolean isTopicBeingUnloaded(Topic topic) {
-        return topic instanceof AbstractTopic abstractTopic && abstractTopic.isFenced();
+        }
     }
 
     public AuthorizationService getAuthorizationService() {
@@ -2693,8 +2634,7 @@ public class BrokerService implements Closeable {
 
     /**
      * Removes the topic from the cache only if the topicName and associated createFuture match exactly.
-     * The TopicEvent.UNLOAD BEFORE event is triggered while the matching cache entry is still present;
-     * the SUCCESS event is triggered after it has been removed.
+     * The TopicEvent.UNLOAD event will be triggered before and after removal.
      *
      * @param topic The topic to be removed.
      * @return A CompletableFuture that completes when the operation is done.
@@ -2709,71 +2649,45 @@ public class BrokerService implements Closeable {
 
     private void removeTopicFromCache(String topic, NamespaceBundle namespaceBundle,
                                      CompletableFuture<Optional<Topic>> createTopicFuture) {
+        String bundleName = namespaceBundle.toString();
+        String namespaceName = TopicName.get(topic).getNamespaceObject().toString();
+
+        topicEventsDispatcher.newEvent(topic, TopicEvent.UNLOAD).stage(EventStage.BEFORE).dispatch();
+
+        synchronized (multiLayerTopicsMap) {
+            final var namespaceMap = multiLayerTopicsMap.get(namespaceName);
+            if (namespaceMap != null) {
+                final var bundleMap = namespaceMap.get(bundleName);
+                if (bundleMap != null) {
+                    bundleMap.remove(topic);
+                    if (bundleMap.isEmpty()) {
+                        namespaceMap.remove(bundleName);
+                    }
+                }
+
+                if (namespaceMap.isEmpty()) {
+                    multiLayerTopicsMap.remove(namespaceName);
+                    final ClusterReplicationMetrics clusterReplicationMetrics = pulsarStats
+                            .getClusterReplicationMetrics();
+                    replicationClients.forEach((cluster, client) -> {
+                        clusterReplicationMetrics.remove(clusterReplicationMetrics.getKeyName(namespaceName,
+                                cluster));
+                    });
+                }
+            }
+        }
+
         if (createTopicFuture == null) {
-            if (log.isDebugEnabled()) {
-                log.debug("[{}] Skip removing topic from cache without its expected future.", topic);
-            }
-            return;
+            topics.remove(topic);
+        } else {
+            topics.remove(topic, createTopicFuture);
         }
-        if (!topicCacheRemovalsInProgress.add(createTopicFuture)) {
-            if (log.isDebugEnabled()) {
-                log.debug("[{}] Skip removing topic from cache since cleanup is already in progress.", topic);
-            }
-            return;
+
+        Compactor compactor = pulsar.getNullableCompactor();
+        if (compactor != null) {
+            compactor.getStats().removeTopic(topic);
         }
-        try {
-            if (topics.get(topic) != createTopicFuture) {
-                // A stale close/unload callback must not emit unload side effects for a superseded topic future.
-                if (log.isDebugEnabled()) {
-                    log.debug("[{}] Skip removing topic from cache since it was already removed or superseded.",
-                            topic);
-                }
-                return;
-            }
-            String bundleName = namespaceBundle.toString();
-            String namespaceName = TopicName.get(topic).getNamespaceObject().toString();
-
-            topicEventsDispatcher.newEvent(topic, TopicEvent.UNLOAD).stage(EventStage.BEFORE).dispatch();
-
-            synchronized (multiLayerTopicsMap) {
-                final var namespaceMap = multiLayerTopicsMap.get(namespaceName);
-                if (namespaceMap != null) {
-                    final var bundleMap = namespaceMap.get(bundleName);
-                    if (bundleMap != null) {
-                        bundleMap.remove(topic);
-                        if (bundleMap.isEmpty()) {
-                            namespaceMap.remove(bundleName);
-                        }
-                    }
-
-                    if (namespaceMap.isEmpty()) {
-                        multiLayerTopicsMap.remove(namespaceName);
-                        final ClusterReplicationMetrics clusterReplicationMetrics = pulsarStats
-                                .getClusterReplicationMetrics();
-                        replicationClients.forEach((cluster, client) -> {
-                            clusterReplicationMetrics.remove(clusterReplicationMetrics.getKeyName(namespaceName,
-                                    cluster));
-                        });
-                    }
-                }
-            }
-
-            Compactor compactor = pulsar.getNullableCompactor();
-            if (compactor != null) {
-                compactor.getStats().removeTopic(topic);
-            }
-
-            if (!topics.remove(topic, createTopicFuture)) {
-                if (log.isDebugEnabled()) {
-                    log.debug("[{}] Skip unload success because the cache entry was already removed or superseded.",
-                            topic);
-                }
-                return;
-            }
-            topicEventsDispatcher.notify(topic, TopicEvent.UNLOAD, EventStage.SUCCESS);
-        } finally {
-            topicCacheRemovalsInProgress.remove(createTopicFuture);
-        }
+        topicEventsDispatcher.newEvent(topic, TopicEvent.UNLOAD).dispatch();
     }
 
     public long getNumberOfNamespaceBundles() {
@@ -3127,20 +3041,7 @@ public class BrokerService implements Closeable {
                     defaultManagedLedgerFactory.updateCacheEvictionTimeThreshold(MILLISECONDS
                             .toNanos((long) cacheEvictionTimeThresholdMills));
                 });
-        //  add listener to notify broker managedLedgerCacheEvictionExtendTTLOfEntriesWithRemainingExpectedReadsMaxTimes
-        //  dynamic config
-        registerConfigurationListener("managedLedgerCacheEvictionExtendTTLOfEntriesWithRemainingExpectedReadsMaxTimes",
-                (managedLedgerCacheEvictionMaxRequeueCount) -> {
-                    defaultManagedLedgerFactory.updateCacheEvictionExtendTTLOfEntriesWithRemainingExpectedReadsMaxTimes(
-                            (int) managedLedgerCacheEvictionMaxRequeueCount);
-                });
-        //  add listener to notify broker managedLedgerCacheEvictionExtendTTLOfRecentlyAccessed
-        //  dynamic config
-        registerConfigurationListener("managedLedgerCacheEvictionExtendTTLOfRecentlyAccessed",
-                (extendTTLOfRecentlyAccessed) -> {
-                    defaultManagedLedgerFactory.updateCacheEvictionExtendTTLOfRecentlyAccessed(
-                            (boolean) extendTTLOfRecentlyAccessed);
-                });
+
 
         // add listener to update message-dispatch-rate in msg for topic
         registerConfigurationListener("dispatchThrottlingRatePerTopicInMsg", (dispatchRatePerTopicInMsg) -> {
@@ -3520,7 +3421,7 @@ public class BrokerService implements Closeable {
             return;
         }
 
-        pendingTopic.trace("queued");
+        pendingTopic.polledFromQueue();
         final String topic = pendingTopic.getTopicName().toString();
         checkTopicNsOwnership(topic).thenRun(() -> {
             CompletableFuture<Optional<Topic>> pendingFuture = pendingTopic.getTopicFuture();
