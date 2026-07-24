@@ -4071,7 +4071,7 @@ public class ManagedLedgerImpl implements ManagedLedger, CreateCallback {
                                             if (existing.hasTimestamp()) {
                                                 builder.setTimestamp(existing.getTimestamp());
                                             }
-                                            return builder.build();
+                                            return builder.build(); ([fix][ml] Preserve ledger entries/size when transformLedgerInfo callback completes after a concurrent close (#26228))
                                         });
                                         unlockingPromise.complete(null);
                                     }
