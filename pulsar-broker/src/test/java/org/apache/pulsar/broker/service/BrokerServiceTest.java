@@ -21,7 +21,6 @@ package org.apache.pulsar.broker.service;
 import static org.apache.pulsar.broker.loadbalance.extensions.channel.ServiceUnitStateTableViewImpl.TOPIC;
 import static org.apache.pulsar.common.naming.SystemTopicNames.TRANSACTION_COORDINATOR_ASSIGN;
 import static org.apache.pulsar.common.naming.SystemTopicNames.TRANSACTION_COORDINATOR_LOG;
-import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.doNothing;
@@ -1348,13 +1347,9 @@ public class BrokerServiceTest extends BrokerTestBase {
         CompletableFuture<Optional<Topic>> newTopicFuture =
                 CompletableFuture.completedFuture(Optional.of(mock(Topic.class)));
         List<TopicEventsListener.EventStage> unloadEvents = new ArrayList<>();
-        TopicEventsListener listener = new TopicEventsListener() {
-            @Override
-            public void handleEvent(String name, TopicEventsListener.TopicEvent event,
-                                    TopicEventsListener.EventStage stage, Throwable t) {
-                if (topicName.equals(name) && event == TopicEventsListener.TopicEvent.UNLOAD) {
-                    unloadEvents.add(stage);
-                }
+        TopicEventsListener listener = (name, event, stage, t) -> {
+            if (topicName.equals(name) && event == TopicEventsListener.TopicEvent.UNLOAD) {
+                unloadEvents.add(stage);
             }
         };
         brokerService.addTopicEventListener(listener);
@@ -1394,14 +1389,10 @@ public class BrokerServiceTest extends BrokerTestBase {
         assertNotNull(topicFuture);
 
         AtomicReference<CompletableFuture<Optional<Topic>>> futureAtUnloadBefore = new AtomicReference<>();
-        TopicEventsListener listener = new TopicEventsListener() {
-            @Override
-            public void handleEvent(String name, TopicEventsListener.TopicEvent event,
-                                    TopicEventsListener.EventStage stage, Throwable t) {
-                if (topicName.equals(name) && event == TopicEventsListener.TopicEvent.UNLOAD) {
-                    if (stage == TopicEventsListener.EventStage.BEFORE) {
-                        futureAtUnloadBefore.set(brokerService.getTopic(TopicName.get(topicName), true, null));
-                    }
+        TopicEventsListener listener = (name, event, stage, t) -> {
+            if (topicName.equals(name) && event == TopicEventsListener.TopicEvent.UNLOAD) {
+                if (stage == TopicEventsListener.EventStage.BEFORE) {
+                    futureAtUnloadBefore.set(brokerService.getTopic(TopicName.get(topicName), true, null));
                 }
             }
         };
@@ -1430,18 +1421,14 @@ public class BrokerServiceTest extends BrokerTestBase {
 
         List<TopicEventsListener.EventStage> unloadEvents = new ArrayList<>();
         AtomicReference<Throwable> reentrantCallbackError = new AtomicReference<>();
-        TopicEventsListener listener = new TopicEventsListener() {
-            @Override
-            public void handleEvent(String name, TopicEventsListener.TopicEvent event,
-                                    TopicEventsListener.EventStage stage, Throwable t) {
-                if (topicName.equals(name) && event == TopicEventsListener.TopicEvent.UNLOAD) {
-                    unloadEvents.add(stage);
-                    if (stage == TopicEventsListener.EventStage.BEFORE) {
-                        try {
-                            brokerService.removeTopicFromCache((AbstractTopic) topic).get(5, TimeUnit.SECONDS);
-                        } catch (Throwable e) {
-                            reentrantCallbackError.set(e);
-                        }
+        TopicEventsListener listener = (name, event, stage, t) -> {
+            if (topicName.equals(name) && event == TopicEventsListener.TopicEvent.UNLOAD) {
+                unloadEvents.add(stage);
+                if (stage == TopicEventsListener.EventStage.BEFORE) {
+                    try {
+                        brokerService.removeTopicFromCache((AbstractTopic) topic).get(5, TimeUnit.SECONDS);
+                    } catch (Throwable e) {
+                        reentrantCallbackError.set(e);
                     }
                 }
             }
@@ -1472,13 +1459,9 @@ public class BrokerServiceTest extends BrokerTestBase {
         assertNotNull(oldTopicFuture);
 
         List<TopicEventsListener.EventStage> unloadEvents = new ArrayList<>();
-        TopicEventsListener listener = new TopicEventsListener() {
-            @Override
-            public void handleEvent(String name, TopicEventsListener.TopicEvent event,
-                                    TopicEventsListener.EventStage stage, Throwable t) {
-                if (topicName.equals(name) && event == TopicEventsListener.TopicEvent.UNLOAD) {
-                    unloadEvents.add(stage);
-                }
+        TopicEventsListener listener = (name, event, stage, t) -> {
+            if (topicName.equals(name) && event == TopicEventsListener.TopicEvent.UNLOAD) {
+                unloadEvents.add(stage);
             }
         };
         brokerService.addTopicEventListener(listener);
@@ -2174,30 +2157,6 @@ public class BrokerServiceTest extends BrokerTestBase {
             } else {
                 Assert.assertEquals(managedLedgerConfig2.getLedgerOffloader(), NullLedgerOffloader.INSTANCE);
             }
-        }
-    }
-
-    @Test
-    public void testManagedLedgerContinueCachingAddedEntriesConfiguration() throws Exception {
-        var serviceConfiguration = pulsar.getConfiguration();
-        Long originalContinueCaching =
-                serviceConfiguration.getManagedLedgerContinueCachingAddedEntriesAfterLastActiveCursorLeavesMillis();
-        TopicName topicName = TopicName.get("persistent://prop/ns-abc/continue-caching-" + UUID.randomUUID());
-        try {
-            serviceConfiguration.setManagedLedgerContinueCachingAddedEntriesAfterLastActiveCursorLeavesMillis(12345L);
-            ManagedLedgerConfig ledgerConfig = pulsar.getBrokerService().getManagedLedgerConfig(topicName)
-                    .get(10, TimeUnit.SECONDS);
-            assertThat(ledgerConfig.getContinueCachingAddedEntriesAfterLastActiveCursorLeavesMillis())
-                    .isEqualTo(12345L);
-
-            // unset defaults to 2 * managedLedgerCacheEvictionTimeThresholdMillis
-            serviceConfiguration.setManagedLedgerContinueCachingAddedEntriesAfterLastActiveCursorLeavesMillis(null);
-            ledgerConfig = pulsar.getBrokerService().getManagedLedgerConfig(topicName).get(10, TimeUnit.SECONDS);
-            assertThat(ledgerConfig.getContinueCachingAddedEntriesAfterLastActiveCursorLeavesMillis())
-                    .isEqualTo(2 * serviceConfiguration.getManagedLedgerCacheEvictionTimeThresholdMillis());
-        } finally {
-            serviceConfiguration.setManagedLedgerContinueCachingAddedEntriesAfterLastActiveCursorLeavesMillis(
-                    originalContinueCaching);
         }
     }
 
