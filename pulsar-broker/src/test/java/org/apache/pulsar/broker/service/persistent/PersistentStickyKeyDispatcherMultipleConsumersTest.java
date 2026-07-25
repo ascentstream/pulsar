@@ -463,11 +463,6 @@ public class PersistentStickyKeyDispatcherMultipleConsumersTest {
         allEntries.forEach(Entry::release);
     }
 
-    @DataProvider(name = "allowOutOfOrderDelivery")
-    private Object[][] allowOutOfOrderDelivery() {
-        return new Object[][] { { false }, { true } };
-    }
-
     /**
      * Reproduces the dispatch stall behind the flaky
      * KeySharedSubscriptionTest.testContinueDispatchMessagesWhenMessageDelayed (issue #21554).
@@ -478,15 +473,14 @@ public class PersistentStickyKeyDispatcherMultipleConsumersTest {
      * in the replay queue for consumers with available permits were then stuck until an unrelated event, such as a
      * consumer flow request, triggered another read.
      */
-    @Test(dataProvider = "allowOutOfOrderDelivery", timeOut = 30000)
-    public void testLookAheadNotEngagedWhenCursorHasNoMoreEntries(boolean allowOutOfOrderDelivery) throws Exception {
+    @Test(timeOut = 30000)
+    public void testLookAheadNotEngagedWhenCursorHasNoMoreEntries() throws Exception {
         persistentDispatcher.close();
 
         // the mocked executor doesn't support schedule(), so run the rescheduled read directly
         persistentDispatcher = new PersistentStickyKeyDispatcherMultipleConsumers(
                 topicMock, cursorMock, subscriptionMock, configMock,
-                new KeySharedMeta().setKeySharedMode(KeySharedMode.AUTO_SPLIT)
-                        .setAllowOutOfOrderDelivery(allowOutOfOrderDelivery)) {
+                new KeySharedMeta().setKeySharedMode(KeySharedMode.AUTO_SPLIT)) {
             @Override
             protected void reScheduleReadInMs(long readAfterMs) {
                 orderedExecutor.execute(this::readMoreEntries);
@@ -566,56 +560,6 @@ public class PersistentStickyKeyDispatcherMultipleConsumersTest {
                 "The replayed message for consumer1 with available permits should have been dispatched");
 
         allEntries.forEach(Entry::release);
-    }
-
-    @Test(timeOut = 10000)
-    public void testOutOfOrderReplayFilterDoesNotSpendReadBudgetOnConsumerWithoutPermits() {
-        persistentDispatcher.close();
-        persistentDispatcher = new PersistentStickyKeyDispatcherMultipleConsumers(
-                topicMock, cursorMock, subscriptionMock, configMock,
-                new KeySharedMeta().setKeySharedMode(KeySharedMode.AUTO_SPLIT)
-                        .setAllowOutOfOrderDelivery(true));
-
-        persistentDispatcher.addConsumer(consumerMock).join();
-
-        Consumer slowConsumer = createMockConsumer();
-        doReturn("consumer2").when(slowConsumer).consumerName();
-        doReturn(0).when(slowConsumer).getAvailablePermits();
-        persistentDispatcher.addConsumer(slowConsumer).join();
-
-        StickyKeyConsumerSelector selector = persistentDispatcher.getSelector();
-        String keyForConsumer = generateKeyForConsumer(selector, consumerMock);
-        String keyForSlowConsumer = generateKeyForConsumer(selector, slowConsumer);
-        Entry entry1 = createEntry(1, 1, "message1", 1, keyForSlowConsumer);
-        Entry entry2 = createEntry(1, 2, "message2", 2, keyForSlowConsumer);
-        Entry entry3 = createEntry(1, 3, "message3", 3, keyForConsumer);
-        List<Entry> entries = List.of(entry1, entry2, entry3);
-
-        try {
-            for (Entry entry : entries) {
-                ((EntryImpl) entry).retain();
-                persistentDispatcher.addEntryToReplay(entry);
-            }
-
-            Set<Position> positions = persistentDispatcher.getMessagesToReplayNow(1, Long.MAX_VALUE);
-            assertThat(positions).containsExactly(entry3.getPosition());
-        } finally {
-            entries.forEach(Entry::release);
-        }
-    }
-
-    @Test(timeOut = 10000)
-    public void testOutOfOrderReplayFilterIncludesPositionWithoutStickyKeyHash() {
-        persistentDispatcher.close();
-        persistentDispatcher = new PersistentStickyKeyDispatcherMultipleConsumers(
-                topicMock, cursorMock, subscriptionMock, configMock,
-                new KeySharedMeta().setKeySharedMode(KeySharedMode.AUTO_SPLIT)
-                        .setAllowOutOfOrderDelivery(true));
-
-        assertTrue(persistentDispatcher.addMessageToReplay(1, 1));
-
-        Set<Position> positions = persistentDispatcher.getMessagesToReplayNow(1, Long.MAX_VALUE);
-        assertThat(positions).containsExactly(PositionFactory.create(1, 1));
     }
 
     @Test(timeOut = 30000)
