@@ -43,7 +43,11 @@ jobs:
       docs_only: ${{ steps.check_changes.outputs.docs_only }}
     steps:
       - name: checkout
+<<<<<<< HEAD
         uses: actions/checkout@v7
+=======
+        uses: actions/checkout@v4
+>>>>>>> 2f7ee5d0fdf ([improve][ci] Run the Python function instance tests in CI (#26399))
 
       - name: Detect changed files
         id: changes
@@ -73,13 +77,21 @@ jobs:
 
     steps:
       - name: checkout
+<<<<<<< HEAD
         uses: actions/checkout@v7
+=======
+        uses: actions/checkout@v4
+>>>>>>> 2f7ee5d0fdf ([improve][ci] Run the Python function instance tests in CI (#26399))
 
       - name: Tune Runner VM
         uses: ./.github/actions/tune-runner-vm
 
       - name: Set up Python
+<<<<<<< HEAD
         uses: actions/setup-python@v7
+=======
+        uses: actions/setup-python@v5
+>>>>>>> 2f7ee5d0fdf ([improve][ci] Run the Python function instance tests in CI (#26399))
         with:
           python-version: ${{ matrix.python-version }}
 
