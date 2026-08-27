@@ -216,9 +216,11 @@ public class TripleLongPriorityQueueTest {
                     boolean doAdd = oracle.isEmpty() || rng.nextBoolean();
                     if (doAdd) {
                         // ~10% chance of same-prefix (small n1 range) to exercise tie-breaking
-                        long n1 = rng.nextInt(100) < 10 ? rng.nextLong(20) : rng.nextLong(1_000_000);
-                        long n2 = rng.nextLong(100);
-                        long n3 = rng.nextLong(1_000_000);
+                        // note: use nextInt instead of RandomGenerator.nextLong(long) because
+                        // this module is compiled with the client compiler release level
+                        long n1 = rng.nextInt(100) < 10 ? rng.nextInt(20) : rng.nextInt(1_000_000);
+                        long n2 = rng.nextInt(100);
+                        long n3 = rng.nextInt(1_000_000);
                         oracle.add(new long[]{n1, n2, n3});
                         pq.add(n1, n2, n3);
                     } else {
