@@ -2482,7 +2482,7 @@ public class ServiceConfiguration implements PulsarConfiguration {
     @FieldContext(category = CATEGORY_STORAGE_ML,
             doc = "When storing acknowledgement state, choose a more compact serialization format that stores"
                     + " individual acknowledgements as a bitmap which is serialized to an array of long values.")
-    private boolean managedLedgerPersistIndividualAckAsLongArray = true;
+    private boolean managedLedgerPersistIndividualAckAsLongArray = false;
 
     @FieldContext(
         category = CATEGORY_STORAGE_ML,
