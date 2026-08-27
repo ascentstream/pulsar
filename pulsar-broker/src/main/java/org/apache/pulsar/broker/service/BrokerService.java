@@ -1241,8 +1241,8 @@ public class BrokerService implements Closeable {
                             "Broker is unable to load persistent topic"));
                 }
 
+                final var timeoutSeconds = pulsar.getConfiguration().getTopicLoadTimeoutSeconds();
                 if (context.getTopicFuture() == null) {
-                    final var timeoutSeconds = pulsar.getConfiguration().getTopicLoadTimeoutSeconds();
                     final CompletableFuture<Optional<Topic>> topicFuture = FutureUtil.createFutureWithTimeout(
                             Duration.ofSeconds(timeoutSeconds), executor(),
                             () -> FAILED_TO_LOAD_TOPIC_TIMEOUT_EXCEPTION);
@@ -3491,7 +3491,7 @@ public class BrokerService implements Closeable {
             return;
         }
 
-        pendingTopic.polledFromQueue();
+        pendingTopic.trace("queued");
         final String topic = pendingTopic.getTopicName().toString();
         checkTopicNsOwnership(topic).thenRun(() -> {
             CompletableFuture<Optional<Topic>> pendingFuture = pendingTopic.getTopicFuture();

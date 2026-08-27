@@ -1347,9 +1347,13 @@ public class BrokerServiceTest extends BrokerTestBase {
         CompletableFuture<Optional<Topic>> newTopicFuture =
                 CompletableFuture.completedFuture(Optional.of(mock(Topic.class)));
         List<TopicEventsListener.EventStage> unloadEvents = new ArrayList<>();
-        TopicEventsListener listener = (name, event, stage, t) -> {
-            if (topicName.equals(name) && event == TopicEventsListener.TopicEvent.UNLOAD) {
-                unloadEvents.add(stage);
+        TopicEventsListener listener = new TopicEventsListener() {
+            @Override
+            public void handleEvent(String name, TopicEventsListener.TopicEvent event,
+                                    TopicEventsListener.EventStage stage, Throwable t) {
+                if (topicName.equals(name) && event == TopicEventsListener.TopicEvent.UNLOAD) {
+                    unloadEvents.add(stage);
+                }
             }
         };
         brokerService.addTopicEventListener(listener);
@@ -1389,10 +1393,14 @@ public class BrokerServiceTest extends BrokerTestBase {
         assertNotNull(topicFuture);
 
         AtomicReference<CompletableFuture<Optional<Topic>>> futureAtUnloadBefore = new AtomicReference<>();
-        TopicEventsListener listener = (name, event, stage, t) -> {
-            if (topicName.equals(name) && event == TopicEventsListener.TopicEvent.UNLOAD) {
-                if (stage == TopicEventsListener.EventStage.BEFORE) {
-                    futureAtUnloadBefore.set(brokerService.getTopic(TopicName.get(topicName), true, null));
+        TopicEventsListener listener = new TopicEventsListener() {
+            @Override
+            public void handleEvent(String name, TopicEventsListener.TopicEvent event,
+                                    TopicEventsListener.EventStage stage, Throwable t) {
+                if (topicName.equals(name) && event == TopicEventsListener.TopicEvent.UNLOAD) {
+                    if (stage == TopicEventsListener.EventStage.BEFORE) {
+                        futureAtUnloadBefore.set(brokerService.getTopic(TopicName.get(topicName), true, null));
+                    }
                 }
             }
         };
@@ -1421,14 +1429,18 @@ public class BrokerServiceTest extends BrokerTestBase {
 
         List<TopicEventsListener.EventStage> unloadEvents = new ArrayList<>();
         AtomicReference<Throwable> reentrantCallbackError = new AtomicReference<>();
-        TopicEventsListener listener = (name, event, stage, t) -> {
-            if (topicName.equals(name) && event == TopicEventsListener.TopicEvent.UNLOAD) {
-                unloadEvents.add(stage);
-                if (stage == TopicEventsListener.EventStage.BEFORE) {
-                    try {
-                        brokerService.removeTopicFromCache((AbstractTopic) topic).get(5, TimeUnit.SECONDS);
-                    } catch (Throwable e) {
-                        reentrantCallbackError.set(e);
+        TopicEventsListener listener = new TopicEventsListener() {
+            @Override
+            public void handleEvent(String name, TopicEventsListener.TopicEvent event,
+                                    TopicEventsListener.EventStage stage, Throwable t) {
+                if (topicName.equals(name) && event == TopicEventsListener.TopicEvent.UNLOAD) {
+                    unloadEvents.add(stage);
+                    if (stage == TopicEventsListener.EventStage.BEFORE) {
+                        try {
+                            brokerService.removeTopicFromCache((AbstractTopic) topic).get(5, TimeUnit.SECONDS);
+                        } catch (Throwable e) {
+                            reentrantCallbackError.set(e);
+                        }
                     }
                 }
             }
@@ -1459,9 +1471,13 @@ public class BrokerServiceTest extends BrokerTestBase {
         assertNotNull(oldTopicFuture);
 
         List<TopicEventsListener.EventStage> unloadEvents = new ArrayList<>();
-        TopicEventsListener listener = (name, event, stage, t) -> {
-            if (topicName.equals(name) && event == TopicEventsListener.TopicEvent.UNLOAD) {
-                unloadEvents.add(stage);
+        TopicEventsListener listener = new TopicEventsListener() {
+            @Override
+            public void handleEvent(String name, TopicEventsListener.TopicEvent event,
+                                    TopicEventsListener.EventStage stage, Throwable t) {
+                if (topicName.equals(name) && event == TopicEventsListener.TopicEvent.UNLOAD) {
+                    unloadEvents.add(stage);
+                }
             }
         };
         brokerService.addTopicEventListener(listener);

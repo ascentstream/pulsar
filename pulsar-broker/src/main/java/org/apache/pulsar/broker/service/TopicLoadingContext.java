@@ -22,13 +22,13 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import lombok.Builder;
 import lombok.Getter;
 import lombok.Setter;
 import org.apache.pulsar.common.naming.TopicName;
 import org.apache.pulsar.common.util.LatencyTracer;
 import org.jspecify.annotations.Nullable;
 
-@Builder
 public class TopicLoadingContext extends LatencyTracer {
 
     @Getter
@@ -38,7 +38,7 @@ public class TopicLoadingContext extends LatencyTracer {
     private boolean createIfMissing;
     @Getter
     @Setter
-    private  CompletableFuture<Optional<Topic>> topicFuture;
+    private CompletableFuture<Optional<Topic>> topicFuture;
     @Getter
     @Setter
     @Nullable private Map<String, String> properties;
@@ -50,12 +50,18 @@ public class TopicLoadingContext extends LatencyTracer {
     @Setter
     private String proxyVersion;
 
+    @Builder
     public TopicLoadingContext(TopicName topicName, boolean createIfMissing,
-                               CompletableFuture<Optional<Topic>> topicFuture) {
+                               CompletableFuture<Optional<Topic>> topicFuture,
+                               @Nullable Map<String, String> properties, String clientVersion,
+                               String proxyVersion) {
         // The topic loading could be ended asynchronously by a timeout event, so we need a thread safe queue here
         super(new ConcurrentLinkedQueue<>(), System::nanoTime);
         this.topicName = topicName;
         this.createIfMissing = createIfMissing;
         this.topicFuture = topicFuture;
+        this.properties = properties;
+        this.clientVersion = clientVersion;
+        this.proxyVersion = proxyVersion;
     }
 }
