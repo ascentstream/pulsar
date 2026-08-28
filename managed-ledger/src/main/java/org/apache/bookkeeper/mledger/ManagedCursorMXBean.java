@@ -100,4 +100,66 @@ public interface ManagedCursorMXBean {
      */
     long getReadCursorLedgerSize();
 
+    /**
+     * Record an acknowledgment operation and its processing latency.
+     *
+     * @param latencyMillis acknowledgment processing latency in milliseconds
+     */
+    void recordAck(long latencyMillis);
+
+    /**
+     * @return the number of acknowledgment operations
+     */
+    long getAckCount();
+
+    /**
+     * @return the average acknowledgment processing latency in milliseconds
+     */
+    double getAckLatencyAvgMillis();
+
+    /**
+     * Record a cursor persist (checkpoint write to the cursor ledger) operation and its latency.
+     *
+     * @param latencyMillis persist latency in milliseconds
+     */
+    void recordPersist(long latencyMillis);
+
+    /**
+     * @return the number of cursor persist operations
+     */
+    long getPersistCount();
+
+    /**
+     * @return the average cursor persist latency in milliseconds
+     */
+    double getPersistLatencyAvgMillis();
+
+    /**
+     * Record a cursor recovery operation and its latency.
+     *
+     * @param latencyMillis recovery latency in milliseconds
+     * @param success whether the recovery completed successfully
+     */
+    void recordRecover(long latencyMillis, boolean success);
+
+    /**
+     * @return the number of cursor recovery operations
+     */
+    long getRecoverCount();
+
+    /**
+     * @return the number of successful cursor recovery operations
+     */
+    long getRecoverSucceed();
+
+    /**
+     * @return the number of failed cursor recovery operations
+     */
+    long getRecoverErrors();
+
+    /**
+     * @return the average cursor recovery latency in milliseconds
+     */
+    double getRecoverLatencyAvgMillis();
+
 }

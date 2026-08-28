@@ -94,6 +94,10 @@ public final class EntryImpl extends AbstractCASReferenceCounted implements Entr
         return entry;
     }
 
+    public static EntryImpl create(Position position, ByteBuf data, int expectedReadCount) {
+        return create(position, data);
+    }
+
     public static EntryImpl create(EntryImpl other) {
         EntryImpl entry = RECYCLER.get();
         entry.timestamp = System.nanoTime();

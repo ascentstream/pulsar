@@ -18,6 +18,7 @@
  */
 package org.apache.bookkeeper.mledger.impl;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertFalse;
 import static org.testng.Assert.assertNull;
@@ -59,6 +60,66 @@ public class PositionRangeSetTest {
     // Standard fixture: multi-entry (dirty tracking) enabled — matches ManagedCursorImpl's production wiring.
     private static PositionRangeSet newSet() {
         return new PositionRangeSet(CONSUMER, true);
+    }
+
+    @Test
+    public void testTotalCardinalityMaintainedIncrementally() {
+        PositionRangeSet set = newSet();
+        assertEquals(set.totalCardinality(), 0);
+
+        set.addOpenClosed(1, -1, 1, 4); // entries 0..4 in ledger 1
+        assertEquals(set.totalCardinality(), 5);
+
+        set.addOpenClosed(1, 4, 1, 9); // entries 5..9 in ledger 1
+        assertEquals(set.totalCardinality(), 10);
+
+        set.addOpenClosed(3, -1, 5, 2); // cross-ledger: entries 0..2 in ledger 5
+        assertEquals(set.totalCardinality(), 13);
+
+        // Overlapping add contributes nothing new.
+        set.addOpenClosed(1, -1, 1, 9);
+        assertEquals(set.totalCardinality(), 13);
+
+        // Cross-check against the range-based cardinality computation.
+        assertEquals(set.cardinality(0, -1, 1_000_000, 2_000_000_000), set.totalCardinality());
+
+        set.removeAtMost(1, 4); // drop ledger-1 entries 0..4
+        assertEquals(set.totalCardinality(), 8);
+        assertEquals(set.cardinality(0, -1, 1_000_000, 2_000_000_000), set.totalCardinality());
+
+        set.remove(Range.atMost(pos(1, 9))); // drop the rest of ledger 1
+        assertEquals(set.totalCardinality(), 3);
+        assertEquals(set.cardinality(0, -1, 1_000_000, 2_000_000_000), set.totalCardinality());
+
+        set.clear();
+        assertEquals(set.totalCardinality(), 0);
+    }
+
+    @Test
+    public void testToRangesReportsTruncation() {
+        PositionRangeSet set = newSet();
+        // ledger 1: 10 positions, ledger 2: 10 positions, ledger 3: 10 positions.
+        set.addOpenClosed(1, -1, 1, 9);
+        set.addOpenClosed(2, -1, 2, 9);
+        set.addOpenClosed(3, -1, 3, 9);
+        assertEquals(set.totalCardinality(), 30);
+
+        // Cap that fits everything: no truncation reported.
+        int[] skipped = {0};
+        Map<Long, long[]> all = set.toRanges(30, count -> skipped[0] = count);
+        assertEquals(all.size(), 3);
+        assertEquals(skipped[0], 0);
+
+        // Cap that fits only two ledgers (cumulative cardinality 20): third ledger skipped
+        // and the notifier reports it exactly once.
+        skipped[0] = 0;
+        Map<Long, long[]> truncated = set.toRanges(20, count -> skipped[0] = count);
+        assertThat(truncated).containsOnlyKeys(1L, 2L);
+        assertEquals(skipped[0], 1);
+
+        // Legacy overload behaves the same without a notifier.
+        Map<Long, long[]> legacy = set.toRanges(20);
+        assertThat(legacy).containsOnlyKeys(1L, 2L);
     }
 
     @Test

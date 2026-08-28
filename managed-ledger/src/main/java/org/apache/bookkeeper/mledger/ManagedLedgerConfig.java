@@ -45,6 +45,22 @@ public class ManagedLedgerConfig {
     private int maxUnackedRangesToPersist = 10000;
     private int maxBatchDeletedIndexToPersist = 10000;
     private boolean persistentUnackedRangesWithMultipleEntriesEnabled = false;
+    /**
+     * Enables per-msgLedger cursor checkpoint persistence. When true, the cursor
+     * writes one {@code CursorCheckpoint} per flush (with the mark-delete ledger's ack state
+     * inline and refs to other ledgers' previously-persisted ack states) instead of the
+     * legacy single-{@code PositionInfo} entry.
+     *
+     * <p>See {@code CursorLogEntry}, {@code CursorCheckpoint}, {@code AckState}, and
+     * {@code AckStateRef} in {@code MLDataFormats.proto} for the wire format.
+     */
+    private boolean persistentUnackedRangesWithPerLedgerEntryEnabled = false;
+    /**
+     * Maximum serialized size for a single {@code CursorLogEntry}. Entries exceeding
+     * this are transparently chunked. Not exposed as a broker config — defaults to the same
+     * 5 MB as {@code maxMessageSize} so chunk behavior mirrors the message-size limit.
+     */
+    private int persistentUnackedRangesMaxEntrySize = 5 * 1024 * 1024;
     private boolean deletionAtBatchIndexLevelEnabled = true;
     private int maxUnackedRangesToPersistInMetadataStore = 1000;
     private int maxEntriesPerLedger = 50000;
@@ -503,6 +519,22 @@ public class ManagedLedgerConfig {
 
     public void setPersistentUnackedRangesWithMultipleEntriesEnabled(boolean multipleEntriesEnabled) {
         this.persistentUnackedRangesWithMultipleEntriesEnabled = multipleEntriesEnabled;
+    }
+
+    public boolean isPersistentUnackedRangesWithPerLedgerEntryEnabled() {
+        return persistentUnackedRangesWithPerLedgerEntryEnabled;
+    }
+
+    public void setPersistentUnackedRangesWithPerLedgerEntryEnabled(boolean enabled) {
+        this.persistentUnackedRangesWithPerLedgerEntryEnabled = enabled;
+    }
+
+    public int getPersistentUnackedRangesMaxEntrySize() {
+        return persistentUnackedRangesMaxEntrySize;
+    }
+
+    public void setPersistentUnackedRangesMaxEntrySize(int maxEntrySize) {
+        this.persistentUnackedRangesMaxEntrySize = maxEntrySize;
     }
 
     /**

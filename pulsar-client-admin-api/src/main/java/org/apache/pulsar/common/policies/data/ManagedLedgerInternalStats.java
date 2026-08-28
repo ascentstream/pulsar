@@ -99,6 +99,9 @@ public class ManagedLedgerInternalStats {
         public long messagesConsumedCounter;
         public long cursorLedger;
         public long cursorLedgerLastEntry;
+        public long individualDeletedMessagesCount;
+        public String firstIndividualDeletedMessage;
+        @Deprecated
         public String individuallyDeletedMessages;
         public String lastLedgerSwitchTimestamp;
         public String state;

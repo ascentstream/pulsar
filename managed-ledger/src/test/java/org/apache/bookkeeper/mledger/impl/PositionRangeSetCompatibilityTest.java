@@ -33,8 +33,8 @@ import org.apache.bookkeeper.mledger.ManagedLedgerFactory;
 import org.apache.bookkeeper.mledger.ManagedLedgerFactoryConfig;
 import org.apache.bookkeeper.mledger.Position;
 import org.apache.bookkeeper.mledger.PositionFactory;
-import org.apache.bookkeeper.mledger.proto.MLDataFormats;
 import org.apache.bookkeeper.mledger.proto.MLDataFormats.MessageRange;
+import org.apache.bookkeeper.mledger.proto.MLDataFormats.NestedPositionInfo;
 import org.apache.bookkeeper.test.BookKeeperClusterTestCase;
 import org.apache.pulsar.common.util.collections.LongPairRangeSet;
 import org.apache.pulsar.common.util.collections.OpenLongPairRangeSet;
@@ -180,9 +180,9 @@ public class PositionRangeSetCompatibilityTest extends BookKeeperClusterTestCase
     private MessageRange createMessageRange(long lowerLedger, long lowerEntry,
                                            long upperLedger, long upperEntry) {
         return MessageRange.newBuilder()
-                .setLowerEndpoint(MLDataFormats.NestedPositionInfo.newBuilder()
+                .setLowerEndpoint(NestedPositionInfo.newBuilder()
                         .setLedgerId(lowerLedger).setEntryId(lowerEntry))
-                .setUpperEndpoint(MLDataFormats.NestedPositionInfo.newBuilder()
+                .setUpperEndpoint(NestedPositionInfo.newBuilder()
                         .setLedgerId(upperLedger).setEntryId(upperEntry))
                 .build();
     }

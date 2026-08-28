@@ -77,6 +77,14 @@ public class ManagedCursorMetrics extends AbstractMetrics {
                 metrics.put("brk_ml_cursor_writeLedgerSize", cStats.getWriteCursorLedgerSize());
                 metrics.put("brk_ml_cursor_writeLedgerLogicalSize", cStats.getWriteCursorLedgerLogicalSize());
                 metrics.put("brk_ml_cursor_readLedgerSize", cStats.getReadCursorLedgerSize());
+                metrics.put("brk_ml_cursor_ackCount", cStats.getAckCount());
+                metrics.put("brk_ml_cursor_ackLatencyAvgMs", (long) cStats.getAckLatencyAvgMillis());
+                metrics.put("brk_ml_cursor_persistCount", cStats.getPersistCount());
+                metrics.put("brk_ml_cursor_persistLatencyAvgMs", (long) cStats.getPersistLatencyAvgMillis());
+                metrics.put("brk_ml_cursor_recoverCount", cStats.getRecoverCount());
+                metrics.put("brk_ml_cursor_recoverSucceed", cStats.getRecoverSucceed());
+                metrics.put("brk_ml_cursor_recoverErrors", cStats.getRecoverErrors());
+                metrics.put("brk_ml_cursor_recoverLatencyAvgMs", (long) cStats.getRecoverLatencyAvgMillis());
                 metricsCollection.add(metrics);
             }
         }

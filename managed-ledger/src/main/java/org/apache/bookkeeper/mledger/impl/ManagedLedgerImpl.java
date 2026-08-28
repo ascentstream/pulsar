@@ -5023,7 +5023,8 @@ public class ManagedLedgerImpl implements ManagedLedger, CreateCallback {
             cs.messagesConsumedCounter = cursor.getMessagesConsumedCounter();
             cs.cursorLedger = cursor.getCursorLedger();
             cs.cursorLedgerLastEntry = cursor.getCursorLedgerLastEntry();
-            cs.individuallyDeletedMessages = cursor.getIndividuallyDeletedMessages();
+            cs.individualDeletedMessagesCount = cursor.getNumberOfIndividualDeletedMessages();
+            cs.firstIndividualDeletedMessage = cursor.getFirstIndividualDeletedMessage();
             cs.lastLedgerSwitchTimestamp = DateFormatter.format(cursor.getLastLedgerSwitchTimestamp());
             cs.state = cursor.getState();
             cs.active = cursor.isActive();

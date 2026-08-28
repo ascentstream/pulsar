@@ -140,6 +140,45 @@ message ManagedCursorInfo {
     // Additional custom properties associated with
     // the cursor
     repeated StringProperty cursorProperties = 8;
+
+    optional int64 lastCmCursorLedgerId = 9;
+    optional int64 lastCmEntryId = 10;
+}
+
+message CursorLogEntry {
+    oneof entry {
+        CursorCheckpoint checkpoint = 2;
+        CursorCheckpointChunk checkpointChunk = 3;
+    }
+}
+
+// A consistent snapshot of cursor ack state for one persisted ledger update.
+// Each checkpoint entry contains exactly one inline ackState; other active
+// ledgers are represented by refs to their latest persisted checkpoints.
+message CursorCheckpoint {
+    required int64 markDeleteLedgerId = 1;
+    required int64 markDeleteEntryId = 2;
+    repeated LongProperty properties = 3;
+    repeated AckState ackStates = 4;
+    repeated AckStateRef ackStateRefs = 5;
+}
+
+message AckState {
+    required int64 msgLedgerId = 1;
+    optional bytes ackBitmap = 2;
+    repeated BatchedEntryDeletionIndexInfo batchAcks = 3;
+}
+
+message AckStateRef {
+    required int64 msgLedgerId = 1;
+    required int64 cursorLedgerId = 2;
+    required int64 entryId = 3;
+}
+
+message CursorCheckpointChunk {
+    optional int32 partIndex = 1;
+    optional int32 partCount = 2;
+    optional bytes checkpointBytes = 3;
 }
 
 enum CompressionType {

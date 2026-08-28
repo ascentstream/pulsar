@@ -21,15 +21,19 @@ package org.apache.bookkeeper.mledger.impl;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.BoundType;
 import com.google.common.collect.Range;
-import io.github.merlimat.slog.Logger;
+import io.netty.buffer.Unpooled;
 import it.unimi.dsi.fastutil.longs.Long2ObjectRBTreeMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectSortedMap;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.LongConsumer;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.bookkeeper.mledger.Position;
 import org.apache.bookkeeper.mledger.PositionFactory;
 import org.apache.commons.lang3.mutable.MutableInt;
@@ -64,9 +68,8 @@ import org.apache.pulsar.common.util.collections.LongPairRangeSet;
  * because {@code managedLedgerMaxEntriesPerLedger} is an {@code int}, so valid entry ids are within
  * {@code [0, Integer.MAX_VALUE]}.
  */
+@Slf4j
 class PositionRangeSet implements LongPairRangeSet<Position> {
-
-    private static final Logger log = Logger.get(PositionRangeSet.class);
 
     private static final long EARLIEST_LEDGER_ID = -1L;
     private static final long EARLIEST_ENTRY_ID = -1L;
@@ -87,6 +90,7 @@ class PositionRangeSet implements LongPairRangeSet<Position> {
     private String cachedToString = "[]";
     private boolean updatedAfterCachedForSize = true;
     private boolean updatedAfterCachedForToString = true;
+    private long totalCardinality = 0;
 
     PositionRangeSet(LongPairConsumer<Position> consumer, boolean enableMultiEntry) {
         this.consumer = consumer;
@@ -112,19 +116,38 @@ class PositionRangeSet implements LongPairRangeSet<Position> {
                 if (rangeBitmap != null) {
                     long lastEntryId = rangeBitmap.lastPresentValue();
                     if (lastEntryId > lowerEntryIdOpen) {
-                        rangeBitmap.add(lowerEntryId, Math.max(lastEntryId, lowerEntryId) + 1);
+                        addRange(rangeBitmap, lowerEntryId, Math.max(lastEntryId, lowerEntryId) + 1);
                     }
                 }
             }
             if (isValid(upperLedgerId, upperEntryId)) {
                 LongBitmap rangeBitmap = rangeBitmapMap.computeIfAbsent(upperLedgerId, k -> LongBitmaps.create());
-                rangeBitmap.add(0, upperEntryId + 1);
+                addRange(rangeBitmap, 0, upperEntryId + 1);
             }
         } else {
             LongBitmap rangeBitmap = rangeBitmapMap.computeIfAbsent(lowerLedgerId, k -> LongBitmaps.create());
-            rangeBitmap.add(lowerEntryId, upperEntryId + 1);
+            addRange(rangeBitmap, lowerEntryId, upperEntryId + 1);
         }
         invalidateCaches();
+    }
+
+    private void addRange(LongBitmap bitmap, long from, long to) {
+        long before = bitmap.cardinality();
+        bitmap.add(from, to);
+        totalCardinality += bitmap.cardinality() - before;
+    }
+
+    private void removeRange(LongBitmap bitmap, long from, long to) {
+        long before = bitmap.cardinality();
+        bitmap.remove(from, to);
+        totalCardinality -= before - bitmap.cardinality();
+    }
+
+    private void clearSubMapCardinality(Long2ObjectSortedMap<LongBitmap> subMap) {
+        for (LongBitmap bitmap : subMap.values()) {
+            totalCardinality -= bitmap.cardinality();
+        }
+        subMap.clear();
     }
 
     @Override
@@ -175,6 +198,7 @@ class PositionRangeSet implements LongPairRangeSet<Position> {
     @Override
     public void clear() {
         rangeBitmapMap.clear();
+        totalCardinality = 0;
         resetDirtyKeys();
         invalidateCaches();
     }
@@ -271,14 +295,29 @@ class PositionRangeSet implements LongPairRangeSet<Position> {
 
     @Override
     public Map<Long, long[]> toRanges(int maxRanges) {
+        return toRanges(maxRanges, null);
+    }
+
+    /**
+     * Serializes the individual-deleted positions as per-ledger bitmaps, including ledgers only while
+     * the cumulative cardinality stays within {@code maxRanges}. Ledgers beyond the limit are skipped
+     * silently (their ack state will be lost on broker restart); when {@code truncationNotifier} is
+     * provided it is invoked once with the number of skipped ledgers so callers can record the loss.
+     */
+    public Map<Long, long[]> toRanges(int maxRanges, java.util.function.IntConsumer truncationNotifier) {
         Map<Long, long[]> internalBitSetMap = new HashMap<>();
         MutableInt rangeCount = new MutableInt();
+        MutableInt skippedLedgers = new MutableInt();
         rangeBitmapMap.forEach((ledgerId, bitmap) -> {
             if (rangeCount.addAndGet((int) bitmap.cardinality()) > maxRanges) {
+                skippedLedgers.increment();
                 return;
             }
             internalBitSetMap.put(ledgerId, bitmap.serializeToLongArray());
         });
+        if (truncationNotifier != null && skippedLedgers.intValue() > 0) {
+            truncationNotifier.accept(skippedLedgers.intValue());
+        }
         return internalBitSetMap;
     }
 
@@ -290,6 +329,20 @@ class PositionRangeSet implements LongPairRangeSet<Position> {
         internalRange.forEach((ledgerId, ranges) -> {
             rangeBitmapMap.put(ledgerId.longValue(), LongBitmaps.deserializeFromLongArray(ranges));
         });
+        recomputeTotalCardinality();
+        invalidateCaches();
+    }
+
+    void buildFromBitmaps(Map<Long, byte[]> bitmaps) {
+        rangeBitmapMap.clear();
+        resetDirtyKeys();
+        bitmaps.forEach((ledgerId, bytes) -> {
+            if (bytes != null && bytes.length > 0) {
+                rangeBitmapMap.put(ledgerId.longValue(),
+                        LongBitmaps.deserialize(Unpooled.wrappedBuffer(bytes)));
+            }
+        });
+        recomputeTotalCardinality();
         invalidateCaches();
     }
 
@@ -379,8 +432,11 @@ class PositionRangeSet implements LongPairRangeSet<Position> {
                 ? getSafeEntry(upperEndpoint)
                 : getSafeEntry(upperEndpoint) + 1;
 
-        rangeBitmapMap.computeIfAbsent(lowerEndpoint.getLedgerId(), k -> LongBitmaps.create())
-                .add(lowerEntryIdOpen + 1);
+        LongBitmap bitmap = rangeBitmapMap.computeIfAbsent(lowerEndpoint.getLedgerId(),
+                k -> LongBitmaps.create());
+        if (bitmap.checkedAdd(lowerEntryIdOpen + 1)) {
+            totalCardinality++;
+        }
         addOpenClosed(lowerEndpoint.getLedgerId(), lowerEntryIdOpen,
                 upperEndpoint.getLedgerId(), upperEntryIdClosed);
     }
@@ -408,13 +464,13 @@ class PositionRangeSet implements LongPairRangeSet<Position> {
         boolean sameLedger = lowerLedgerId == upperLedgerId;
 
         if (lowerIsEarliest) {
-            rangeBitmapMap.headMap(upperLedgerId).clear();
+            clearSubMapCardinality(rangeBitmapMap.headMap(upperLedgerId));
         }
         if (upperIsLatest) {
-            rangeBitmapMap.tailMap(lowerLedgerId + 1).clear();
+            clearSubMapCardinality(rangeBitmapMap.tailMap(lowerLedgerId + 1));
         }
         if (!sameLedger && !lowerIsEarliest && !upperIsLatest) {
-            rangeBitmapMap.subMap(lowerLedgerId + 1, upperLedgerId).clear();
+            clearSubMapCardinality(rangeBitmapMap.subMap(lowerLedgerId + 1, upperLedgerId));
         }
 
         LongBitmap lowerSet = lowerIsEarliest ? null : rangeBitmapMap.get(lowerLedgerId);
@@ -422,13 +478,13 @@ class PositionRangeSet implements LongPairRangeSet<Position> {
                 : (sameLedger ? lowerSet : rangeBitmapMap.get(upperLedgerId));
 
         if (sameLedger && lowerSet != null) {
-            lowerSet.remove(lowerEntryId, upperEntryId + 1);
+            removeRange(lowerSet, lowerEntryId, upperEntryId + 1);
         } else {
             if (lowerSet != null) {
-                lowerSet.remove(lowerEntryId, lastPresentValue(lowerSet));
+                removeRange(lowerSet, lowerEntryId, lastPresentValue(lowerSet));
             }
             if (upperSet != null) {
-                upperSet.remove(0, upperEntryId + 1);
+                removeRange(upperSet, 0, upperEntryId + 1);
             }
         }
 
@@ -450,28 +506,65 @@ class PositionRangeSet implements LongPairRangeSet<Position> {
         return ledgerId >= 0 && ledgerId <= Integer.MAX_VALUE && dirtyLedgers.contains(ledgerId);
     }
 
+    /**
+     * Atomically snapshots the dirty ledger IDs and clears the dirty set.
+     *
+     * <p>The returned set is consumed by the persistence layer to decide which ledgers
+     * need fresh AckState entries written this flush. Keys above {@code Integer.MAX_VALUE}
+     * are skipped at mark-time, so callers see raw ledger IDs in {@code [0, 2^31-1]}.
+     */
+    Set<Long> snapshotAndClearDirtyLedgers() {
+        Set<Long> snapshot = new HashSet<>();
+        dirtyLedgers.forEachLong(bit -> snapshot.add(bit - 1));
+        dirtyLedgers.clear();
+        return snapshot;
+    }
+
+    void restoreDirtyLedgers(Set<Long> ledgers) {
+        for (long id : ledgers) {
+            if (id >= 0 && id < Integer.MAX_VALUE) {
+                dirtyLedgers.add(id + 1);
+            }
+        }
+    }
+
+    /**
+     * Returns the serialized RoaringBitmap bytes for a specific ledger's individual acks,
+     * or {@code null} when the ledger has no entries in this set.
+     */
+    byte[] bitmapOf(long ledgerId) {
+        LongBitmap bitmap = rangeBitmapMap.get(ledgerId);
+        return bitmap == null ? null : bitmap.serialize();
+    }
+
+    /**
+     * Invokes the given consumer for each ledger ID that currently has at least one
+     * individual-deleted entry in this set. Used by the persistence layer to enumerate
+     * the active ledgers that need an AckState or AckStateRef in the checkpoint.
+     */
+    void forEachActiveLedger(LongConsumer action) {
+        rangeBitmapMap.keySet().forEach(action);
+    }
+
+    /**
+     * Marks a single ledger as dirty. Used for batch-index deletions, which are tracked in
+     * {@code batchDeletedIndexes} rather than in the individual-deleted range bitmap.
+     */
+    void markDirtyLedger(long ledgerId) {
+        markDirty(ledgerId, ledgerId);
+    }
+
     private void markDirty(long lowerLedgerId, long upperLedgerId) {
-        // Original semantics: dirtyLedgers.addOpenClosed(k1, 0, k2, 0), which in LongPair ordering
-        // is (k1, k2] on ledger ids. LongBitmap.add(from, to) is half-open [from, to), so shift both
-        // bounds. Same-ledger or inverted range is a no-op.
-        //
-        // Note: Ledger IDs are 64-bit longs, but LongBitmap supports unsigned 32-bit range [0, 2^32-1].
-        // In practice, BookKeeper ledger IDs rarely exceed Integer.MAX_VALUE. If upperLedgerId exceeds
-        // this limit, we skip tracking to avoid overflow. This is acceptable because:
-        // 1. The dirty tracker is an optimization hint for selective persistence
-        // 2. Missing a dirty mark means conservative full-ledger write (safe, just slower)
-        // 3. Real-world ledger IDs stay well within 32-bit range
-        if (upperLedgerId <= lowerLedgerId || lowerLedgerId < 0) {
+        if (upperLedgerId < lowerLedgerId || lowerLedgerId < 0) {
             return;
         }
         if (lowerLedgerId >= Integer.MAX_VALUE || upperLedgerId > Integer.MAX_VALUE) {
-            log.warn()
-                    .attr("lowerLedgerId", lowerLedgerId)
-                    .attr("upperLedgerId", upperLedgerId)
-                    .log("Skipping dirty tracking for ledger ID at/exceeding Integer.MAX_VALUE");
+            log.warn("Skipping dirty tracking for ledger ID at/exceeding Integer.MAX_VALUE, "
+                            + "lowerLedgerId: {}, upperLedgerId: {}",
+                    lowerLedgerId, upperLedgerId);
             return;
         }
-        dirtyLedgers.add(lowerLedgerId + 1, upperLedgerId + 1);
+        dirtyLedgers.add(lowerLedgerId + 1, upperLedgerId + 2);
     }
 
     private boolean isValid(long ledgerId, long entryId) {
@@ -490,5 +583,17 @@ class PositionRangeSet implements LongPairRangeSet<Position> {
     private void invalidateCaches() {
         updatedAfterCachedForSize = true;
         updatedAfterCachedForToString = true;
+    }
+
+    long totalCardinality() {
+        return totalCardinality;
+    }
+
+    private void recomputeTotalCardinality() {
+        long total = 0;
+        for (LongBitmap bitmap : rangeBitmapMap.values()) {
+            total += bitmap.cardinality();
+        }
+        totalCardinality = total;
     }
 }

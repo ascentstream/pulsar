@@ -250,6 +250,10 @@ public class ManagedLedgerFactoryImpl implements ManagedLedgerFactory {
         openTelemetryManagedCursorStats = new OpenTelemetryManagedCursorStats(openTelemetry, this);
     }
 
+    public OpenTelemetryManagedCursorStats getOpenTelemetryManagedCursorStats() {
+        return openTelemetryManagedCursorStats;
+    }
+
     static class DefaultBkFactory implements BookkeeperFactoryForCustomEnsemblePlacementPolicy, AutoCloseable {
 
         private final BookKeeper bkClient;

@@ -34,6 +34,17 @@ public class ManagedCursorMXBeanImpl implements ManagedCursorMXBean {
     private final LongAdder writeCursorLedgerLogicalSize = new LongAdder();
     private final LongAdder readCursorLedgerSize = new LongAdder();
 
+    private final LongAdder ackCount = new LongAdder();
+    private final LongAdder ackLatencyTotalMillis = new LongAdder();
+
+    private final LongAdder persistCount = new LongAdder();
+    private final LongAdder persistLatencyTotalMillis = new LongAdder();
+
+    private final LongAdder recoverCount = new LongAdder();
+    private final LongAdder recoverSucceed = new LongAdder();
+    private final LongAdder recoverErrors = new LongAdder();
+    private final LongAdder recoverLatencyTotalMillis = new LongAdder();
+
     private final ManagedCursor managedCursor;
 
     public ManagedCursorMXBeanImpl(ManagedCursor managedCursor) {
@@ -113,5 +124,71 @@ public class ManagedCursorMXBeanImpl implements ManagedCursorMXBean {
     @Override
     public long getReadCursorLedgerSize() {
         return readCursorLedgerSize.longValue();
+    }
+
+    @Override
+    public void recordAck(long latencyMillis) {
+        ackCount.increment();
+        ackLatencyTotalMillis.add(latencyMillis);
+    }
+
+    @Override
+    public long getAckCount() {
+        return ackCount.longValue();
+    }
+
+    @Override
+    public double getAckLatencyAvgMillis() {
+        long count = ackCount.longValue();
+        return count == 0 ? 0 : ackLatencyTotalMillis.longValue() / (double) count;
+    }
+
+    @Override
+    public void recordPersist(long latencyMillis) {
+        persistCount.increment();
+        persistLatencyTotalMillis.add(latencyMillis);
+    }
+
+    @Override
+    public long getPersistCount() {
+        return persistCount.longValue();
+    }
+
+    @Override
+    public double getPersistLatencyAvgMillis() {
+        long count = persistCount.longValue();
+        return count == 0 ? 0 : persistLatencyTotalMillis.longValue() / (double) count;
+    }
+
+    @Override
+    public void recordRecover(long latencyMillis, boolean success) {
+        recoverCount.increment();
+        recoverLatencyTotalMillis.add(latencyMillis);
+        if (success) {
+            recoverSucceed.increment();
+        } else {
+            recoverErrors.increment();
+        }
+    }
+
+    @Override
+    public long getRecoverCount() {
+        return recoverCount.longValue();
+    }
+
+    @Override
+    public long getRecoverSucceed() {
+        return recoverSucceed.longValue();
+    }
+
+    @Override
+    public long getRecoverErrors() {
+        return recoverErrors.longValue();
+    }
+
+    @Override
+    public double getRecoverLatencyAvgMillis() {
+        long count = recoverCount.longValue();
+        return count == 0 ? 0 : recoverLatencyTotalMillis.longValue() / (double) count;
     }
 }

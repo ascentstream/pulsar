@@ -2489,6 +2489,13 @@ public class ServiceConfiguration implements PulsarConfiguration {
         doc = "If enabled, the maximum \"acknowledgment holes\" will not be limited and \"acknowledgment holes\" "
                 + "are stored in multiple entries.")
     private boolean persistentUnackedRangesWithMultipleEntriesEnabled = false;
+    @FieldContext(
+        category = CATEGORY_STORAGE_ML,
+        doc = "Enables per-msgLedger cursor checkpoint persistence. When true, the cursor "
+                + "writes a CursorCheckpoint per flush (mark-delete ledger's ack state inline + refs "
+                + "to other ledgers' previously-persisted ack states) instead of the legacy single "
+                + "PositionInfo entry. Eliminates write amplification and avoids ack truncation.")
+    private boolean persistentUnackedRangesWithPerLedgerEntryEnabled = false;
     @Deprecated
     @FieldContext(
         category = CATEGORY_STORAGE_ML,
@@ -2504,13 +2511,6 @@ public class ServiceConfiguration implements PulsarConfiguration {
                     + "If number of unack message range is higher than this limit then broker will persist"
                     + " unacked ranges into bookkeeper to avoid additional data overhead into MetadataStore.")
     private int managedLedgerMaxUnackedRangesToPersistInMetadataStore = 1000;
-    @FieldContext(
-        dynamic = true,
-        category = CATEGORY_STORAGE_ML,
-        doc = "After enabling this feature, Pulsar will stop delivery messages to clients if the cursor metadata is"
-            + " too large to persist, it will help to reduce the duplicates caused by the ack state that can not be"
-            + " fully persistent. Default false.")
-    private boolean dispatcherPauseOnAckStatePersistentEnabled = false;
     @FieldContext(
         dynamic = true,
         category = CATEGORY_STORAGE_ML,

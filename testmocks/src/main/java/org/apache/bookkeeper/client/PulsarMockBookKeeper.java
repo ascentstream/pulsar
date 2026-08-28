@@ -20,6 +20,7 @@ package org.apache.bookkeeper.client;
 
 import static com.google.common.base.Preconditions.checkArgument;
 import com.google.common.collect.Lists;
+import io.netty.util.BooleanSupplier;
 import io.netty.util.concurrent.DefaultThreadFactory;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -201,8 +202,20 @@ public class PulsarMockBookKeeper extends BookKeeper {
         asyncOpenLedger(lId, digestType, passwd, cb, ctx);
     }
 
+    // Test hook: fail ledger deletions while enabled (used to exercise GC retry semantics).
+    private volatile java.util.function.BooleanSupplier deleteLedgerFailure;
+
+    public void setDeleteLedgerFailure(java.util.function.BooleanSupplier deleteLedgerFailure) {
+        this.deleteLedgerFailure = deleteLedgerFailure;
+    }
+
     @Override
     public void asyncDeleteLedger(long lId, DeleteCallback cb, Object ctx) {
+        if (deleteLedgerFailure != null && deleteLedgerFailure.getAsBoolean()) {
+            executor.execute(() ->
+                    cb.deleteComplete(BKException.Code.NoBookieAvailableException, ctx));
+            return;
+        }
         getProgrammedFailure().thenComposeAsync((res) -> {
                 if (ledgers.containsKey(lId)) {
                     ledgers.remove(lId);
