@@ -18,7 +18,6 @@
  */
 package org.apache.pulsar.broker.transaction.buffer.impl;
 
-<<<<<<< HEAD
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -30,14 +29,6 @@ import static org.testng.Assert.assertTrue;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicReference;
-=======
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
-import static org.testng.Assert.assertEquals;
-import static org.testng.Assert.assertTrue;
-import java.nio.charset.StandardCharsets;
-import java.util.concurrent.CompletableFuture;
->>>>>>> 000d1f2bfc5 ([fix][broker] Trigger max read position callback for messages published during transaction buffer recovery (#26234))
 import lombok.Cleanup;
 import org.apache.bookkeeper.mledger.Position;
 import org.apache.bookkeeper.mledger.PositionFactory;
@@ -47,10 +38,7 @@ import org.apache.pulsar.broker.transaction.buffer.AbortedTxnProcessor;
 import org.apache.pulsar.broker.transaction.buffer.TransactionBufferProvider;
 import org.apache.pulsar.client.api.Producer;
 import org.apache.pulsar.client.api.ProducerConsumerBase;
-<<<<<<< HEAD
 import org.apache.pulsar.client.api.PulsarClientException;
-=======
->>>>>>> 000d1f2bfc5 ([fix][broker] Trigger max read position callback for messages published during transaction buffer recovery (#26234))
 import org.awaitility.Awaitility;
 import org.testng.annotations.AfterClass;
 import org.testng.annotations.BeforeClass;
@@ -159,7 +147,6 @@ public class TopicTransactionBufferRecoveryTest extends ProducerConsumerBase {
             pulsar.setTransactionBufferProvider(originalProvider);
         }
     }
-<<<<<<< HEAD
 
     /**
      * Deleting the aborted txn snapshot writes a tombstone to the namespace's __transaction_buffer_snapshot
@@ -202,6 +189,4 @@ public class TopicTransactionBufferRecoveryTest extends ProducerConsumerBase {
             pulsar.setTransactionBufferProvider(originalProvider);
         }
     }
-=======
->>>>>>> 000d1f2bfc5 ([fix][broker] Trigger max read position callback for messages published during transaction buffer recovery (#26234))
 }
