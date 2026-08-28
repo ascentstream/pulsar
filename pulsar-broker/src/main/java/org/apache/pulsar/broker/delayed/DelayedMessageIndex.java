@@ -16,7 +16,7 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package org.apache.pulsar.broker.delayed.bucket;
+package org.apache.pulsar.broker.delayed;
 
 import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
@@ -29,24 +29,31 @@ import org.apache.pulsar.common.util.collections.LongBitmaps;
 /**
  * Runtime truth for delayed messages that have been accepted but not yet delivered.
  * Co-locates the bitmap and its cardinality so the counter is an invariant of the bitmap
- * rather than a discipline callers must maintain. {@link ImmutableBucket#delayedIndexBitMap}
- * is a frozen snapshot for BookKeeper writes/merge and is intentionally not consulted here.
+ * rather than a discipline callers must maintain. Used by both the in-memory and the bucket
+ * delayed delivery trackers; the bucket trackers' frozen snapshot bitmaps for BookKeeper
+ * writes/merge are intentionally not consulted here.
  */
 @ThreadSafe
-final class BucketDelayedMessageIndex {
+public final class DelayedMessageIndex {
 
     private final Long2ObjectMap<LongBitmap> inflightIndex = new Long2ObjectOpenHashMap<>();
     private final AtomicLong size = new AtomicLong(0);
 
-    /** Idempotent: re-tracking a position already in the index is a no-op. */
-    void track(long ledgerId, long entryId) {
+    /**
+     * Idempotent: re-tracking a position already in the index is a no-op.
+     *
+     * @return true if the position was newly tracked, false if it was already present
+     */
+    public boolean track(long ledgerId, long entryId) {
         if (inflightIndex.computeIfAbsent(ledgerId, k -> LongBitmaps.create()).checkedAdd(entryId)) {
             size.incrementAndGet();
+            return true;
         }
+        return false;
     }
 
     /** @return true if the bit was present and removed; false if it was already absent. */
-    boolean untrack(long ledgerId, long entryId) {
+    public boolean untrack(long ledgerId, long entryId) {
         LongBitmap bitSet = inflightIndex.get(ledgerId);
         if (bitSet == null || !bitSet.contains(entryId)) {
             return false;
@@ -59,16 +66,16 @@ final class BucketDelayedMessageIndex {
         return true;
     }
 
-    boolean contains(long ledgerId, long entryId) {
+    public boolean contains(long ledgerId, long entryId) {
         LongBitmap bitSet = inflightIndex.get(ledgerId);
         return bitSet != null && bitSet.contains(entryId);
     }
 
-    long size() {
+    public long size() {
         return size.get();
     }
 
-    void clear() {
+    public void clear() {
         inflightIndex.clear();
         size.set(0);
     }
@@ -76,7 +83,7 @@ final class BucketDelayedMessageIndex {
     /**
      * Bulk-load after recovery. Built on {@link #track} so overlapping bits merge, not double-count.
      */
-    void restore(Map<Long, LongBitmap> snapshot) {
+    public void restore(Map<Long, LongBitmap> snapshot) {
         snapshot.forEach((ledgerId, bitmap) ->
                 bitmap.forEachLong(entryId -> track(ledgerId, entryId)));
     }

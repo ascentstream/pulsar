@@ -34,10 +34,12 @@ import io.netty.util.concurrent.DefaultThreadFactory;
 import java.lang.reflect.Method;
 import java.time.Clock;
 import java.util.NavigableMap;
+import java.util.NavigableSet;
 import java.util.TreeMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import lombok.Cleanup;
+import org.apache.bookkeeper.mledger.Position;
 import org.apache.pulsar.broker.service.persistent.AbstractPersistentDispatcherMultipleConsumers;
 import org.testng.annotations.DataProvider;
 import org.testng.annotations.Test;
@@ -258,5 +260,22 @@ public class InMemoryDeliveryTrackerTest extends AbstractDeliveryTrackerTest {
         clockTime.set(60);
 
         tracker.getScheduledMessages(10);
+    }
+
+    @Test(dataProvider = "delayedTracker")
+    public void testDuplicateAddMessageIsTrackedOnce(InMemoryDelayedDeliveryTracker tracker) throws Exception {
+        assertTrue(tracker.addMessage(1, 5, 10));
+        assertTrue(tracker.addMessage(1, 5, 10));
+        assertTrue(tracker.addMessage(1, 6, 10));
+        assertTrue(tracker.addMessage(2, 5, 10));
+        assertEquals(tracker.getNumberOfDelayedMessages(), 3);
+
+        clockTime.set(20);
+
+        NavigableSet<Position> scheduled = tracker.getScheduledMessages(100);
+        assertEquals(scheduled.size(), 3);
+        assertEquals(tracker.getNumberOfDelayedMessages(), 0);
+
+        tracker.close();
     }
 }

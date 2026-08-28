@@ -57,6 +57,7 @@ import org.apache.commons.collections4.MapUtils;
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.pulsar.broker.delayed.AbstractDelayedDeliveryTracker;
 import org.apache.pulsar.broker.delayed.DelayedDeliveryContext;
+import org.apache.pulsar.broker.delayed.DelayedMessageIndex;
 import org.apache.pulsar.broker.delayed.DispatcherDelayedDeliveryContext;
 import org.apache.pulsar.broker.delayed.proto.DelayedIndex;
 import org.apache.pulsar.broker.delayed.proto.SnapshotSegment;
@@ -113,7 +114,7 @@ public class BucketDelayedDeliveryTracker extends AbstractDelayedDeliveryTracker
 
     @Getter
     @VisibleForTesting
-    private final BucketDelayedMessageIndex index = new BucketDelayedMessageIndex();
+    private final DelayedMessageIndex index = new DelayedMessageIndex();
 
     @Getter
     @VisibleForTesting

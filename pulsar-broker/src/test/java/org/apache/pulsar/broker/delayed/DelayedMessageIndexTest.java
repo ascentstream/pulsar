@@ -16,7 +16,7 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package org.apache.pulsar.broker.delayed.bucket;
+package org.apache.pulsar.broker.delayed;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
@@ -25,11 +25,11 @@ import org.apache.pulsar.common.util.collections.LongBitmap;
 import org.apache.pulsar.common.util.collections.LongBitmaps;
 import org.testng.annotations.Test;
 
-public class BucketDelayedMessageIndexTest {
+public class DelayedMessageIndexTest {
 
     @Test
     public void trackThenContains() {
-        BucketDelayedMessageIndex index = new BucketDelayedMessageIndex();
+        DelayedMessageIndex index = new DelayedMessageIndex();
 
         index.track(7L, 100L);
 
@@ -41,7 +41,7 @@ public class BucketDelayedMessageIndexTest {
 
     @Test
     public void untrackReturnsTrueFirstTimeAndFalseAfter() {
-        BucketDelayedMessageIndex index = new BucketDelayedMessageIndex();
+        DelayedMessageIndex index = new DelayedMessageIndex();
         index.track(1L, 1L);
 
         assertThat(index.untrack(1L, 1L)).isTrue();
@@ -53,7 +53,7 @@ public class BucketDelayedMessageIndexTest {
 
     @Test
     public void untrackOnAbsentBitIsSafe() {
-        BucketDelayedMessageIndex index = new BucketDelayedMessageIndex();
+        DelayedMessageIndex index = new DelayedMessageIndex();
 
         assertThat(index.untrack(99L, 99L)).isFalse();
         assertThat(index.size()).isZero();
@@ -62,7 +62,7 @@ public class BucketDelayedMessageIndexTest {
 
     @Test
     public void trackIsIdempotent() {
-        BucketDelayedMessageIndex index = new BucketDelayedMessageIndex();
+        DelayedMessageIndex index = new DelayedMessageIndex();
 
         index.track(3L, 5L);
         index.track(3L, 5L);
@@ -74,7 +74,7 @@ public class BucketDelayedMessageIndexTest {
 
     @Test
     public void trackAcrossManyLedgersKeepsCounterCorrect() {
-        BucketDelayedMessageIndex index = new BucketDelayedMessageIndex();
+        DelayedMessageIndex index = new DelayedMessageIndex();
 
         for (long ledger = 1; ledger <= 5; ledger++) {
             for (long entry = 1; entry <= 10; entry++) {
@@ -95,7 +95,7 @@ public class BucketDelayedMessageIndexTest {
 
     @Test
     public void clearResetsBitmapAndCounter() {
-        BucketDelayedMessageIndex index = new BucketDelayedMessageIndex();
+        DelayedMessageIndex index = new DelayedMessageIndex();
         index.track(1L, 1L);
         index.track(2L, 2L);
         assertThat(index.size()).isEqualTo(2L);
@@ -114,7 +114,7 @@ public class BucketDelayedMessageIndexTest {
 
     @Test
     public void restoreLoadsBitsFromSnapshot() {
-        BucketDelayedMessageIndex index = new BucketDelayedMessageIndex();
+        DelayedMessageIndex index = new DelayedMessageIndex();
 
         Long2ObjectMap<LongBitmap> snapshot = new Long2ObjectOpenHashMap<>();
         LongBitmap ledger1 = LongBitmaps.create();
@@ -135,7 +135,7 @@ public class BucketDelayedMessageIndexTest {
 
     @Test
     public void restoreIsIdempotentOnOverlappingSnapshots() {
-        BucketDelayedMessageIndex index = new BucketDelayedMessageIndex();
+        DelayedMessageIndex index = new DelayedMessageIndex();
 
         Long2ObjectMap<LongBitmap> firstBucket = new Long2ObjectOpenHashMap<>();
         LongBitmap bits = LongBitmaps.create();
@@ -160,7 +160,7 @@ public class BucketDelayedMessageIndexTest {
 
     @Test
     public void restoreAfterTrackMergesCorrectly() {
-        BucketDelayedMessageIndex index = new BucketDelayedMessageIndex();
+        DelayedMessageIndex index = new DelayedMessageIndex();
         index.track(1L, 1L);
         assertThat(index.size()).isEqualTo(1L);
 

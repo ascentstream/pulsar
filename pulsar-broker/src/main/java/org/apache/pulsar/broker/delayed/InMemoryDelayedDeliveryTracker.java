@@ -24,7 +24,6 @@ import java.time.Clock;
 import java.util.NavigableSet;
 import java.util.TreeSet;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.atomic.AtomicLong;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.bookkeeper.mledger.Position;
@@ -53,9 +52,11 @@ public class InMemoryDelayedDeliveryTracker extends AbstractDelayedDeliveryTrack
     // Track whether we have seen all messages with fixed delay so far.
     private boolean messagesHaveFixedDelay = true;
 
-    // Count of delayed messages in the tracker, maintained incrementally so that stats reads
-    // do not contend with mutation paths (#24430 / #25990).
-    private final AtomicLong delayedMessagesCount = new AtomicLong(0);
+    // Dedup index of in-flight delayed messages; the counter is an invariant of the bitmap
+    // so stats reads stay lock-free and duplicate positions are tracked once (#26251).
+    @Getter
+    @VisibleForTesting
+    private final DelayedMessageIndex index = new DelayedMessageIndex();
 
     InMemoryDelayedDeliveryTracker(AbstractPersistentDispatcherMultipleConsumers dispatcher, Timer timer,
                                    long tickTimeMillis,
@@ -94,8 +95,9 @@ public class InMemoryDelayedDeliveryTracker extends AbstractDelayedDeliveryTrack
                     deliverAt - clock.millis());
         }
 
-        priorityQueue.add(deliverAt, ledgerId, entryId);
-        delayedMessagesCount.incrementAndGet();
+        if (index.track(ledgerId, entryId)) {
+            priorityQueue.add(deliverAt, ledgerId, entryId);
+        }
         updateTimer();
 
         checkAndUpdateHighest(deliverAt);
@@ -147,7 +149,7 @@ public class InMemoryDelayedDeliveryTracker extends AbstractDelayedDeliveryTrack
             positions.add(PositionFactory.create(ledgerId, entryId));
 
             priorityQueue.pop();
-            delayedMessagesCount.decrementAndGet();
+            index.untrack(ledgerId, entryId);
             --n;
         }
 
@@ -168,13 +170,13 @@ public class InMemoryDelayedDeliveryTracker extends AbstractDelayedDeliveryTrack
     @Override
     public CompletableFuture<Void> clear() {
         this.priorityQueue.clear();
-        this.delayedMessagesCount.set(0);
+        this.index.clear();
         return CompletableFuture.completedFuture(null);
     }
 
     @Override
     public long getNumberOfDelayedMessages() {
-        return delayedMessagesCount.get();
+        return index.size();
     }
 
     @Override
