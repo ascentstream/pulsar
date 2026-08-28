@@ -20,7 +20,6 @@ package org.apache.bookkeeper.client;
 
 import static com.google.common.base.Preconditions.checkArgument;
 import com.google.common.collect.Lists;
-import io.netty.util.BooleanSupplier;
 import io.netty.util.concurrent.DefaultThreadFactory;
 import java.util.ArrayList;
 import java.util.Arrays;
