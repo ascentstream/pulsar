@@ -33,7 +33,7 @@
 
   <groupId>com.ascentstream.pulsar</groupId>
   <artifactId>pulsar-bom</artifactId>
-  <version>4.0.11.1-226281f-20260709031812-SNAPSHOT</version>
+  <version>4.0.14-SNAPSHOT</version>
   <name>Pulsar BOM</name>
   <description>Pulsar (Bill of Materials)</description>
 
