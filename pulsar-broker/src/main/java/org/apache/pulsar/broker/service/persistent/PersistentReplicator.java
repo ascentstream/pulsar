@@ -245,61 +245,68 @@ public abstract class PersistentReplicator extends AbstractReplicator
             return new ReadLimits(0, 0);
         }
 
-        long readLimitOnMsg;
-        long readLimitOnByte;
+        long readLimitOnMsg = permits;
+        long readLimitOnByte = readMaxSizeBytes;
 
-        // handle rate limit
-        if (dispatchRateLimiter.isPresent() && dispatchRateLimiter.get().isDispatchRateLimitingEnabled()) {
-            DispatchRateLimiter rateLimiter = dispatchRateLimiter.get();
-            // rateLimiter returns -1 if there is no rate limit configured
-            readLimitOnMsg = rateLimiter.getAvailableDispatchRateLimitOnMsg();
-            readLimitOnByte = rateLimiter.getAvailableDispatchRateLimitOnByte();
-            // no permits from rate limit when either limit is 0
-            if (readLimitOnByte == 0 || readLimitOnMsg == 0) {
+        // Apply topic replicator dispatch rate limit.
+        DispatchRateLimiter dispatchRateLimiter = this.dispatchRateLimiter.orElse(null);
+        if (dispatchRateLimiter != null && dispatchRateLimiter.isDispatchRateLimitingEnabled()) {
+            long availableOnMsg = dispatchRateLimiter.getAvailableDispatchRateLimitOnMsg();
+            long availableOnByte = dispatchRateLimiter.getAvailableDispatchRateLimitOnByte();
+
+            if (availableOnMsg == 0 || availableOnByte == 0) {
                 if (log.isDebugEnabled()) {
                     log.debug("[{}] Message-read exceeded topic replicator rate limit,"
                                     + " dispatchRateOnMsg: {}, dispatchRateOnByte: {},"
-                                    + " readLimitOnMsg: {}, readLimitOnByte: {}",
+                                    + " availableOnMsg: {}, availableOnByte: {}",
                             replicatorId,
-                            rateLimiter.getDispatchRateOnMsg(),
-                            rateLimiter.getDispatchRateOnByte(),
-                            readLimitOnMsg,
-                            readLimitOnByte);
+                            dispatchRateLimiter.getDispatchRateOnMsg(),
+                            dispatchRateLimiter.getDispatchRateOnByte(),
+                            availableOnMsg,
+                            availableOnByte);
                 }
                 return new ReadLimits(-1, -1);
             }
-            // use given permits if no rate limit configured, otherwise limit to returned rate limiter permits
-            readLimitOnMsg = readLimitOnMsg == -1 ? permits : Math.min(permits, readLimitOnMsg);
-            // use readMaxSizeBytes if no rate limit configured, otherwise limit to returned rate limiter permits
-            readLimitOnByte = readLimitOnByte == -1 ? readMaxSizeBytes : Math.min(readMaxSizeBytes, readLimitOnByte);
-        } else {
-            readLimitOnMsg = permits;
-            readLimitOnByte = readMaxSizeBytes;
+
+            readLimitOnMsg = applyLimit(readLimitOnMsg, availableOnMsg);
+            readLimitOnByte = applyLimit(readLimitOnByte, availableOnByte);
         }
 
-        if (resourceGroupDispatchRateLimiter.isPresent()) {
-            ResourceGroupDispatchLimiter rateLimiter = resourceGroupDispatchRateLimiter.get();
-            long rgAvailablePermitsOnMsg = rateLimiter.getAvailableDispatchRateLimitOnMsg();
-            long rgAvailablePermitsOnByte = rateLimiter.getAvailableDispatchRateLimitOnByte();
-            if (rgAvailablePermitsOnMsg == 0 || rgAvailablePermitsOnByte == 0) {
+        // Apply resource group dispatch rate limit.
+        ResourceGroupDispatchLimiter resourceGroupLimiter = resourceGroupDispatchRateLimiter.orElse(null);
+        if (resourceGroupLimiter != null) {
+            long availableOnMsg = resourceGroupLimiter.getAvailableDispatchRateLimitOnMsg();
+            long availableOnByte = resourceGroupLimiter.getAvailableDispatchRateLimitOnByte();
+
+            if (availableOnMsg == 0 || availableOnByte == 0) {
                 if (log.isDebugEnabled()) {
-                    log.debug("[{}] message-read exceeded resourcegroup message-rate {}/{},"
-                                    + " schedule after a {}",
+                    log.debug("[{}] Message-read exceeded resource group rate limit {}/{},"
+                                    + " schedule after {} ms",
                             replicatorId,
-                            rateLimiter.getDispatchRateOnMsg(),
-                            rateLimiter.getDispatchRateOnByte(),
+                            resourceGroupLimiter.getDispatchRateOnMsg(),
+                            resourceGroupLimiter.getDispatchRateOnByte(),
                             MESSAGE_RATE_BACKOFF_MS);
                 }
                 return new ReadLimits(-1, -1);
             }
-            readLimitOnMsg = Math.min(readLimitOnMsg, rgAvailablePermitsOnMsg);
-            readLimitOnByte = Math.min(readLimitOnByte, rgAvailablePermitsOnByte);
+
+            readLimitOnMsg = applyLimit(readLimitOnMsg, availableOnMsg);
+            readLimitOnByte = applyLimit(readLimitOnByte, availableOnByte);
         }
 
-        // limit messages to current read batch size
+        // Apply per-read batch limits.
         readLimitOnMsg = Math.min(readLimitOnMsg, readBatchSize);
 
         return new ReadLimits((int) readLimitOnMsg, readLimitOnByte);
+    }
+
+    /**
+     * Applies {@code available} to the current limit.
+     *
+     * <p>{@code -1} means no limit is configured.
+     */
+    private static long applyLimit(long current, long available) {
+        return available < 0 ? current : Math.min(current, available);
     }
 
     public void disconnectIfNoTrafficAndBacklog() {
