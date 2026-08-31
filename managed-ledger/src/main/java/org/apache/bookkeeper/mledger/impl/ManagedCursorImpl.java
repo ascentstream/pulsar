@@ -430,20 +430,31 @@ public class ManagedCursorImpl implements ManagedCursor {
 
     private void recordAckStats(long latencyMillis) {
         mbean.recordAck(latencyMillis);
-        ledger.getFactory().getOpenTelemetryManagedCursorStats()
-                .recordAckLatency(this, latencyMillis / 1000.0);
+        var stats = otelCursorStatsOrNull();
+        if (stats != null) {
+            stats.recordAckLatency(this, latencyMillis / 1000.0);
+        }
     }
 
     private void recordPersistStats(long latencyMillis) {
         mbean.recordPersist(latencyMillis);
-        ledger.getFactory().getOpenTelemetryManagedCursorStats()
-                .recordPersistLatency(this, latencyMillis / 1000.0);
+        var stats = otelCursorStatsOrNull();
+        if (stats != null) {
+            stats.recordPersistLatency(this, latencyMillis / 1000.0);
+        }
     }
 
     private void recordRecoverStats(long latencyMillis, boolean success) {
         mbean.recordRecover(latencyMillis, success);
-        ledger.getFactory().getOpenTelemetryManagedCursorStats()
-                .recordRecoverLatency(this, latencyMillis / 1000.0);
+        var stats = otelCursorStatsOrNull();
+        if (stats != null) {
+            stats.recordRecoverLatency(this, latencyMillis / 1000.0);
+        }
+    }
+
+    // Null when the ledger (and thus its factory) is mocked in unit tests.
+    private OpenTelemetryManagedCursorStats otelCursorStatsOrNull() {
+        return ledger.getFactory() == null ? null : ledger.getFactory().getOpenTelemetryManagedCursorStats();
     }
 
     @Override
