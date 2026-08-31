@@ -80,6 +80,7 @@ import org.apache.pulsar.client.api.PulsarClientException;
 import org.apache.pulsar.client.api.Schema;
 import org.apache.pulsar.client.api.SubscriptionInitialPosition;
 import org.apache.pulsar.client.impl.PulsarClientImpl;
+import org.apache.pulsar.common.policies.data.HierarchyTopicPolicies;
 import org.awaitility.Awaitility;
 import org.mockito.invocation.InvocationOnMock;
 import org.mockito.stubbing.Answer;
@@ -847,6 +848,9 @@ public class PersistentReplicatorInflightTaskTest extends OneWayReplicatorTestBa
         when(topic.getReplicatorPrefix()).thenReturn("pulsar.repl");
         when(topic.getBrokerService()).thenReturn(brokerService);
         when(topic.getMaxReadPosition()).thenReturn(PositionFactory.create(1, 100));
+        // PersistentReplicator's constructor reads hierarchy topic policies; without this stub
+        // Mockito returns null and the constructor throws an NPE.
+        when(topic.getHierarchyTopicPolicies()).thenReturn(new HierarchyTopicPolicies());
 
         ManagedCursor cursor = mock(ManagedCursor.class);
         when(cursor.getName()).thenReturn("pulsar.repl.remote");
