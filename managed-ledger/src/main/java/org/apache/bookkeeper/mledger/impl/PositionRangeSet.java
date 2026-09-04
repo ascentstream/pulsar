@@ -503,7 +503,8 @@ class PositionRangeSet implements LongPairRangeSet<Position> {
     }
 
     boolean isDirtyLedgers(long ledgerId) {
-        return ledgerId >= 0 && ledgerId <= Integer.MAX_VALUE && dirtyLedgers.contains(ledgerId);
+        // Dirty bits are stored at ledgerId + 1; see markDirty.
+        return ledgerId >= 0 && ledgerId <= Integer.MAX_VALUE && dirtyLedgers.contains(ledgerId + 1);
     }
 
     /**

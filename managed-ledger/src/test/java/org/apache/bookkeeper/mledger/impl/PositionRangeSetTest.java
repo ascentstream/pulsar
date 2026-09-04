@@ -127,18 +127,27 @@ public class PositionRangeSetTest {
         PositionRangeSet rangeSet = newSet();
         rangeSet.addOpenClosed(10, 0, 20, 0);
         assertEquals(rangeSet.size(), 1);
-        // addOpenClosed(10,0,20,0) marks ledgers in (10, 20] dirty per the original
-        // dirtyLedgers.addOpenClosed(k,0,k',0) LongPair-ordering semantics — ledger 10 is open-lower
-        // and therefore not dirty.
-        assertFalse(rangeSet.isDirtyLedgers(10L));
-        for (long i = 11; i <= 20; i++) {
+        // addOpenClosed(10,0,20,0) may also extend ledger 10's bitmap (when it already has
+        // bits at/after the lower endpoint), so markDirty conservatively covers [10, 20].
+        // isDirtyLedgers must agree with snapshotAndClearDirtyLedgers, which yields 10..20.
+        for (long i = 10; i <= 20; i++) {
             assertTrue(rangeSet.isDirtyLedgers(i));
         }
+        java.util.Set<Long> snapshot = rangeSet.snapshotAndClearDirtyLedgers();
+        for (long i = 10; i <= 20; i++) {
+            assertTrue(snapshot.contains(i));
+        }
+        assertTrue(snapshot.size() == 11);
+        for (long i = 10; i <= 20; i++) {
+            assertFalse(rangeSet.isDirtyLedgers(i));
+        }
 
+        rangeSet.addOpenClosed(11, 0, 20, 0);
         rangeSet.removeAtMost(11, 0);
         assertEquals(rangeSet.size(), 1);
-        assertFalse(rangeSet.isDirtyLedgers(11L));
-        for (long i = 12; i <= 20; i++) {
+        // removeAtMost(11) drops dirty tracking for ledgers < 11.
+        assertFalse(rangeSet.isDirtyLedgers(10L));
+        for (long i = 11; i <= 20; i++) {
             assertTrue(rangeSet.isDirtyLedgers(i));
         }
     }
