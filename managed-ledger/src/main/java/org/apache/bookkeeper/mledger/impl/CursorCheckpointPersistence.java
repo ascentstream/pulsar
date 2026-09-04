@@ -190,6 +190,10 @@ class CursorCheckpointPersistence {
         List<Long> dirtyOrder = new ArrayList<>(ctx.flushedLedgers);
         Collections.sort(dirtyOrder);
         // mdLedger is written first so other checkpoints in this flush can reference its position.
+        // Known limitation: one flush appends N checkpoints non-atomically; a crash between
+        // appends leaves a legal-but-partial last checkpoint. Failed ledgers are re-marked
+        // dirty (in-process retry), and a crash before that retry simply replays them —
+        // at-least-once semantics.
         List<Long> writeOrder = new ArrayList<>(dirtyOrder.size() + 1);
         writeOrder.add(ctx.mdLedgerId);
         writeOrder.addAll(dirtyOrder);

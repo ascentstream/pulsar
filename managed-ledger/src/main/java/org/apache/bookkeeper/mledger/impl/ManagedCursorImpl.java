@@ -3790,6 +3790,27 @@ public class ManagedCursorImpl implements ManagedCursor {
                                                     metaStoreException));
                                         }
                                     }, false);
+                        } else if (state == State.Closing) {
+                            // A close has no next flush to retry with; fall back to the legacy
+                            // metadata-store snapshot (ack ranges truncated to the configured
+                            // limit) so the final state is durable, matching the legacy close.
+                            // An md-only tombstone would skip the BK checkpoints on recovery and
+                            // drop every persisted hole, replaying more than this fallback.
+                            persistPositionMetaStore(-1, mdEntry.newPosition, mdEntry.properties,
+                                    new MetaStoreCallback<Void>() {
+                                        @Override
+                                        public void operationComplete(Void result, Stat stat) {
+                                            mdEntry.persistedSuccessfully = true;
+                                            persistCallback.operationComplete();
+                                        }
+
+                                        @Override
+                                        public void operationFailed(MetaStoreException metaStoreException) {
+                                            metaStoreException.addSuppressed(cause);
+                                            persistCallback.operationFailed(createManagedLedgerException(
+                                                    metaStoreException));
+                                        }
+                                    }, true);
                         } else {
                             persistCallback.operationComplete();
                         }
