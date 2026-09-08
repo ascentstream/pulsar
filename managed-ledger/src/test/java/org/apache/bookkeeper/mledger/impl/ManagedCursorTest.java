@@ -7357,6 +7357,55 @@ public class ManagedCursorTest extends MockedBookKeeperTestCase {
         ledger.close();
     }
 
+    /**
+     * A crash right after a successful reset (no clean close) must not recover the pre-reset
+     * holes: the reset checkpoint is hole-free, so the messages the reset rewound to are
+     * redelivered instead of being filtered as already-deleted.
+     */
+    @Test(timeOut = 30000)
+    public void testCheckpointResetCursorCrashRecoveryNoHoles() throws Exception {
+        ManagedLedgerConfig config = new ManagedLedgerConfig();
+        config.setPersistentUnackedRangesWithPerLedgerEntryEnabled(true);
+        config.setMaxEntriesPerLedger(3);
+        config.setMaxUnackedRangesToPersistInMetadataStore(-1);
+        config.setThrottleMarkDelete(0);
+
+        String ledgerName = "test_checkpoint_reset_crash_recovery";
+        ManagedLedger ledger = factory.open(ledgerName, config);
+        ManagedCursorImpl cursor = (ManagedCursorImpl) ledger.openCursor("c1");
+        List<Position> positions = new ArrayList<>();
+        for (int i = 0; i < 9; i++) {
+            positions.add(ledger.addEntry(("m-" + i).getBytes(Encoding)));
+        }
+        cursor.markDelete(positions.get(0));
+        for (int i = 4; i <= 7; i++) {
+            cursor.delete(positions.get(i));
+        }
+        cursor.markDelete(positions.get(1)); // persists acks 4..7
+        ManagedCursorImpl persistedCursor = cursor;
+        Awaitility.await().untilAsserted(
+                () -> assertThat(persistedCursor.getStats().getPersistLedgerSucceed()).isGreaterThanOrEqualTo(2));
+
+        // Reset to message 2 and wait for the reset's own persist to be durable, then simulate
+        // a crash: recover with a fresh factory without closing the ledger.
+        cursor.resetCursor(positions.get(2));
+        ManagedCursorImpl resetCursor = cursor;
+        Awaitility.await().untilAsserted(
+                () -> assertThat(resetCursor.getStats().getPersistLedgerSucceed()).isGreaterThan(2));
+
+        ManagedLedgerFactoryImpl recoveryFactory = new ManagedLedgerFactoryImpl(metadataStore, bkc);
+        ManagedLedger recoveredLedger = recoveryFactory.open(ledgerName, config);
+        ManagedCursorImpl recoveredCursor = (ManagedCursorImpl) recoveredLedger.openCursor("c1");
+        assertThat(recoveredCursor.getMarkDeletedPosition())
+                .isEqualTo(recoveredLedger.getPreviousPosition(positions.get(2)));
+        for (int i = 4; i <= 7; i++) {
+            assertThat(recoveredCursor.isMessageDeleted(positions.get(i))).isFalse();
+        }
+        recoveredLedger.close();
+        recoveryFactory.shutdown();
+        ledger.close();
+    }
+
     @Test(timeOut = 30000)
     public void testCheckpointResetConsistentWhenAllPersistsFail() throws Exception {
         ManagedLedgerConfig config = new ManagedLedgerConfig();

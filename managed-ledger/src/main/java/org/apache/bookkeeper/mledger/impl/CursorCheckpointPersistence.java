@@ -88,6 +88,37 @@ class CursorCheckpointPersistence {
     }
 
     /**
+     * Persists a cursor reset: a hole-free checkpoint holding only the mark-delete position and
+     * properties. Every previously written checkpoint becomes stale (the post-reset state has no
+     * holes), so the reference index is cleared — a crash right after a reset must not recover
+     * the pre-reset holes from any checkpoint.
+     */
+    public synchronized CompletableFuture<CursorCheckpointLog.AppendResult> persistReset(
+            LedgerHandle lh, Position mdPos, Map<String, Long> properties) {
+        lastPersist = lastPersist
+                .exceptionally(e -> null)
+                .thenCompose(ignored -> {
+                    CursorCheckpoint.Builder cpBuilder = CursorCheckpoint.newBuilder()
+                            .setMarkDeleteLedgerId(mdPos.getLedgerId())
+                            .setMarkDeleteEntryId(mdPos.getEntryId());
+                    if (properties != null) {
+                        properties.forEach((name, value) -> cpBuilder.addProperties(
+                                LongProperty.newBuilder().setName(name).setValue(value).build()));
+                    }
+                    return writer.appendCheckpoint(lh, cpBuilder.build()).thenApply(result -> {
+                        lock.writeLock().lock();
+                        try {
+                            lastCheckpointPos.clear();
+                        } finally {
+                            lock.writeLock().unlock();
+                        }
+                        return result;
+                    });
+                });
+        return lastPersist;
+    }
+
+    /**
      * Immutable snapshot of cursor state for one flush. Building reads only from this snapshot,
      * not live cursor state, so acks arriving during async appends don't wedge the flush.
      */
