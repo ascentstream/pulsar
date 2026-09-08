@@ -3954,6 +3954,9 @@ public class ManagedCursorImpl implements ManagedCursor {
         STATE_UPDATER.compareAndSet(ManagedCursorImpl.this, State.Open, State.NoLedger);
         mbean.persistToLedger(false);
         // Before giving up, try to persist the position in the metadata store
+        // A reset entry must be persisted md-only: its post-reset state has no holes, and the
+        // in-memory ack state has not been aligned yet (align runs only after this succeeds),
+        // so writing the current ranges here would persist the pre-reset holes.
         persistPositionMetaStore(-1, newPosition, mdEntry.properties, new MetaStoreCallback<Void>() {
             @Override
             public void operationComplete(Void result, Stat stat) {
@@ -3974,7 +3977,7 @@ public class ManagedCursorImpl implements ManagedCursor {
                 mbean.persistToZookeeper(false);
                 callback.operationFailed(createManagedLedgerException(e));
             }
-        }, true);
+        }, !mdEntry.propagatePersistFailure);
     }
 
     boolean shouldCloseLedger(LedgerHandle lh) {
