@@ -3220,6 +3220,8 @@ public class PersistentTopic extends AbstractTopic implements Topic, AddEntryCal
                     cs.messagesConsumedCounter = cursorInternalStats.getMessagesConsumedCounter();
                     cs.cursorLedger = cursorInternalStats.getCursorLedger();
                     cs.cursorLedgerLastEntry = cursorInternalStats.getCursorLedgerLastEntry();
+                    cs.individualDeletedMessagesCount = cursorInternalStats.getIndividualDeletedMessagesCount();
+                    cs.firstIndividualDeletedMessage = cursorInternalStats.getFirstIndividualDeletedMessage();
                     cs.individuallyDeletedMessages = cursorInternalStats.getIndividuallyDeletedMessages();
                     cs.lastLedgerSwitchTimestamp = cursorInternalStats.getLastLedgerSwitchTimestamp();
                     cs.state = cursorInternalStats.getState();
