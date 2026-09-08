@@ -7458,6 +7458,54 @@ public class ManagedCursorTest extends MockedBookKeeperTestCase {
         factory2.shutdownAsync().get(10, TimeUnit.SECONDS);
     }
 
+    /**
+     * Legacy-path counterpart of the reset consistency guarantees: with the per-msgLedger
+     * feature disabled, a reset whose BK checkpoint append fails falls back to the metadata
+     * store. That fallback must be md-only (no pre-reset ack holes), otherwise a crash right
+     * after the reset recovers the pre-reset holes and the messages the reset rewound to are
+     * filtered as already-deleted.
+     */
+    @Test(timeOut = 30000)
+    public void testLegacyResetBkFailureZkFallbackIsMdOnly() throws Exception {
+        ManagedLedgerConfig config = new ManagedLedgerConfig();
+        config.setMaxEntriesPerLedger(3);
+        config.setMaxUnackedRangesToPersistInMetadataStore(-1);
+        config.setThrottleMarkDelete(0);
+
+        String ledgerName = "test_legacy_reset_bk_fail_zk_md_only";
+        ManagedLedger ledger = factory.open(ledgerName, config);
+        ManagedCursorImpl cursor = (ManagedCursorImpl) ledger.openCursor("c1");
+        List<Position> positions = new ArrayList<>();
+        for (int i = 0; i < 9; i++) {
+            positions.add(ledger.addEntry(("m-" + i).getBytes(Encoding)));
+        }
+        cursor.markDelete(positions.get(0));
+        cursor.delete(positions.get(5));
+        cursor.delete(positions.get(8));
+        cursor.markDelete(positions.get(1)); // persists holes 5, 8
+        ManagedCursorImpl persistedCursor = cursor;
+        Awaitility.await().untilAsserted(
+                () -> assertThat(persistedCursor.getStats().getPersistLedgerSucceed()).isGreaterThanOrEqualTo(2));
+
+        // Make the reset's cursor-ledger append fail; the reset then must fall back to a
+        // metadata-store tombstone (md-only) and still complete.
+        bkc.addEntryFailAfter(0, BKException.Code.NoBookieAvailableException);
+        cursor.resetCursor(positions.get(0));
+        assertThat(cursor.isMessageDeleted(positions.get(5))).isFalse();
+        assertThat(cursor.isMessageDeleted(positions.get(8))).isFalse();
+
+        // Recover with a fresh factory (no clean close): the md-only tombstone must not
+        // bring back the pre-reset holes.
+        ManagedLedgerFactoryImpl factory2 = new ManagedLedgerFactoryImpl(metadataStore, bkc);
+        ManagedLedger ledger2 = factory2.open(ledgerName, config);
+        ManagedCursorImpl recovered = (ManagedCursorImpl) ledger2.openCursor("c1");
+        assertThat(recovered.isMessageDeleted(positions.get(5))).isFalse();
+        assertThat(recovered.isMessageDeleted(positions.get(8))).isFalse();
+        assertThat(recovered.getMarkDeletedPosition())
+                .isEqualTo(ledger2.getPreviousPosition(positions.get(0)));
+        factory2.shutdownAsync().get(10, TimeUnit.SECONDS);
+    }
+
     @Test(timeOut = 30000)
     public void testCheckpointClearBacklogRecovery() throws Exception {
         ManagedLedgerConfig config = new ManagedLedgerConfig();
