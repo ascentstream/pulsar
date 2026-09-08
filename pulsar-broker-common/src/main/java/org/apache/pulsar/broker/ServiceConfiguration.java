@@ -2494,7 +2494,9 @@ public class ServiceConfiguration implements PulsarConfiguration {
         doc = "Enables per-msgLedger cursor checkpoint persistence. When true, the cursor "
                 + "writes a CursorCheckpoint per flush (mark-delete ledger's ack state inline + refs "
                 + "to other ledgers' previously-persisted ack states) instead of the legacy single "
-                + "PositionInfo entry. Eliminates write amplification and avoids ack truncation.")
+                + "PositionInfo entry. Eliminates write amplification and avoids ack truncation. "
+                + "Changes the on-disk cursor-ledger format: brokers without this feature cannot "
+                + "parse these ledgers, so do not enable it on clusters that may need to roll back.")
     private boolean persistentUnackedRangesWithPerLedgerEntryEnabled = false;
     @Deprecated
     @FieldContext(
