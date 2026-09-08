@@ -3747,7 +3747,13 @@ public class ManagedCursorImpl implements ManagedCursor {
             }
         };
         if (ackPersistence.isPerLedgerEntryPersistEnabled()) {
-            ackPersistence.persist(lh, mdEntry.newPosition, mdEntry.properties, this)
+            // A reset entry (propagatePersistFailure) persists a hole-free checkpoint: the
+            // post-reset state has no holes, so the pre-reset ack snapshots must not survive.
+            CompletableFuture<CursorCheckpointLog.AppendResult> persistFuture =
+                    mdEntry.propagatePersistFailure
+                            ? ackPersistence.persistReset(lh, mdEntry.newPosition, mdEntry.properties)
+                            : ackPersistence.persist(lh, mdEntry.newPosition, mdEntry.properties, this);
+            persistFuture
                     .thenAccept(result -> {
                         mdEntry.persistedSuccessfully = true;
                         pendingCheckpointHintLedgerId = lh.getId();
@@ -3822,8 +3828,10 @@ public class ManagedCursorImpl implements ManagedCursor {
         Position position = mdEntry.newPosition;
         Builder piBuilder = PositionInfo.newBuilder().setLedgerId(position.getLedgerId())
                 .setEntryId(position.getEntryId())
-                .addAllBatchedEntryDeletionIndexInfo(buildBatchEntryDeletionIndexInfoList())
                 .addAllProperties(buildPropertiesMap(mdEntry.properties));
+        if (!mdEntry.propagatePersistFailure) {
+            piBuilder.addAllBatchedEntryDeletionIndexInfo(buildBatchEntryDeletionIndexInfoList());
+        }
 
         Map<Long, long[]> internalRanges = null;
         /**
@@ -3836,7 +3844,7 @@ public class ManagedCursorImpl implements ManagedCursor {
          * and deserialization error.
          */
 
-        if (getConfig().isPersistIndividualAckAsLongArray()) {
+        if (getConfig().isPersistIndividualAckAsLongArray() && !mdEntry.propagatePersistFailure) {
             lock.readLock().lock();
             try {
                 MutableBoolean truncatedLedger = new MutableBoolean(false);
@@ -3862,7 +3870,11 @@ public class ManagedCursorImpl implements ManagedCursor {
                 lock.readLock().unlock();
             }
         }
-        if (internalRanges != null && !internalRanges.isEmpty()) {
+        if (mdEntry.propagatePersistFailure) {
+            // A reset clears every ack hole; the persisted entry must reflect the post-reset
+            // state so a crash right after the reset does not recover the pre-reset holes.
+            log.debug("[{}]-{} Persisting cursor reset without ack state", ledger.getName(), name);
+        } else if (internalRanges != null && !internalRanges.isEmpty()) {
             piBuilder.addAllIndividualDeletedMessageRanges(buildLongPropertiesMap(internalRanges));
         } else {
             piBuilder.addAllIndividualDeletedMessages(buildIndividualDeletedMessageRanges());
