@@ -202,6 +202,117 @@ public class TripleLongPriorityQueueTest {
     }
 
     @Test
+    public void disableAutoShrinkHoldsCapacityDuringDrain() {
+        int initialCapacity = 20;
+        TripleLongPriorityQueue pq =
+                new TripleLongPriorityQueue(initialCapacity, 0.5f, true);
+        // Grow well beyond the initial backing array.
+        for (int i = 0; i < initialCapacity + 10; i++) {
+            pq.add(i, i, i);
+        }
+        long capacityAfterGrow = pq.bytesCapacity();
+        assertTrue(capacityAfterGrow > initialCapacity * 3L * Byte.BYTES,
+                "expected the backing array to have grown beyond the initial capacity");
+
+        // Drain almost everything (leave 1 to stay off the count==0 fast path in pop).
+        while (pq.size() > 1) {
+            pq.pop();
+        }
+        assertEquals(pq.size(), 1L);
+        assertTrue(pq.bytesCapacity() == capacityAfterGrow,
+                "disableAutoShrink=true must keep the backing array unchanged on pop");
+        pq.close();
+    }
+
+    @Test
+    public void autoShrinkReclaimsDuringDrain() {
+        int initialCapacity = 20;
+        // Default constructor path -> auto shrink on (disableAutoShrink = false).
+        TripleLongPriorityQueue pq = new TripleLongPriorityQueue(initialCapacity, 0.5f);
+        for (int i = 0; i < initialCapacity + 10; i++) {
+            pq.add(i, i, i);
+        }
+        long capacityAfterGrow = pq.bytesCapacity();
+        while (pq.size() > 1) {
+            pq.pop();
+        }
+        assertTrue(pq.bytesCapacity() < capacityAfterGrow,
+                "auto-shrink (default) must reclaim backing memory when draining below threshold");
+        pq.close();
+    }
+
+    @Test
+    public void manualShrinkCapacityReclaimsWhenAutoDisabled() {
+        int initialCapacity = 20;
+        TripleLongPriorityQueue pq =
+                new TripleLongPriorityQueue(initialCapacity, 0.5f, true);
+        for (int i = 0; i < initialCapacity + 10; i++) {
+            pq.add(i, i, i);
+        }
+        while (pq.size() > 1) {
+            pq.pop();
+        }
+        long heldCapacity = pq.bytesCapacity();
+        // Caller-driven reclaim: shrinkCapacity() is public so opt-out callers can still trim.
+        pq.shrinkCapacity();
+        assertTrue(pq.bytesCapacity() < heldCapacity,
+                "manual shrinkCapacity() must reclaim even when auto-shrink is disabled");
+        pq.close();
+    }
+
+    @Test
+    public void clearShrinksRegardlessOfDisableAutoShrink() {
+        int initialCapacity = 20;
+        TripleLongPriorityQueue pq =
+                new TripleLongPriorityQueue(initialCapacity, 0.5f, true);
+        for (int i = 0; i < initialCapacity + 10; i++) {
+            pq.add(i, i, i);
+        }
+        long capacityAfterGrow = pq.bytesCapacity();
+        pq.clear();
+        assertEquals(pq.size(), 0L);
+        assertTrue(pq.bytesCapacity() < capacityAfterGrow,
+                "clear() must reclaim memory regardless of disableAutoShrink");
+        pq.close();
+    }
+
+    @Test
+    public void disableAutoShrinkPreservesOrderingAndReusesCapacityAcrossCycles() {
+        int n = 2000;
+        TripleLongPriorityQueue pq = new TripleLongPriorityQueue(16, 0.5f, true);
+
+        // Cycle 1: fill (descending n1) then drain — must come out ascending.
+        for (int i = 0; i < n; i++) {
+            pq.add(n - i, i / 10L, i);
+        }
+        long capacityAfterCycle1 = pq.bytesCapacity();
+        assertDrainedInAscendingN1Order(pq, n);
+
+        // After a full drain the queue is empty; with disableAutoShrink the backing array is kept,
+        // so refilling the same number of tuples must reuse it (no re-growth).
+        for (int i = 0; i < n; i++) {
+            pq.add(n - i, (n + i) / 10L, n + i);
+        }
+        assertTrue(pq.bytesCapacity() == capacityAfterCycle1,
+                "refill after a full drain must reuse the retained backing array, not re-grow");
+        assertDrainedInAscendingN1Order(pq, n);
+        pq.close();
+    }
+
+    private static void assertDrainedInAscendingN1Order(TripleLongPriorityQueue pq, int expectedCount) {
+        long prev = Long.MIN_VALUE;
+        int count = 0;
+        while (!pq.isEmpty()) {
+            long n1 = pq.peekN1();
+            assertTrue(n1 >= prev, "min-heap ordering broken on drain: " + prev + " -> " + n1);
+            prev = n1;
+            pq.pop();
+            count++;
+        }
+        assertEquals(count, expectedCount);
+    }
+
+    @Test
     public void testDifferentialRandomPriorityQueue() {
         Comparator<long[]> cmp = Comparator.comparingLong((long[] t) -> t[0])
                 .thenComparingLong(t -> t[1])

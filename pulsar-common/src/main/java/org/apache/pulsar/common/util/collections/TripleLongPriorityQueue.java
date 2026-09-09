@@ -66,6 +66,8 @@ public class TripleLongPriorityQueue implements AutoCloseable {
      */
     private final float shrinkFactor;
 
+    private final boolean disableAutoShrink;
+
     private long shrinkThreshold;
 
     /**
@@ -76,12 +78,25 @@ public class TripleLongPriorityQueue implements AutoCloseable {
     }
 
     public TripleLongPriorityQueue(long initialCapacity, float shrinkFactor) {
+        this(initialCapacity, shrinkFactor, false);
+    }
+
+    /**
+     * Create a new priority queue with auto-shrink on pop either enabled (default) or disabled;
+     * callers that disable it drive {@link #shrinkCapacity()} themselves.
+     */
+    public TripleLongPriorityQueue(boolean disableAutoShrink) {
+        this(DEFAULT_INITIAL_CAPACITY, DEFAULT_SHRINK_FACTOR, disableAutoShrink);
+    }
+
+    public TripleLongPriorityQueue(long initialCapacity, float shrinkFactor, boolean disableAutoShrink) {
         checkArgument(initialCapacity > 0);
         checkArgument(shrinkFactor > 0);
         this.array = new SegmentedLongArray(initialCapacity * ITEMS_COUNT);
         this.tuplesCount = 0;
         this.shrinkThreshold = (long) (initialCapacity * shrinkFactor);
         this.shrinkFactor = shrinkFactor;
+        this.disableAutoShrink = disableAutoShrink;
     }
 
     /**
@@ -161,7 +176,9 @@ public class TripleLongPriorityQueue implements AutoCloseable {
         long n3 = array.readLong(lastBase + 2);
 
         siftDown(0, n1, n2, n3);
-        shrinkCapacity();
+        if (!disableAutoShrink) {
+            shrinkCapacity();
+        }
     }
 
     /**
@@ -193,7 +210,12 @@ public class TripleLongPriorityQueue implements AutoCloseable {
         shrinkCapacity();
     }
 
-    private void shrinkCapacity() {
+    /**
+     * Reclaims unused capacity when the queue has shrunk below the threshold. Called
+     * automatically on pop unless auto-shrink was disabled at construction; callers that
+     * disabled it may invoke this directly to trim.
+     */
+    public void shrinkCapacity() {
         if (tuplesCount <= shrinkThreshold && array.getCapacity() > array.getInitialCapacity()) {
             long sizeToShrink = (long) (array.getCapacity() * shrinkFactor * RESERVATION_FACTOR);
             if (sizeToShrink == 0) {
