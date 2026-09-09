@@ -145,6 +145,7 @@ import org.apache.bookkeeper.mledger.impl.cache.EntryCacheManager;
 import org.apache.bookkeeper.mledger.proto.MLDataFormats;
 import org.apache.bookkeeper.mledger.proto.MLDataFormats.ManagedLedgerInfo;
 import org.apache.bookkeeper.mledger.proto.MLDataFormats.ManagedLedgerInfo.LedgerInfo;
+import org.apache.bookkeeper.mledger.proto.MLDataFormats.OffloadContext;
 import org.apache.bookkeeper.mledger.util.Futures;
 import org.apache.bookkeeper.test.MockedBookKeeperTestCase;
 import org.apache.commons.lang3.exception.ExceptionUtils;
@@ -5655,6 +5656,85 @@ public class ManagedLedgerTest extends MockedBookKeeperTestCase {
         ml.asyncRemoveLedgerProperty(lastLedger, "key4").get();
         Assert.assertEquals(ml.getLedgersInfo().get(firstLedger).getPropertiesCount(), 0);
         Assert.assertEquals(ml.getLedgersInfo().get(lastLedger).getPropertiesCount(), 0);
+    }
+
+    /**
+     * Reopening a managed ledger rebuilds the last ledger's LedgerInfo from BookKeeper
+     * (the znode stat is stale while the ledger is the current writing ledger). The rebuild
+     * must only refresh entries/size/timestamp and preserve the fields already persisted in
+     * the znode -- per-ledger properties and the offload context.
+     *
+     * <p>Before the fix, the rebuild created the LedgerInfo from scratch, dropping properties
+     * and offloadContext; the loss was then persisted by the ledger-ids rewrite in
+     * initializeBookKeeper.
+     */
+    @Test(timeOut = 20000)
+    public void testLedgerPropertiesAndOffloadContextPreservedAfterReopen() throws Exception {
+        String name = "testLedgerPropertiesAndOffloadContextPreservedAfterReopen";
+        ManagedLedgerImpl ml = (ManagedLedgerImpl) factory.open(name);
+
+        // One entry before tagging the ledger, so BK is already ahead of the znode stat.
+        ml.addEntry("entry-1".getBytes(Encoding));
+        long lastLedger = ml.ledgers.lastKey();
+
+        // Simulate a ledger that has been offloaded: inject the offload context into the
+        // in-memory info, then persist it together with a ledger property.
+        LedgerInfo infoWithOffload = LedgerInfo.newBuilder().setLedgerId(lastLedger)
+                .setOffloadContext(OffloadContext.newBuilder()
+                        .setUidMsb(11L).setUidLsb(22L).setComplete(true))
+                .build();
+        ml.ledgers.put(lastLedger, infoWithOffload);
+        ml.asyncAddLedgerProperty(lastLedger, "key1", "value1").join();
+
+        // Write more entries after the property write: BK entries/size now lead the znode stat.
+        ml.addEntry("entry-2".getBytes(Encoding));
+        ml.addEntry("entry-3".getBytes(Encoding));
+        ml.close();
+
+        // Reopen: initialize() refreshes the last ledger's stats from BookKeeper.
+        ManagedLedgerImpl mlReopened = (ManagedLedgerImpl) factory.open(name);
+        LedgerInfo info = mlReopened.ledgers.get(lastLedger);
+        Assert.assertNotNull(info);
+
+        // entries/size reflect all the writes recorded by BookKeeper
+        Assert.assertEquals(info.getEntries(), 3L);
+        Assert.assertEquals(info.getSize(),
+                (long) "entry-1".getBytes(Encoding).length + "entry-2".getBytes(Encoding).length
+                        + "entry-3".getBytes(Encoding).length);
+
+        // properties are preserved
+        Assert.assertEquals(info.getPropertiesCount(), 1);
+        Assert.assertEquals(mlReopened.asyncGetLedgerProperty(lastLedger, "key1").join(), "value1");
+
+        // offload context is preserved
+        Assert.assertTrue(info.hasOffloadContext());
+        Assert.assertEquals(info.getOffloadContext().getUidMsb(), 11L);
+        Assert.assertEquals(info.getOffloadContext().getUidLsb(), 22L);
+        Assert.assertTrue(info.getOffloadContext().getComplete());
+        mlReopened.close();
+    }
+
+    /**
+     * Regression: reopening a managed ledger whose last ledger has no properties behaves as
+     * before -- stats are refreshed from BookKeeper and no properties/offload context appear.
+     */
+    @Test(timeOut = 20000)
+    public void testLastLedgerStatsRefreshedAfterReopenWithoutProperties() throws Exception {
+        String name = "testLastLedgerStatsRefreshedAfterReopenWithoutProperties";
+        ManagedLedgerImpl ml = (ManagedLedgerImpl) factory.open(name);
+        ml.addEntry("entry-1".getBytes(Encoding));
+        ml.addEntry("entry-2".getBytes(Encoding));
+        long lastLedger = ml.ledgers.lastKey();
+        ml.close();
+
+        ManagedLedgerImpl mlReopened = (ManagedLedgerImpl) factory.open(name);
+        LedgerInfo info = mlReopened.ledgers.get(lastLedger);
+        Assert.assertNotNull(info);
+        Assert.assertEquals(info.getEntries(), 2L);
+        Assert.assertEquals(info.getSize(), (long) "entry-1".getBytes(Encoding).length * 2);
+        Assert.assertEquals(info.getPropertiesCount(), 0);
+        Assert.assertFalse(info.hasOffloadContext());
+        mlReopened.close();
     }
 
     /**
