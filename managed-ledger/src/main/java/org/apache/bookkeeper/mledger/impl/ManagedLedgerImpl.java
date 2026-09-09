@@ -434,10 +434,16 @@ public class ManagedLedgerImpl implements ManagedLedger, CreateCallback {
                                 if (State.Terminated.equals(state)) {
                                     currentLedger = lh;
                                 }
-                                LedgerInfo info = LedgerInfo.newBuilder().setLedgerId(id)
-                                        .setEntries(lh.getLastAddConfirmed() + 1).setSize(lh.getLength())
-                                        .setTimestamp(clock.millis()).build();
-                                ledgers.put(id, info);
+                                ledgers.compute(id, (ledgerId, oldInfo) -> {
+                                    LedgerInfo.Builder builder = LedgerInfo.newBuilder();
+                                    if (oldInfo != null) {
+                                        builder.mergeFrom(oldInfo);
+                                    } else {
+                                        builder.setLedgerId(ledgerId);
+                                    }
+                                    return builder.setEntries(lh.getLastAddConfirmed() + 1)
+                                            .setSize(lh.getLength()).setTimestamp(clock.millis()).build();
+                                });
                                 if (managedLedgerInterceptor != null) {
                                     managedLedgerInterceptor.onManagedLedgerLastLedgerInitialize(name, lh)
                                         .thenRun(() -> initializeBookKeeper(callback))
