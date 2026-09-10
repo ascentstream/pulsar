@@ -618,7 +618,8 @@ public class SystemTopicBasedTopicPoliciesService implements TopicPoliciesServic
             }
             final var p = policiesFutureHolder.getValue();
             if (!p.getLeft()) {
-                log.info("The future of {} has been removed from cache, retry getTopicPolicies again", namespace);
+                log.info("Policy cache init future for {} is missing, failed or not yet complete, "
+                        + "retry getTopicPolicies again", namespace);
                 return getTopicPoliciesAsync(topicName, type);
             }
             return CompletableFuture.completedFuture(p.getRight());
