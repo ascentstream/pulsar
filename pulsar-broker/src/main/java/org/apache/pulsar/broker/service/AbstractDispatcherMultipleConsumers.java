@@ -32,7 +32,8 @@ import org.apache.pulsar.common.api.proto.CommandSubscribe.SubType;
 public abstract class AbstractDispatcherMultipleConsumers extends AbstractBaseDispatcher {
 
     protected final CopyOnWriteArrayList<Consumer> consumerList = new CopyOnWriteArrayList<>();
-    protected final ObjectSet<Consumer> consumerSet = new ObjectHashSet<>();
+    private final ObjectHashSet<Consumer> consumerSetImpl = new ObjectHashSet<>();
+    protected final ObjectSet<Consumer> consumerSet = consumerSetImpl;
     protected volatile int currentConsumerRoundRobinIndex = 0;
 
     protected static final int FALSE = 0;
