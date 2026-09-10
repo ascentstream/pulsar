@@ -625,10 +625,12 @@ public class PersistentTopic extends AbstractTopic implements Topic, AddEntryCal
                     // always fails with CursorNotFoundException.
                     continue;
                 }
-                String remoteCluster = PersistentReplicator.getRemoteCluster(cursor.getName());
-                if (!replicationClusters.contains(remoteCluster)) {
-                    log.warn("Remove the orphan replicator because the cluster '{}' does not exist", remoteCluster);
-                    futures.add(removeReplicator(remoteCluster));
+                Optional<String> remoteCluster =
+                        AbstractReplicator.getRemoteCluster(replicatorPrefix, cursor.getName());
+                if (remoteCluster.isPresent() && !replicationClusters.contains(remoteCluster.get())) {
+                    log.warn("Remove the orphan replicator because the cluster '{}' does not exist",
+                            remoteCluster.get());
+                    futures.add(removeReplicator(remoteCluster.get()));
                 }
             }
         }
