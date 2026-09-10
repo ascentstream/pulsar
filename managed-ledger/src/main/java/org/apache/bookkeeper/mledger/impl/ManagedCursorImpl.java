@@ -3766,26 +3766,38 @@ public class ManagedCursorImpl implements ManagedCursor {
                             // rewind (getRollbackPosition) to the pre-reset position and skip the
                             // messages the reset meant to replay. Refresh the ZK mark-delete with
                             // the reset position — md-only is a complete representation because
-                            // the post-reset state has no holes. Best effort: a failure here
-                            // leaves the state no worse than before this refresh.
+                            // the post-reset state has no holes.
+                            //
+                            // The refresh gates the reset's completion (persistCallback), so the
+                            // RESET_CURSOR_IN_PROGRESS guard covers it: consecutive resets are
+                            // serialized and an older refresh can never land after a newer one.
+                            // A failure — including BadVersion against a racing rollover write —
+                            // fails the reset itself instead of returning success with a stale
+                            // ZK md; the in-memory state stays untouched and a caller retry
+                            // re-runs the refresh with the refreshed stat.
                             persistPositionMetaStore(lh.getId(), mdEntry.newPosition, mdEntry.properties,
                                     new MetaStoreCallback<Void>() {
                                         @Override
                                         public void operationComplete(Void ignored, Stat stat) {
                                             mbean.persistToZookeeper(true);
+                                            rolloverLedgerIfNeeded(lh);
+                                            persistCallback.operationComplete();
                                         }
 
                                         @Override
                                         public void operationFailed(MetaStoreException e) {
                                             log.warn("[{}-{}] Failed to refresh metadata store after cursor "
-                                                    + "reset, ledgerId: {}, errorMessage: {}", ledger.getName(),
-                                                    name, lh.getId(), e.getMessage());
+                                                    + "reset, failing the reset, ledgerId: {}, errorMessage: {}",
+                                                    ledger.getName(), name, lh.getId(), e.getMessage());
                                             mbean.persistToZookeeper(false);
+                                            persistCallback.operationFailed(
+                                                    createManagedLedgerException(e));
                                         }
                                     }, false);
+                        } else {
+                            rolloverLedgerIfNeeded(lh);
+                            persistCallback.operationComplete();
                         }
-                        rolloverLedgerIfNeeded(lh);
-                        persistCallback.operationComplete();
                     })
                     .exceptionally(error -> {
                         Throwable cause = FutureUtil.unwrapCompletionException(error);
