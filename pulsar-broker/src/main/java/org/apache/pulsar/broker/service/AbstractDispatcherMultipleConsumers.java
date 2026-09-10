@@ -76,6 +76,18 @@ public abstract class AbstractDispatcherMultipleConsumers extends AbstractBaseDi
         return consumerList.size() == 1 && consumerSet.contains(consumer);
     }
 
+    /**
+     * Checks whether the exact Consumer instance is still connected.
+     *
+     * <p>This differs from {@link ObjectSet#contains(Object)}, which uses {@link Consumer#equals(Object)} and can
+     * match a replacement Consumer that reuses the same protocol identity.
+     * The caller must hold the dispatcher monitor while checking membership and acting on the result.
+     */
+    protected final boolean containsConsumerInstance(Consumer consumer) {
+        int index = consumerSetImpl.indexOf(consumer);
+        return consumerSetImpl.indexExists(index) && consumerSetImpl.indexGet(index) == consumer;
+    }
+
     public boolean isClosed() {
         return isClosed == TRUE;
     }
