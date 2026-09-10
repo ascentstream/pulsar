@@ -6688,6 +6688,101 @@ public class ManagedCursorTest extends MockedBookKeeperTestCase {
         ledger.close();
     }
 
+    @Test(timeOut = 60000)
+    public void testCheckpointResetCursorReleasesOldLedgersForGc() throws Exception {
+        ManagedLedgerConfig config = new ManagedLedgerConfig();
+        config.setPersistentUnackedRangesWithPerLedgerEntryEnabled(true);
+        config.setMaxEntriesPerLedger(2);
+        config.setMetadataMaxEntriesPerLedger(2); // frequent rollovers
+        config.setMaxUnackedRangesToPersistInMetadataStore(-1);
+        config.setThrottleMarkDelete(0);
+
+        String ledgerName = "test_checkpoint_reset_releases_gc";
+        ManagedLedger ledger = factory.open(ledgerName, config);
+        ManagedCursorImpl cursor = (ManagedCursorImpl) ledger.openCursor("c1");
+
+        List<Position> positions = new ArrayList<>();
+        for (int i = 0; i < 9; i++) {
+            positions.add(ledger.addEntry(("m-" + i).getBytes(Encoding)));
+        }
+        // Hole above mark-delete in a higher data ledger: refs keep the retired cursor ledger
+        // alive and the maxHold GC gate stays blocked.
+        cursor.markDelete(positions.get(1));
+        long initialCursorLedger = cursor.getCursorLedger();
+        cursor.delete(positions.get(5));
+        ManagedCursorImpl cursorRef = cursor;
+        Awaitility.await().untilAsserted(() ->
+                assertThat(cursorRef.getCursorLedger()).isNotEqualTo(initialCursorLedger));
+        Set<Long> retiredCursorLedgers = new HashSet<>();
+        retiredCursorLedgers.add(initialCursorLedger);
+
+        cursor.gcOldCursorLedgers();
+        Awaitility.await().untilAsserted(() ->
+                assertThat(bkc.getLedgers()).containsAnyElementsOf(retiredCursorLedgers));
+
+        // The reset persists a hole-free checkpoint and clears the ref index: the retired
+        // ledger is no longer referenced and the GC gate passes (no active ack ledgers).
+        cursor.resetCursor(positions.get(0));
+        assertThat(cursor.isMessageDeleted(positions.get(5))).isFalse();
+        Awaitility.await().untilAsserted(() -> {
+            cursorRef.gcOldCursorLedgers();
+            assertThat(bkc.getLedgers()).doesNotContainAnyElementsOf(retiredCursorLedgers);
+        });
+
+        // Recovery after the reset must not resurrect the pre-reset holes.
+        ledger.close();
+        ledger = factory.open(ledgerName, config);
+        cursor = (ManagedCursorImpl) ledger.openCursor("c1");
+        assertThat(cursor.getMarkDeletedPosition()).isEqualTo(ledger.getPreviousPosition(positions.get(0)));
+        assertThat(cursor.isMessageDeleted(positions.get(5))).isFalse();
+        ledger.close();
+    }
+
+    @Test(timeOut = 60000)
+    public void testCheckpointClearBacklogReleasesOldLedgersForGc() throws Exception {
+        ManagedLedgerConfig config = new ManagedLedgerConfig();
+        config.setPersistentUnackedRangesWithPerLedgerEntryEnabled(true);
+        config.setMaxEntriesPerLedger(2);
+        config.setMetadataMaxEntriesPerLedger(2); // frequent rollovers
+        config.setMaxUnackedRangesToPersistInMetadataStore(-1);
+        config.setThrottleMarkDelete(0);
+
+        String ledgerName = "test_checkpoint_clear_backlog_releases_gc";
+        ManagedLedger ledger = factory.open(ledgerName, config);
+        ManagedCursorImpl cursor = (ManagedCursorImpl) ledger.openCursor("c1");
+
+        List<Position> positions = new ArrayList<>();
+        for (int i = 0; i < 9; i++) {
+            positions.add(ledger.addEntry(("m-" + i).getBytes(Encoding)));
+        }
+        cursor.markDelete(positions.get(1));
+        long initialCursorLedger = cursor.getCursorLedger();
+        cursor.delete(positions.get(5));
+        ManagedCursorImpl cursorRef = cursor;
+        Awaitility.await().untilAsserted(() ->
+                assertThat(cursorRef.getCursorLedger()).isNotEqualTo(initialCursorLedger));
+        Set<Long> retiredCursorLedgers = new HashSet<>();
+        retiredCursorLedgers.add(initialCursorLedger);
+
+        // clearBacklog is a forward mark-delete to the last position: it absorbs the hole,
+        // the next flush prunes the ref index, and the retired ledger becomes reclaimable.
+        cursor.clearBacklog();
+        assertThat(cursor.hasMoreEntries()).isFalse();
+        Awaitility.await().untilAsserted(() -> {
+            cursorRef.gcOldCursorLedgers();
+            assertThat(bkc.getLedgers()).doesNotContainAnyElementsOf(retiredCursorLedgers);
+        });
+
+        ledger.close();
+        ledger = factory.open(ledgerName, config);
+        cursor = (ManagedCursorImpl) ledger.openCursor("c1");
+        // Marking the last entry bumps md to the next ledger boundary, so compare by order.
+        assertThat(cursor.getMarkDeletedPosition().compareTo(ledger.getLastConfirmedEntry()))
+                .isGreaterThanOrEqualTo(0);
+        assertThat(cursor.hasMoreEntries()).isFalse();
+        ledger.close();
+    }
+
     @Test(timeOut = 30000)
     public void testCheckpointBatchAckPersistAndRecover() throws Exception {
         ManagedLedgerConfig config = new ManagedLedgerConfig();
