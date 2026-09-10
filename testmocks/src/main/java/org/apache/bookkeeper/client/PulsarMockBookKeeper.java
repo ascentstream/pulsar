@@ -208,6 +208,12 @@ public class PulsarMockBookKeeper extends BookKeeper {
         this.deleteLedgerFailure = deleteLedgerFailure;
     }
 
+    // Test hook: the next addEntry blocks until the given future completes (used to freeze a
+    // persist chain mid-flight and observe state that only exists while a flush is pending).
+    public void blockNextAddEntry(java.util.concurrent.CompletableFuture<Void> gate) {
+        addEntryFailures.add(gate);
+    }
+
     @Override
     public void asyncDeleteLedger(long lId, DeleteCallback cb, Object ctx) {
         if (deleteLedgerFailure != null && deleteLedgerFailure.getAsBoolean()) {

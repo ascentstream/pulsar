@@ -6547,6 +6547,147 @@ public class ManagedCursorTest extends MockedBookKeeperTestCase {
         ledger.close();
     }
 
+    @Test(timeOut = 60000)
+    public void testCheckpointGcRetainsLedgersReferencedByLastCheckpoint() throws Exception {
+        ManagedLedgerConfig config = new ManagedLedgerConfig();
+        config.setPersistentUnackedRangesWithPerLedgerEntryEnabled(true);
+        config.setMaxEntriesPerLedger(2);
+        config.setMetadataMaxEntriesPerLedger(2); // frequent rollovers
+        config.setMaxUnackedRangesToPersistInMetadataStore(-1);
+        config.setThrottleMarkDelete(0);
+
+        String ledgerName = "test_checkpoint_gc_referenced_targets";
+        ManagedLedger ledger = factory.open(ledgerName, config);
+        ManagedCursorImpl cursor = (ManagedCursorImpl) ledger.openCursor("c1");
+
+        List<Position> positions = new ArrayList<>();
+        for (int i = 0; i < 9; i++) {
+            positions.add(ledger.addEntry(("m-" + i).getBytes(Encoding)));
+        }
+        // md stays in the first data ledger; the hole lives in a higher data ledger (not the
+        // md ledger, whose position advances on every flush), so the hole ledger stays active
+        // and referenced from the retired ledger's checkpoint.
+        cursor.markDelete(positions.get(1));
+        long initialCursorLedger = cursor.getCursorLedger();
+        cursor.delete(positions.get(5));
+
+        // Wait until the cursor ledger rolled over: the rollover checkpoint lands in the new
+        // ledger and carries the AckStateRef pointing back into the retired ledger, which is
+        // then tracked in allCursorLedgerIds.
+        ManagedCursorImpl cursorRef = cursor;
+        Awaitility.await().untilAsserted(() ->
+                assertThat(cursorRef.getCursorLedger()).isNotEqualTo(initialCursorLedger));
+        Set<Long> retiredCursorLedgers = new HashSet<>();
+        retiredCursorLedgers.add(initialCursorLedger);
+
+        // Freeze a pre-drain flush mid-chain: its context snapshot (and its ref to the retired
+        // ledger) is taken, but its append blocks on the gate. The reference index cannot be
+        // pruned past this point until the gate opens.
+        CompletableFuture<Void> persistGate = new CompletableFuture<>();
+        ((org.apache.bookkeeper.client.PulsarMockBookKeeper) bkc).blockNextAddEntry(persistGate);
+        Thread flusher = new Thread(() -> {
+            try {
+                // Advances md within the second data ledger, below the hole's ledger: the
+                // flush re-inlines only the md ledger and leaves the hole ledger's reference
+                // in the retired cursor ledger untouched.
+                cursor.markDelete(positions.get(3));
+            } catch (Exception ignore) {
+                // the gate controls completion; failures here don't matter to the test
+            }
+        }, "checkpoint-gc-test-flusher");
+        flusher.start();
+        // The flusher's in-memory update is visible before it blocks on the persist, so by
+        // now its flush has snapshotted the reference index intact and is parked on the gate.
+        Awaitility.await().untilAsserted(() ->
+                assertThat(cursor.getMarkDeletedPosition()).isEqualTo(positions.get(3)));
+
+        // Drain in memory: mark-delete absorbs the hole (the GC gate passes), and the drain
+        // flush queues behind the blocked one, so the stale ref index survives — the exact
+        // state a crash between the last append and a re-flush would hit.
+        Thread drainer = new Thread(() -> {
+            try {
+                cursor.markDelete(positions.get(8));
+            } catch (Exception ignore) {
+                // the gate controls completion; failures here don't matter to the test
+            }
+        }, "checkpoint-gc-test-drainer");
+        drainer.start();
+        Awaitility.await().untilAsserted(() ->
+                assertThat(cursor.getMarkDeletedPosition()).isEqualTo(positions.get(8)));
+
+        // The retired ledger is still referenced by the last appended checkpoint: GC must not
+        // delete it, or recovery of that checkpoint would rewind to the ZK snapshot.
+        cursor.gcOldCursorLedgers();
+        Awaitility.await().untilAsserted(() -> {
+            assertThat(bkc.getLedgers()).containsAnyElementsOf(retiredCursorLedgers);
+        });
+
+        // Release the gate: both flushes run, the drain flush prunes the stale ref, and a
+        // later GC must reclaim the retained ledger (the skip must not leak forever).
+        persistGate.complete(null);
+        flusher.join(10_000);
+        drainer.join(10_000);
+        Awaitility.await().untilAsserted(() -> {
+            cursorRef.gcOldCursorLedgers();
+            assertThat(bkc.getLedgers()).doesNotContainAnyElementsOf(retiredCursorLedgers);
+        });
+        assertThat(cursor.isMessageDeleted(positions.get(5))).isTrue();
+        ledger.close();
+    }
+
+    @Test(timeOut = 60000)
+    public void testCheckpointOldCursorLedgersDeletedOnCursorDelete() throws Exception {
+        ManagedLedgerConfig config = new ManagedLedgerConfig();
+        config.setPersistentUnackedRangesWithPerLedgerEntryEnabled(true);
+        config.setMaxEntriesPerLedger(2);
+        config.setMetadataMaxEntriesPerLedger(2); // frequent cursor-ledger rollovers
+        config.setMaxUnackedRangesToPersistInMetadataStore(-1);
+        config.setThrottleMarkDelete(0);
+
+        String ledgerName = "test_checkpoint_gc_on_cursor_delete";
+        ManagedLedger ledger = factory.open(ledgerName, config);
+        ManagedCursorImpl cursor = (ManagedCursorImpl) ledger.openCursor("c1");
+
+        // Keep holes strictly above mark-delete's ledger: each data ledger's last entry is
+        // individually deleted (the hole), while md only ever marks a PREVIOUS ledger's first
+        // entry (marking a ledger's last entry would bump md to the next ledger's boundary).
+        // The maxHold GC gate therefore stays blocked and every rollover accumulates another
+        // retained old cursor ledger.
+        List<Position> written = new ArrayList<>();
+        Set<Long> seenCursorLedgers = new HashSet<>();
+        seenCursorLedgers.add(cursor.getCursorLedger());
+        for (int k = 0; k < 10; k++) {
+            written.add(ledger.addEntry(("m-" + 2 * k).getBytes(Encoding)));
+            written.add(ledger.addEntry(("m-" + (2 * k + 1)).getBytes(Encoding)));
+            cursor.delete(written.get(2 * k + 1)); // hole: last entry of data ledger k
+            if (k >= 1) {
+                Position toMark = written.get(2 * (k - 1)); // first entry of ledger k-1
+                if (toMark.compareTo(cursor.getMarkDeletedPosition()) > 0) {
+                    cursor.markDelete(toMark);
+                }
+            }
+            seenCursorLedgers.add(cursor.getCursorLedger());
+        }
+        assertThat(seenCursorLedgers.size()).isGreaterThan(1);
+
+        ManagedCursorImpl cursorRef = cursor;
+        Awaitility.await().untilAsserted(() -> {
+            Set<Long> live = bkc.getLedgers();
+            long currentId = cursorRef.getCursorLedger();
+            // Old cursor ledgers are retained for the live refs — they must still exist here.
+            boolean anyRetained = seenCursorLedgers.stream()
+                    .anyMatch(id -> id != currentId && live.contains(id));
+            assertThat(anyRetained).isTrue();
+        });
+
+        // Deleting the cursor releases every ref: the current ledger AND all retained old
+        // cursor ledgers must be reclaimed.
+        ledger.deleteCursor("c1");
+        Awaitility.await().untilAsserted(() ->
+                assertThat(bkc.getLedgers()).doesNotContainAnyElementsOf(seenCursorLedgers));
+        ledger.close();
+    }
+
     @Test(timeOut = 30000)
     public void testCheckpointBatchAckPersistAndRecover() throws Exception {
         ManagedLedgerConfig config = new ManagedLedgerConfig();

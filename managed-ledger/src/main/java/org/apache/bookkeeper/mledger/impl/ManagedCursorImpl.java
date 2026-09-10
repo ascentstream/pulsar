@@ -3998,12 +3998,16 @@ public class ManagedCursorImpl implements ManagedCursor {
     /**
      * GC for old cursor ledgers. Uses the simplified {@code maxHold} model — when
      * mark-delete has advanced past the highest msgLedgerId that still holds individual or batch
-     * acks,
-     * all referenced AckStateRefs are stale and every old cursor ledger can be deleted.
+     * acks, the tracked old cursor ledgers become reclaimable.
      *
-     * <p>This is an all-or-nothing GC: it either deletes all tracked old ledgers or none.
-     * Unreferenced ledgers that were never tracked (e.g. from before a restart) leak —
-     * acceptable because they hold no live data.
+     * <p>Deletion is selective: a tracked ledger is deleted only when it is not a current
+     * {@code AckStateRef} target (see
+     * {@link CursorCheckpointPersistence#referencedCursorLedgerIds()}). While the last appended
+     * checkpoint still references old ledgers — e.g. the acks drained only after that checkpoint
+     * was written — those targets survive until a later rollover, so recovery of the last
+     * checkpoint stays possible instead of rewinding to the ZK snapshot. Unreferenced ledgers
+     * that were never tracked (e.g. from before a restart) leak — acceptable because they hold
+     * no live data.
      */
     @VisibleForTesting
     void gcOldCursorLedgers() {
@@ -4036,7 +4040,18 @@ public class ManagedCursorImpl implements ManagedCursor {
         if (maxHold[0] >= 0 && mdLedgerId < maxHold[0]) {
             return;
         }
+        final long liveLedgerId = cursorLedger != null ? cursorLedger.getId() : -1;
+        Set<Long> referencedLedgers = ackPersistence.referencedCursorLedgerIds();
         for (long id : new ArrayList<>(allCursorLedgerIds)) {
+            if (id == liveLedgerId) {
+                // Defensive: the live ledger is never a GC candidate, even when fully drained.
+                continue;
+            }
+            if (referencedLedgers.contains(id)) {
+                log.debug("Skipping GC of old cursor ledger - still referenced by the latest checkpoint, "
+                        + "ledgerId: {}", id);
+                continue;
+            }
             log.debug("GC old cursor ledger - maxHold cleared, ledgerId: {}", id);
             bookkeeper.asyncDeleteLedger(id, (rc, ctx) -> {
                 if (rc == BKException.Code.OK || rc == BKException.Code.NoSuchLedgerExistsException) {
@@ -4216,6 +4231,30 @@ public class ManagedCursorImpl implements ManagedCursor {
         asyncDeleteCursorLedger(DEFAULT_LEDGER_DELETE_RETRIES);
     }
 
+    /**
+     * Best-effort deletion of the tracked old cursor ledgers during cursor deletion. The
+     * current {@code cursorLedger} is excluded — the caller owns its deletion (with retries
+     * and the state machine). A failed old-ledger delete only warns: it is retried if the
+     * current-ledger deletion also fails and re-enters this path.
+     */
+    private void deleteOldCursorLedgersOnCursorDeletion() {
+        final long currentLedgerId = cursorLedger != null ? cursorLedger.getId() : -1;
+        for (long id : new ArrayList<>(allCursorLedgerIds)) {
+            if (id == currentLedgerId) {
+                continue;
+            }
+            bookkeeper.asyncDeleteLedger(id, (rc, ctx) -> {
+                if (rc == BKException.Code.OK || rc == BKException.Code.NoSuchLedgerExistsException) {
+                    allCursorLedgerIds.remove(id);
+                } else {
+                    log.warn("[{}-{}] Failed to delete old cursor ledger during cursor deletion, "
+                                    + "ledgerId: {}, errorMessage: {}",
+                            ledger.getName(), name, id, BKException.getMessage(rc));
+                }
+            }, null);
+        }
+    }
+
     private void asyncDeleteCursorLedger(int retry) {
         State beforeChangingState = changeStateToDeletingIfNotDeleted();
         if (beforeChangingState == State.Deleted) {
@@ -4225,6 +4264,11 @@ public class ManagedCursorImpl implements ManagedCursor {
         }
 
         closeWaitingCursor();
+
+        // The cursor is going away, so every old cursor ledger retained for AckStateRefs becomes
+        // unreferenced. gcOldCursorLedgers only runs on rollover and never observes a deleted
+        // cursor — without this cleanup those ledgers (and their metadata) would leak.
+        deleteOldCursorLedgersOnCursorDeletion();
 
         if (cursorLedger == null) {
             log.warn("[{}-{}] There's no cursor ledger available for deletion.", ledger.getName(), name);
@@ -4238,7 +4282,6 @@ public class ManagedCursorImpl implements ManagedCursor {
             state = State.DeletingFailed;
             return;
         }
-
         ledger.mbean.startCursorLedgerDeleteOp();
         bookkeeper.asyncDeleteLedger(cursorLedger.getId(), (rc, ctx) -> {
             ledger.mbean.endCursorLedgerDeleteOp();

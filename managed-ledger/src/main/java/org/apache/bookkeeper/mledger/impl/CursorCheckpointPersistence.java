@@ -313,6 +313,26 @@ class CursorCheckpointPersistence {
         });
     }
 
+    /**
+     * Cursor-ledger ids holding the latest persisted position of some msg ledger — exactly the
+     * targets the last appended checkpoint's {@code AckStateRef}s (and the next flush) resolve
+     * to. GC must not delete these ledgers: a crash before a newer ref-free checkpoint is
+     * written would leave the last checkpoint referencing deleted ledgers and force recovery
+     * to rewind to the ZK snapshot, losing every persisted hole.
+     */
+    Set<Long> referencedCursorLedgerIds() {
+        lock.readLock().lock();
+        try {
+            Set<Long> ids = new HashSet<>();
+            for (Position position : lastCheckpointPos.values()) {
+                ids.add(position.getLedgerId());
+            }
+            return ids;
+        } finally {
+            lock.readLock().unlock();
+        }
+    }
+
     /** Validates no duplicate msgLedgerIds and that all refs resolved. Fails fast on corruption. */
     private static void validateRecoveredAckData(CursorCheckpoint cp, Map<Long, AckStateData> fetched) {
         Set<Long> expected = new HashSet<>(cp.getAckStatesCount() + cp.getAckStateRefsCount());
