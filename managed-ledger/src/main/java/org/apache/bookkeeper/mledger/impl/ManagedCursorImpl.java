@@ -663,15 +663,8 @@ public class ManagedCursorImpl implements ManagedCursor {
                         recoverIndividualDeletedMessages(info.getIndividualDeletedMessagesList());
                     }
 
-                    Map<String, Long> recoveredProperties = Collections.emptyMap();
-                    if (info.getPropertiesCount() > 0) {
-                        // Recover properties map
-                        recoveredProperties = new HashMap<>();
-                        for (int i = 0; i < info.getPropertiesCount(); i++) {
-                            LongProperty property = info.getProperties(i);
-                            recoveredProperties.put(property.getName(), property.getValue());
-                        }
-                    }
+                    Map<String, Long> recoveredProperties =
+                            recoverProperties(info.getPropertiesCount(), info::getProperties);
 
                     recoverLastActive(info.getIdleSince());
                     recoveredCursor(recoveredPosition, recoveredProperties, recoveredCursorProperties, null);
@@ -696,6 +689,10 @@ public class ManagedCursorImpl implements ManagedCursor {
         // a new ledger and write the position into it
         ledger.mbean.startCursorLedgerOpenOp();
         long ledgerId = info.getCursorsLedgerId();
+        // If the cursor ledger cannot be read, the cursor is rolled back to the position snapshotted in
+        // ManagedCursorInfo. The properties saved alongside that snapshot must be carried over: initialize()
+        // persists whatever map it receives, so passing an empty map would durably wipe them out.
+        Map<String, Long> rollbackProperties = recoverProperties(info.getPropertiesCount(), info::getProperties);
         OpenCallback openCallback = (rc, lh, ctx) -> {
             if (log.isInfoEnabled()) {
                 log.info("[{}] Opened ledger {} for cursor {}. rc={}", ledger.getName(), ledgerId, name, rc);
@@ -704,7 +701,7 @@ public class ManagedCursorImpl implements ManagedCursor {
                 log.error("[{}] Error opening metadata ledger {} for cursor {}: {}", ledger.getName(), ledgerId, name,
                         BKException.getMessage(rc));
                 // Rewind to the oldest entry available
-                initialize(getRollbackPosition(info), Collections.emptyMap(), cursorProperties, callback);
+                initialize(getRollbackPosition(info), rollbackProperties, cursorProperties, callback);
                 return;
             } else if (rc != BKException.Code.OK) {
                 log.warn("[{}] Error opening metadata ledger {} for cursor {}: {}", ledger.getName(), ledgerId, name,
@@ -720,7 +717,7 @@ public class ManagedCursorImpl implements ManagedCursor {
                 log.warn("[{}] Error reading from metadata ledger {} for cursor {}: No entries in ledger",
                         ledger.getName(), ledgerId, name);
                 // Rewind to last cursor snapshot available
-                initialize(getRollbackPosition(info), Collections.emptyMap(), cursorProperties, callback);
+                initialize(getRollbackPosition(info), rollbackProperties, cursorProperties, callback);
                 return;
             }
 
@@ -732,7 +729,7 @@ public class ManagedCursorImpl implements ManagedCursor {
                     log.error("[{}] Error reading from metadata ledger {} for cursor {}: {}", ledger.getName(),
                             ledgerId, name, BKException.getMessage(rc1));
                     // Rewind to the oldest entry available
-                    initialize(getRollbackPosition(info), Collections.emptyMap(), cursorProperties, callback);
+                    initialize(getRollbackPosition(info), rollbackProperties, cursorProperties, callback);
                     return;
                 } else if (rc1 != BKException.Code.OK) {
                     log.warn("[{}] Error reading from metadata ledger {} for cursor {}: {}", ledger.getName(),
@@ -766,7 +763,15 @@ public class ManagedCursorImpl implements ManagedCursor {
                 Throwable cause = FutureUtil.unwrapCompletionException(recoverError);
                 log.warn("Per-msgLedger checkpoint recovery failed, rewinding to ZK snapshot, ledgerId: {}",
                         cursorLedgerId, cause);
-                initialize(getRollbackPosition(info), Collections.emptyMap(), cursorProperties, callback);
+                // If the cursor ledger cannot be read, the cursor is rolled back to the position snapshotted in
+                // ManagedCursorInfo. The properties saved alongside that snapshot must be carried over: initialize()
+                // persists whatever map it receives, so passing an empty map would durably wipe them out.
+                Map<String, Long> rollbackProperties = new HashMap<>();
+                for (int i = 0; i < info.getPropertiesCount(); i++) {
+                    LongProperty property = info.getProperties(i);
+                    rollbackProperties.put(property.getName(), property.getValue());
+                }
+                initialize(getRollbackPosition(info), rollbackProperties, cursorProperties, callback);
                 return;
             }
             if (recovered != null && !recovered.isLegacy()) {
@@ -818,6 +823,19 @@ public class ManagedCursorImpl implements ManagedCursor {
         });
         individualDeletedMessagesSerializedSize = serializedSize.toInteger();
         return longListMap;
+    }
+
+    private static Map<String, Long> recoverProperties(int count, IntFunction<LongProperty> accessor) {
+        Map<String, Long> properties = Collections.emptyMap();
+        if (count > 0) {
+            // Recover properties map
+            properties = new HashMap<>();
+            for (int i = 0; i < count; i++) {
+                LongProperty property = accessor.apply(i);
+                properties.put(property.getName(), property.getValue());
+            }
+        }
+        return properties;
     }
 
     private void recoverIndividualDeletedMessages(List<MLDataFormats.MessageRange> individualDeletedMessagesList) {
