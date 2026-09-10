@@ -3760,6 +3760,30 @@ public class ManagedCursorImpl implements ManagedCursor {
                         pendingCheckpointHintEntryId = result.commitEntryId();
                         mbean.persistToLedger(true);
                         mbean.addWriteCursorLedgerSize(result.totalBytes());
+                        if (mdEntry.propagatePersistFailure) {
+                            // A backward reset moves the position behind the ZK snapshot. Until
+                            // the next rollover rewrites ZK, a checkpoint recovery failure would
+                            // rewind (getRollbackPosition) to the pre-reset position and skip the
+                            // messages the reset meant to replay. Refresh the ZK mark-delete with
+                            // the reset position — md-only is a complete representation because
+                            // the post-reset state has no holes. Best effort: a failure here
+                            // leaves the state no worse than before this refresh.
+                            persistPositionMetaStore(lh.getId(), mdEntry.newPosition, mdEntry.properties,
+                                    new MetaStoreCallback<Void>() {
+                                        @Override
+                                        public void operationComplete(Void ignored, Stat stat) {
+                                            mbean.persistToZookeeper(true);
+                                        }
+
+                                        @Override
+                                        public void operationFailed(MetaStoreException e) {
+                                            log.warn("[{}-{}] Failed to refresh metadata store after cursor "
+                                                    + "reset, ledgerId: {}, errorMessage: {}", ledger.getName(),
+                                                    name, lh.getId(), e.getMessage());
+                                            mbean.persistToZookeeper(false);
+                                        }
+                                    }, false);
+                        }
                         rolloverLedgerIfNeeded(lh);
                         persistCallback.operationComplete();
                     })
@@ -4018,7 +4042,11 @@ public class ManagedCursorImpl implements ManagedCursor {
         // Find the highest msgLedgerId that currently has individual acks above mark-delete.
         // individualDeletedMessages.rangeBitmapMap is not thread-safe, so the iteration must
         // hold the cursor readLock to prevent concurrent mark-delete / delete modifications.
+        // The ref targets are sampled in the same critical section (reentrant read lock): one
+        // atomic observation removes any interleaving between "gate passes" and "targets"
+        // that a future change would otherwise have to reason about.
         long[] maxHold = {-1};
+        Set<Long> referencedLedgers;
         lock.readLock().lock();
         try {
             individualDeletedMessages.forEachActiveLedger(id -> {
@@ -4034,6 +4062,7 @@ public class ManagedCursorImpl implements ManagedCursor {
                     }
                 });
             }
+            referencedLedgers = ackPersistence.referencedCursorLedgerIds();
         } finally {
             lock.readLock().unlock();
         }
@@ -4041,7 +4070,6 @@ public class ManagedCursorImpl implements ManagedCursor {
             return;
         }
         final long liveLedgerId = cursorLedger != null ? cursorLedger.getId() : -1;
-        Set<Long> referencedLedgers = ackPersistence.referencedCursorLedgerIds();
         for (long id : new ArrayList<>(allCursorLedgerIds)) {
             if (id == liveLedgerId) {
                 // Defensive: the live ledger is never a GC candidate, even when fully drained.
@@ -4235,7 +4263,9 @@ public class ManagedCursorImpl implements ManagedCursor {
      * Best-effort deletion of the tracked old cursor ledgers during cursor deletion. The
      * current {@code cursorLedger} is excluded — the caller owns its deletion (with retries
      * and the state machine). A failed old-ledger delete only warns: it is retried if the
-     * current-ledger deletion also fails and re-enters this path.
+     * current-ledger deletion also fails and re-enters this path. If the current ledger is
+     * deleted while an old-ledger delete fails, no retry trigger remains and that ledger is
+     * orphaned — an accepted, rare best-effort leak bounded by one ledger per failed delete.
      */
     private void deleteOldCursorLedgersOnCursorDeletion() {
         final long currentLedgerId = cursorLedger != null ? cursorLedger.getId() : -1;
