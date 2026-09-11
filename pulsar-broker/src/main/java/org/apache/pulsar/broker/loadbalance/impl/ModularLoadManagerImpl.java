@@ -704,7 +704,9 @@ public class ModularLoadManagerImpl implements ModularLoadManager {
         recentlyUnloadedBundles.keySet().removeIf(e -> recentlyUnloadedBundles.get(e) < timeout);
 
         Set<String> sheddingExcludedNamespaces = conf.getLoadBalancerSheddingExcludedNamespaces();
-        final Multimap<String, String> bundlesToUnload = loadSheddingStrategy.findBundlesForUnloading(loadData, conf);
+        try {
+            final Multimap<String, String> bundlesToUnload =
+                    loadSheddingStrategy.findBundlesForUnloading(loadData, conf);
 
         boolean leadershipLost = false;
         for (Map.Entry<String, Collection<String>> entry : bundlesToUnload.asMap().entrySet()) {
@@ -1033,10 +1035,10 @@ public class ModularLoadManagerImpl implements ModularLoadManager {
                     log.debug("Use round robin broker selector for {}", bundle);
                 }
                 broker = sheddingExcludedNamespaceSelectionStrategy
-                        .selectBroker(brokerCandidateCache, data, loadData, conf);
+                        .selectBrokerForBundle(brokerCandidateCache, bundle, data, loadData, conf);
             } else {
                 // Choose a broker among the potentially smaller filtered list, when possible
-                broker = placementStrategy.selectBroker(brokerCandidateCache, data, loadData, conf);
+                broker = placementStrategy.selectBrokerForBundle(brokerCandidateCache, bundle, data, loadData, conf);
             }
             if (log.isDebugEnabled()) {
                 log.debug("Selected broker {} from candidate brokers {}", broker, brokerCandidateCache);
@@ -1056,13 +1058,23 @@ public class ModularLoadManagerImpl implements ModularLoadManager {
                         getAvailableBrokers(),
                         brokerTopicLoadingPredicate);
                 Optional<String> brokerTmp =
-                        placementStrategy.selectBroker(brokerCandidateCache, data, loadData, conf);
+                        placementStrategy.selectBrokerForBundle(brokerCandidateCache, bundle, data, loadData, conf);
                 if (brokerTmp.isPresent()) {
                     broker = brokerTmp;
                 }
             }
             return broker;
         }
+    }
+
+    @VisibleForTesting
+    LoadData getLoadData() {
+        return loadData;
+    }
+
+    @VisibleForTesting
+    void setPlacementStrategy(ModularLoadManagerStrategy placementStrategy) {
+        this.placementStrategy = placementStrategy;
     }
 
     /**
