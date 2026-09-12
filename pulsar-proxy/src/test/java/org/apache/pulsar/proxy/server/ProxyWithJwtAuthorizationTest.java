@@ -22,9 +22,11 @@ import static org.mockito.Mockito.spy;
 import com.google.common.collect.Sets;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.SignatureAlgorithm;
+import java.lang.reflect.Method;
 import java.util.Base64;
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
@@ -37,6 +39,8 @@ import org.apache.pulsar.broker.authentication.AuthenticationService;
 import org.apache.pulsar.broker.authentication.utils.AuthTokenUtils;
 import org.apache.pulsar.broker.resources.PulsarResources;
 import org.apache.pulsar.client.admin.PulsarAdmin;
+import org.apache.pulsar.client.admin.PulsarAdminBuilder;
+import org.apache.pulsar.client.admin.PulsarAdminException;
 import org.apache.pulsar.client.api.Authentication;
 import org.apache.pulsar.client.api.AuthenticationFactory;
 import org.apache.pulsar.client.api.ClientBuilder;
@@ -72,6 +76,7 @@ public class ProxyWithJwtAuthorizationTest extends ProducerConsumerBase {
     private static final String PROXY_ROLE = "proxy";
     private static final String BROKER_ROLE = "broker";
     private static final String CLIENT_ROLE = "client";
+    private static final String ANONYMOUS_ROLE = "anonymous";
     private static final SecretKey SECRET_KEY = AuthTokenUtils.createSecretKey(SignatureAlgorithm.HS256);
 
     private static final String ADMIN_TOKEN = Jwts.builder().setSubject(ADMIN_ROLE).signWith(SECRET_KEY).compact();
@@ -85,6 +90,17 @@ public class ProxyWithJwtAuthorizationTest extends ProducerConsumerBase {
     private Authentication proxyClientAuthentication;
 
     @BeforeMethod
+    public void setupForTest(Method method) throws Exception {
+        String anonymousRole = method.getName().equals("testAnonymousClientPermissionsWithSuperUserProxy")
+                ? ANONYMOUS_ROLE : null;
+        conf.setAuthenticateOriginalAuthData(
+                !method.getName().equals("testForwardedPrincipalPermissions"));
+        proxyConfig.setForwardAuthorizationCredentials(true);
+        conf.setAnonymousUserRole(anonymousRole);
+        proxyConfig.setAnonymousUserRole(anonymousRole);
+        setup();
+    }
+
     @Override
     protected void setup() throws Exception {
         // enable auth&auth and use JWT at broker
@@ -139,6 +155,12 @@ public class ProxyWithJwtAuthorizationTest extends ProducerConsumerBase {
         webServer = new WebServer(proxyConfig, authService);
     }
 
+    @Override
+    protected void customizeNewPulsarAdminBuilder(PulsarAdminBuilder builder) {
+        super.customizeNewPulsarAdminBuilder(builder);
+        builder.authentication(AuthenticationFactory.token(adminToken));
+    }
+
     @AfterMethod(alwaysRun = true)
     @Override
     protected void cleanup() throws Exception {
@@ -156,6 +178,176 @@ public class ProxyWithJwtAuthorizationTest extends ProducerConsumerBase {
         webServer.start();
     }
 
+<<<<<<< HEAD
+=======
+    @Test
+    public void testAnonymousClientPermissionsWithSuperUserProxy() throws Exception {
+        startProxy();
+        admin.clusters().createCluster(CLUSTER_NAME,
+                ClusterData.builder().serviceUrl(brokerUrl.toString()).build());
+        admin.tenants().createTenant("anonymous-client",
+                new TenantInfoImpl(Set.of(ADMIN_ROLE), Set.of(CLUSTER_NAME)));
+        admin.namespaces().createNamespace("anonymous-client/ns");
+        String allowedTopic = "persistent://anonymous-client/ns/allowed";
+        String consumeOnlyTopic = "persistent://anonymous-client/ns/consume-only";
+        String produceOnlyTopic = "persistent://anonymous-client/ns/produce-only";
+        String deniedTopic = "persistent://anonymous-client/ns/denied";
+        for (String topic : List.of(allowedTopic, consumeOnlyTopic, produceOnlyTopic, deniedTopic)) {
+            admin.topics().createNonPartitionedTopic(topic);
+        }
+        admin.topics().grantPermission(allowedTopic, ANONYMOUS_ROLE, Set.of(AuthAction.produce, AuthAction.consume));
+        admin.topics().grantPermission(consumeOnlyTopic, ANONYMOUS_ROLE, Set.of(AuthAction.consume));
+        admin.topics().grantPermission(produceOnlyTopic, ANONYMOUS_ROLE, Set.of(AuthAction.produce));
+
+        @Cleanup
+        PulsarClient client = PulsarClient.builder().serviceUrl(proxyService.getServiceUrl())
+                .operationTimeout(5, TimeUnit.SECONDS).build();
+        @Cleanup
+        Consumer<byte[]> consumer = client.newConsumer().topic(allowedTopic).subscriptionName("sub").subscribe();
+        @Cleanup
+        Producer<byte[]> producer = client.newProducer().topic(allowedTopic).create();
+        producer.send(new byte[]{1});
+        Message<byte[]> message = consumer.receive(5, TimeUnit.SECONDS);
+        assertThat(message).isNotNull();
+        assertThat(message.getData()).containsExactly((byte) 1);
+
+        // Each topic permits lookup through the other action, so these exercise produce/consume authorization.
+        assertThatThrownBy(() -> {
+            try (Producer<byte[]> ignored = client.newProducer().topic(consumeOnlyTopic).create()) {
+                // Creation should be rejected.
+            }
+        }).isInstanceOf(PulsarClientException.AuthorizationException.class);
+        assertThatThrownBy(() -> {
+            try (Consumer<byte[]> ignored = client.newConsumer().topic(produceOnlyTopic)
+                    .subscriptionName("sub").subscribe()) {
+                // Subscription should be rejected.
+            }
+        }).isInstanceOf(PulsarClientException.AuthorizationException.class);
+
+        @Cleanup
+        PulsarAdmin anonymousAdmin = PulsarAdmin.builder().serviceHttpUrl(webServer.getServiceUri().toString()).build();
+        assertThat(anonymousAdmin.topics().getStats(allowedTopic)).isNotNull();
+        assertThatThrownBy(() -> anonymousAdmin.topics().getStats(deniedTopic))
+                .isInstanceOf(PulsarAdminException.NotAuthorizedException.class);
+    }
+
+    @DataProvider
+    public Object[][] forwardedCredentialSettings() {
+        return new Object[][]{{false}, {true}};
+    }
+
+    @Test(dataProvider = "forwardedCredentialSettings")
+    public void testForwardedPrincipalPermissions(boolean forwardCredentials) throws Exception {
+        proxyConfig.setForwardAuthorizationCredentials(forwardCredentials);
+        startProxy();
+        admin.clusters().createCluster(CLUSTER_NAME,
+                ClusterData.builder().serviceUrl(brokerUrl.toString()).build());
+        admin.tenants().createTenant("forwarded-client",
+                new TenantInfoImpl(Set.of(ADMIN_ROLE), Set.of(CLUSTER_NAME)));
+        String namespace = "forwarded-client/ns";
+        admin.namespaces().createNamespace(namespace);
+        admin.namespaces().setSubscriptionAuthMode(namespace, SubscriptionAuthMode.Prefix);
+        String allowedTopic = "persistent://" + namespace + "/allowed";
+        String consumeOnlyTopic = "persistent://" + namespace + "/consume-only";
+        String produceOnlyTopic = "persistent://" + namespace + "/produce-only";
+        String additionalRoleTopic = "persistent://" + namespace + "/additional-role";
+        for (String topic : List.of(allowedTopic, consumeOnlyTopic, produceOnlyTopic, additionalRoleTopic)) {
+            admin.topics().createNonPartitionedTopic(topic);
+        }
+        admin.topics().grantPermission(allowedTopic, CLIENT_ROLE, Set.of(AuthAction.produce, AuthAction.consume));
+        admin.topics().grantPermission(consumeOnlyTopic, CLIENT_ROLE, Set.of(AuthAction.consume));
+        admin.topics().grantPermission(produceOnlyTopic, CLIENT_ROLE, Set.of(AuthAction.produce));
+        admin.topics().grantPermission(additionalRoleTopic, "additional-role",
+                Set.of(AuthAction.produce, AuthAction.consume));
+
+        String token = Jwts.builder()
+                .claim(roleClaim, multiRoles ? new String[]{CLIENT_ROLE, "additional-role"} : CLIENT_ROLE)
+                .signWith(SECRET_KEY).compact();
+        @Cleanup
+        PulsarClient client = PulsarClient.builder().serviceUrl(proxyService.getServiceUrl())
+                .authentication(AuthenticationFactory.token(token)).operationTimeout(5, TimeUnit.SECONDS).build();
+        @Cleanup
+        Consumer<byte[]> consumer = client.newConsumer().topic(allowedTopic)
+                .subscriptionName(CLIENT_ROLE + "-sub").subscribe();
+        @Cleanup
+        Producer<byte[]> producer = client.newProducer().topic(allowedTopic).create();
+        producer.send(new byte[]{1});
+        Message<byte[]> message = consumer.receive(5, TimeUnit.SECONDS);
+        assertThat(message).isNotNull();
+        assertThat(message.getData()).containsExactly((byte) 1);
+
+        // Lookup is allowed on these topics; the requested action must still be checked.
+        assertThatThrownBy(() -> {
+            try (Producer<byte[]> ignored = client.newProducer().topic(consumeOnlyTopic).create()) {
+                // Creation should be rejected.
+            }
+        }).isInstanceOf(PulsarClientException.AuthorizationException.class);
+        assertThatThrownBy(() -> {
+            try (Consumer<byte[]> ignored = client.newConsumer().topic(produceOnlyTopic)
+                    .subscriptionName(CLIENT_ROLE + "-sub").subscribe()) {
+                // Subscription should be rejected.
+            }
+        }).isInstanceOf(PulsarClientException.AuthorizationException.class);
+        assertThatThrownBy(() -> {
+            try (Consumer<byte[]> ignored = client.newConsumer().topic(allowedTopic)
+                    .subscriptionName("other-sub").subscribe()) {
+                // Subscription prefix must match the forwarded principal.
+            }
+        }).isInstanceOf(PulsarClientException.AuthorizationException.class);
+        assertThatThrownBy(() -> {
+            try (Producer<byte[]> ignored = client.newProducer().topic(additionalRoleTopic).create()) {
+                // Additional roles require original-client authentication.
+            }
+        }).isInstanceOf(PulsarClientException.AuthorizationException.class);
+    }
+
+    @Test
+    public void testMultiRoleClientPermissionsWithSuperUserProxy() throws Exception {
+        assertThat(conf.isAuthenticateOriginalAuthData()).isTrue();
+        assertThat(proxyConfig.isForwardAuthorizationCredentials()).isTrue();
+        startProxy();
+        createAdminClient();
+        admin.clusters().createCluster(CLUSTER_NAME,
+                ClusterData.builder().serviceUrl(brokerUrl.toString()).build());
+        admin.tenants().createTenant("multi-role",
+                new TenantInfoImpl(Set.of(ADMIN_ROLE), Set.of(CLUSTER_NAME)));
+        admin.namespaces().createNamespace("multi-role/ns");
+        String allowedTopic = "persistent://multi-role/ns/allowed";
+        String deniedTopic = "persistent://multi-role/ns/denied";
+        admin.topics().createNonPartitionedTopic(allowedTopic);
+        admin.topics().createNonPartitionedTopic(deniedTopic);
+        admin.topics().grantPermission(allowedTopic, CLIENT_ROLE, Set.of(AuthAction.produce, AuthAction.consume));
+        admin.topics().grantPermission(deniedTopic, "other-client", Set.of(AuthAction.produce, AuthAction.consume));
+
+        String token = Jwts.builder()
+                .claim(roleClaim, multiRoles ? new String[]{"unprivileged", CLIENT_ROLE} : CLIENT_ROLE)
+                .signWith(SECRET_KEY).compact();
+        @Cleanup
+        PulsarClient client = PulsarClient.builder().serviceUrl(proxyService.getServiceUrl())
+                .authentication(AuthenticationFactory.token(token)).operationTimeout(5, TimeUnit.SECONDS).build();
+        @Cleanup
+        Consumer<byte[]> consumer = client.newConsumer().topic(allowedTopic).subscriptionName("sub").subscribe();
+        @Cleanup
+        Producer<byte[]> producer = client.newProducer().topic(allowedTopic).create();
+        producer.send(new byte[]{1});
+        Message<byte[]> message = consumer.receive(5, TimeUnit.SECONDS);
+        assertThat(message).isNotNull();
+        assertThat(message.getData()).containsExactly((byte) 1);
+
+        assertThatThrownBy(() -> {
+            try (Producer<byte[]> ignored = client.newProducer().topic(deniedTopic).create()) {
+                // Creation should be rejected.
+            }
+        }).isInstanceOf(PulsarClientException.AuthorizationException.class);
+        assertThatThrownBy(() -> {
+            try (Consumer<byte[]> ignored = client.newConsumer().topic(deniedTopic)
+                    .subscriptionName("sub").subscribe()) {
+                // Subscription should be rejected.
+            }
+        }).isInstanceOf(PulsarClientException.AuthorizationException.class);
+    }
+
+>>>>>>> e67d32f7cac ([fix][broker] Fix multi-role authorization regressions and optimize nested checks (#26551))
     /**
      * <pre>
      * It verifies jwt + Authentication + Authorization (client -> proxy -> broker).
