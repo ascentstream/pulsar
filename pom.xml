@@ -188,7 +188,7 @@ flexible messaging model and an intuitive client API.</description>
 
     <bookkeeper.groupId>org.apache.bookkeeper</bookkeeper.groupId>
     <distributedlog.groupId>org.apache.distributedlog</distributedlog.groupId>
-    <bookkeeper.version>4.18.0</bookkeeper.version>
+    <bookkeeper.version>4.18.1</bookkeeper.version>
     <distributedlog.version>4.18.0</distributedlog.version>
     <zookeeper.version>3.9.5</zookeeper.version>
     <commons-cli.version>1.11.0</commons-cli.version>

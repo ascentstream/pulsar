@@ -263,6 +263,7 @@ The Apache Software License, Version 2.0
  * Caffeine -- com.github.ben-manes.caffeine-caffeine-2.9.1.jar
  * Conscrypt -- org.conscrypt-conscrypt-openjdk-uber-2.6.2.jar
  * Fastutil -- it.unimi.dsi-fastutil-8.5.16.jar
+ * LMAX Disruptor -- com.lmax-disruptor-3.4.3.jar
  * Proto Google Common Protos -- com.google.api.grpc-proto-google-common-protos-2.59.2.jar
  * Bitbucket -- org.bitbucket.b_c-jose4j-0.9.6.jar
  * Gson
@@ -295,13 +296,13 @@ The Apache Software License, Version 2.0
     - org.apache.commons-commons-text-1.15.0.jar
  * Netty
     - io.netty-netty-buffer-4.2.17.Final.jar
-    - io.netty-netty-codec-dns-4.2.17.Final.jar
     - io.netty-netty-codec-base-4.2.17.Final.jar
     - io.netty-netty-codec-compression-4.2.17.Final.jar
+    - io.netty-netty-codec-dns-4.2.17.Final.jar
+    - io.netty-netty-codec-haproxy-4.2.17.Final.jar
     - io.netty-netty-codec-http-4.2.17.Final.jar
     - io.netty-netty-codec-http2-4.2.17.Final.jar
     - io.netty-netty-codec-socks-4.2.17.Final.jar
-    - io.netty-netty-codec-haproxy-4.2.17.Final.jar
     - io.netty-netty-common-4.2.17.Final.jar
     - io.netty-netty-handler-4.2.17.Final.jar
     - io.netty-netty-handler-proxy-4.2.17.Final.jar
@@ -310,21 +311,21 @@ The Apache Software License, Version 2.0
     - io.netty-netty-resolver-dns-classes-macos-4.2.17.Final.jar
     - io.netty-netty-resolver-dns-native-macos-4.2.17.Final-osx-aarch_64.jar
     - io.netty-netty-resolver-dns-native-macos-4.2.17.Final-osx-x86_64.jar
-    - io.netty-netty-transport-4.2.17.Final.jar
-    - io.netty-netty-transport-classes-epoll-4.2.17.Final.jar
-    - io.netty-netty-transport-native-epoll-4.2.17.Final-linux-aarch_64.jar
-    - io.netty-netty-transport-native-epoll-4.2.17.Final-linux-x86_64.jar
-    - io.netty-netty-transport-native-unix-common-4.2.17.Final.jar
-    - io.netty-netty-tcnative-boringssl-static-2.0.81.Final.jar
     - io.netty-netty-tcnative-boringssl-static-2.0.81.Final-linux-aarch_64.jar
     - io.netty-netty-tcnative-boringssl-static-2.0.81.Final-linux-x86_64.jar
     - io.netty-netty-tcnative-boringssl-static-2.0.81.Final-osx-aarch_64.jar
     - io.netty-netty-tcnative-boringssl-static-2.0.81.Final-osx-x86_64.jar
     - io.netty-netty-tcnative-boringssl-static-2.0.81.Final-windows-x86_64.jar
+    - io.netty-netty-tcnative-boringssl-static-2.0.81.Final.jar
     - io.netty-netty-tcnative-classes-2.0.81.Final.jar
+    - io.netty-netty-transport-4.2.17.Final.jar
+    - io.netty-netty-transport-classes-epoll-4.2.17.Final.jar
     - io.netty-netty-transport-classes-io_uring-4.2.17.Final.jar
-    - io.netty-netty-transport-native-io_uring-4.2.17.Final-linux-x86_64.jar
+    - io.netty-netty-transport-native-epoll-4.2.17.Final-linux-aarch_64.jar
+    - io.netty-netty-transport-native-epoll-4.2.17.Final-linux-x86_64.jar
     - io.netty-netty-transport-native-io_uring-4.2.17.Final-linux-aarch_64.jar
+    - io.netty-netty-transport-native-io_uring-4.2.17.Final-linux-x86_64.jar
+    - io.netty-netty-transport-native-unix-common-4.2.17.Final.jar
  * Prometheus client
     - io.prometheus.jmx-collector-0.16.1.jar
     - io.prometheus-simpleclient-0.16.0.jar
@@ -358,31 +359,31 @@ The Apache Software License, Version 2.0
     - net.java.dev.jna-jna-jpms-5.18.1.jar
     - net.java.dev.jna-jna-platform-jpms-5.18.1.jar
  * BookKeeper
-    - org.apache.bookkeeper-bookkeeper-common-4.18.0.jar
-    - org.apache.bookkeeper-bookkeeper-common-allocator-4.18.0.jar
-    - org.apache.bookkeeper-bookkeeper-proto-4.18.0.jar
-    - org.apache.bookkeeper-bookkeeper-server-4.18.0.jar
-    - org.apache.bookkeeper-bookkeeper-tools-framework-4.18.0.jar
-    - org.apache.bookkeeper-circe-checksum-4.18.0.jar
-    - org.apache.bookkeeper-cpu-affinity-4.18.0.jar
-    - org.apache.bookkeeper-statelib-4.18.0.jar
-    - org.apache.bookkeeper-stream-storage-api-4.18.0.jar
-    - org.apache.bookkeeper-stream-storage-common-4.18.0.jar
-    - org.apache.bookkeeper-stream-storage-java-client-4.18.0.jar
-    - org.apache.bookkeeper-stream-storage-java-client-base-4.18.0.jar
-    - org.apache.bookkeeper-stream-storage-proto-4.18.0.jar
-    - org.apache.bookkeeper-stream-storage-server-4.18.0.jar
-    - org.apache.bookkeeper-stream-storage-service-api-4.18.0.jar
-    - org.apache.bookkeeper-stream-storage-service-impl-4.18.0.jar
-    - org.apache.bookkeeper.http-http-server-4.18.0.jar
-    - org.apache.bookkeeper.http-vertx-http-server-4.18.0.jar
-    - org.apache.bookkeeper.stats-bookkeeper-stats-api-4.18.0.jar
+    - org.apache.bookkeeper-bookkeeper-common-4.18.1.jar
+    - org.apache.bookkeeper-bookkeeper-common-allocator-4.18.1.jar
+    - org.apache.bookkeeper-bookkeeper-proto-4.18.1.jar
+    - org.apache.bookkeeper-bookkeeper-server-4.18.1.jar
+    - org.apache.bookkeeper-bookkeeper-tools-framework-4.18.1.jar
+    - org.apache.bookkeeper-circe-checksum-4.18.1.jar
+    - org.apache.bookkeeper-cpu-affinity-4.18.1.jar
+    - org.apache.bookkeeper-native-io-4.18.1.jar
+    - org.apache.bookkeeper-native-library-common-4.18.1.jar
+    - org.apache.bookkeeper-statelib-4.18.1.jar
+    - org.apache.bookkeeper-stream-storage-api-4.18.1.jar
+    - org.apache.bookkeeper-stream-storage-common-4.18.1.jar
+    - org.apache.bookkeeper-stream-storage-java-client-4.18.1.jar
+    - org.apache.bookkeeper-stream-storage-java-client-base-4.18.1.jar
+    - org.apache.bookkeeper-stream-storage-proto-4.18.1.jar
+    - org.apache.bookkeeper-stream-storage-server-4.18.1.jar
+    - org.apache.bookkeeper-stream-storage-service-api-4.18.1.jar
+    - org.apache.bookkeeper-stream-storage-service-impl-4.18.1.jar
+    - org.apache.bookkeeper.http-http-server-4.18.1.jar
+    - org.apache.bookkeeper.http-vertx-http-server-4.18.1.jar
+    - org.apache.bookkeeper.stats-bookkeeper-stats-api-4.18.1.jar
     - org.apache.distributedlog-distributedlog-common-4.18.0.jar
-    - org.apache.distributedlog-distributedlog-core-4.18.0-tests.jar
     - org.apache.distributedlog-distributedlog-core-4.18.0.jar
+    - org.apache.distributedlog-distributedlog-core-4.18.1-tests.jar
     - org.apache.distributedlog-distributedlog-protocol-4.18.0.jar
-    - org.apache.bookkeeper-native-io-4.18.0.jar
-    - org.apache.bookkeeper-native-library-common-4.18.0.jar
     - at.yawk.lz4-lz4-java-1.11.1.jar
   * Apache HTTP Client
     - org.apache.httpcomponents-httpclient-4.5.14.jar
@@ -508,6 +509,7 @@ The Apache Software License, Version 2.0
     - io.jsonwebtoken-jjwt-jackson-0.11.1.jar
   * JCTools - Java Concurrency Tools for the JVM
     - org.jctools-jctools-core-4.0.5.jar
+    - org.jctools-jctools-core-jdk11-4.0.6.jar
   * Vertx
     - io.vertx-vertx-auth-common-4.5.28.jar
     - io.vertx-vertx-bridge-common-4.5.28.jar
