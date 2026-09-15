@@ -98,7 +98,7 @@ public class NonPersistentStickyKeyDispatcherMultipleConsumers extends NonPersis
                     if (ex != null) {
                         synchronized (NonPersistentStickyKeyDispatcherMultipleConsumers.this) {
                             consumerSet.removeAll(consumer);
-                            consumerList.remove(consumer);
+                            removeConsumerFromList(consumer);
                         }
                         throw FutureUtil.wrapToCompletionException(ex);
                     }
