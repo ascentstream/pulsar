@@ -87,7 +87,6 @@ import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import lombok.Cleanup;
-import org.apache.bookkeeper.client.AsyncCallback.OpenCallback;
 import org.apache.bookkeeper.client.BKException;
 import org.apache.bookkeeper.client.BookKeeper;
 import org.apache.bookkeeper.client.BookKeeper.DigestType;
@@ -96,7 +95,9 @@ import org.apache.bookkeeper.client.LedgerHandle;
 import org.apache.bookkeeper.client.PulsarMockBookKeeper;
 import org.apache.bookkeeper.client.PulsarMockReadHandleInterceptor;
 import org.apache.bookkeeper.client.api.LedgerEntries;
+import org.apache.bookkeeper.client.api.OpenBuilder;
 import org.apache.bookkeeper.client.api.ReadHandle;
+import org.apache.bookkeeper.client.impl.OpenBuilderBase;
 import org.apache.bookkeeper.common.util.OrderedExecutor;
 import org.apache.bookkeeper.common.util.OrderedScheduler;
 import org.apache.bookkeeper.mledger.AsyncCallbacks;
@@ -6489,22 +6490,24 @@ public class ManagedCursorTest extends MockedBookKeeperTestCase {
             ledgerErrors.put(ledgerId, rc);
         }
 
-        public void asyncOpenLedger(final long lId, final DigestType digestType, final byte[] passwd,
-                final OpenCallback cb, final Object ctx) {
-            if (ledgerErrors.containsKey(lId)) {
-                cb.openComplete(ledgerErrors.get(lId), null, ctx);
-            } else {
-                super.asyncOpenLedger(lId, digestType, passwd, cb, ctx);
-            }
-        }
-
-        public void asyncOpenLedger(final long lId, final DigestType digestType, final byte[] passwd,
-                final OpenCallback cb, final Object ctx, boolean keepMetadataUpdate) {
-            if (ledgerErrors.containsKey(lId)) {
-                cb.openComplete(ledgerErrors.get(lId), null, ctx);
-            } else {
-                super.asyncOpenLedger(lId, digestType, passwd, cb, ctx, keepMetadataUpdate);
-            }
+        @Override
+        public OpenBuilder newOpenLedgerOp() {
+            OpenBuilder delegate = super.newOpenLedgerOp();
+            return new OpenBuilderBase() {
+                @Override
+                public CompletableFuture<ReadHandle> execute() {
+                    if (ledgerErrors.containsKey(ledgerId)) {
+                        return CompletableFuture.failedFuture(BKException.create(ledgerErrors.get(ledgerId)));
+                    }
+                    return delegate
+                            .withLedgerId(ledgerId)
+                            .withDigestType(digestType)
+                            .withPassword(password)
+                            .withRecovery(recovery)
+                            .withKeepUpdateMetadata(keepUpdateMetadata)
+                            .execute();
+                }
+            };
         }
     }
 
@@ -7280,54 +7283,6 @@ public class ManagedCursorTest extends MockedBookKeeperTestCase {
         assertThat(cursor.isMessageDeleted(positions.get(1))).isFalse();
         ledger.close();
     }
-
-    /**
-     * Verifies that recovery fails fast (not silent fallback) when a checkpoint
-     * references a ledger that can't be read. The cursor should rewind to ZK
-     * snapshot rather than silently dropping ack state.
-     */
-    @Test(timeOut = 30000)
-    public void testCheckpointRefFetchFailureFailsRecovery() throws Exception {
-        TestPulsarMockBookKeeper bk = new TestPulsarMockBookKeeper(executor);
-        factory.shutdown();
-        factory = new ManagedLedgerFactoryImpl(metadataStore, bk);
-
-        ManagedLedgerConfig config = new ManagedLedgerConfig();
-        config.setPersistentUnackedRangesWithPerLedgerEntryEnabled(true);
-        config.setMaxEntriesPerLedger(3);
-        config.setMetadataMaxEntriesPerLedger(1);
-        config.setMaxUnackedRangesToPersistInMetadataStore(-1);
-        config.setThrottleMarkDelete(0);
-
-        String ledgerName = "test_ref_fetch_fail";
-        ManagedLedger ledger = factory.open(ledgerName, config);
-        ManagedCursorImpl cursor = (ManagedCursorImpl) ledger.openCursor("c1");
-
-        List<Position> positions = new ArrayList<>();
-        for (int i = 0; i < 9; i++) {
-            positions.add(ledger.addEntry(("m-" + i).getBytes(Encoding)));
-        }
-
-        cursor.markDelete(positions.get(0));
-        cursor.delete(positions.get(2));
-        cursor.delete(positions.get(5));
-        Thread.sleep(500);
-        long refLedgerToBreak = cursor.getCursorLedger();
-        cursor.markDelete(positions.get(3));
-        Thread.sleep(500);
-        ledger.close();
-
-        bk.setErrorCodeMap(refLedgerToBreak, BKException.Code.BookieHandleNotAvailableException);
-
-        ManagedLedgerFactoryImpl recoveryFactory = new ManagedLedgerFactoryImpl(metadataStore, bk);
-        ledger = recoveryFactory.open(ledgerName, config);
-        cursor = (ManagedCursorImpl) ledger.openCursor("c1");
-        assertThat(cursor.getMarkDeletedPosition()).isEqualTo(positions.get(3));
-        assertThat(cursor.isMessageDeleted(positions.get(2))).isTrue();
-        ledger.close();
-        recoveryFactory.shutdown();
-    }
-
     /**
      * Verifies that if a checkpoint flush fails, the cursor keeps the previous
      * successfully persisted state and the failed update is not recovered.

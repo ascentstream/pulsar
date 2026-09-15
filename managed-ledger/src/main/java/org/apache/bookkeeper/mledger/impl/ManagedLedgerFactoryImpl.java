@@ -1423,8 +1423,14 @@ public class ManagedLedgerFactoryImpl implements ManagedLedgerFactory {
                                                 cursorName, cursorLedgerId);
                                     }
                                     if (cursorLedgerId != -1) {
-                                        bk.asyncOpenLedgerNoRecovery(cursorLedgerId, digestType, password,
-                                                cursorLedgerOpenCb, null);
+                                        bk.newOpenLedgerOp()
+                                                .withRecovery(false)
+                                                .withLedgerId(cursorLedgerId)
+                                                .withDigestType(digestType.toApiDigestType())
+                                                .withPassword(password)
+                                                .execute()
+                                                .whenComplete((rh, ex) -> ManagedLedgerImpl.completeOpenCallback(
+                                                        log, cursorLedgerId, cursorLedgerOpenCb, rh, ex));
                                     } else {
                                         Position lastAckedMessagePosition = PositionFactory.create(
                                                 info.getMarkDeleteLedgerId(), info.getMarkDeleteEntryId());
