@@ -19,10 +19,12 @@
 package org.apache.bookkeeper.mledger.impl.cache;
 
 import static org.apache.bookkeeper.mledger.impl.ManagedLedgerImpl.createManagedLedgerException;
+import static org.apache.bookkeeper.mledger.util.ManagedLedgerUtils.NO_MAX_SIZE_LIMIT;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 import java.util.function.IntSupplier;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.bookkeeper.client.api.LedgerEntry;
 import org.apache.bookkeeper.client.api.ReadHandle;
 import org.apache.bookkeeper.mledger.AsyncCallbacks;
@@ -36,6 +38,7 @@ import org.apache.bookkeeper.mledger.intercept.ManagedLedgerInterceptor;
 /**
  * Implementation of cache that always read from BookKeeper.
  */
+@Slf4j
 public class EntryCacheDisabled implements EntryCache {
     private final ManagedLedgerImpl ml;
     private final ManagedLedgerInterceptor interceptor;
@@ -68,10 +71,16 @@ public class EntryCacheDisabled implements EntryCache {
     }
 
     @Override
-    public void asyncReadEntry(ReadHandle lh, long firstEntry, long lastEntry, IntSupplier expectedReadCount,
-                               final AsyncCallbacks.ReadEntriesCallback callback, Object ctx) {
-        ReadEntryUtils.readAsync(ml, lh, firstEntry, lastEntry).thenAcceptAsync(
-                ledgerEntries -> {
+    public void asyncReadEntry(ReadHandle lh, long firstEntry, long lastEntry, long maxSizeBytes,
+                               IntSupplier expectedReadCount, final AsyncCallbacks.ReadEntriesCallback callback,
+                               Object ctx) {
+        readEntries(lh, firstEntry, lastEntry, maxSizeBytes, callback, ctx);
+    }
+
+    private void readEntries(ReadHandle lh, long firstEntry, long lastEntry, long maxSizeBytes,
+                             AsyncCallbacks.ReadEntriesCallback callback, Object ctx) {
+        ReadEntryUtils.readAsync(ml, lh, firstEntry, lastEntry, ml.isBatchReadEnabled(), maxSizeBytes)
+                .thenApplyAsync(ledgerEntries -> {
                     List<Entry> entries = new ArrayList<>();
                     long totalSize = 0;
                     try {
@@ -91,44 +100,51 @@ public class EntryCacheDisabled implements EntryCache {
                     ml.getFactory().getMbean().recordCacheMiss(entries.size(), totalSize);
                     ml.getMbean().addReadEntriesSample(entries.size(), totalSize);
 
-                    callback.readEntriesComplete(entries, ctx);
-                }, ml.getExecutor()).exceptionally(exception -> {
-            callback.readEntriesFailed(createManagedLedgerException(exception), ctx);
-            return null;
-        });
+                    return entries;
+                }, ml.getExecutor()).whenCompleteAsync((entries, exception) -> {
+                    if (exception == null) {
+                        try {
+                            callback.readEntriesComplete(entries, ctx);
+                        } catch (Throwable t) {
+                            log.warn("[{}] Read callback failed for ledger {} entries {}-{}; the callback remains "
+                                    + "responsible for releasing entries", getName(), lh.getId(), firstEntry,
+                                    lastEntry, t);
+                        }
+                    } else {
+                        try {
+                            callback.readEntriesFailed(createManagedLedgerException(exception), ctx);
+                        } catch (Throwable t) {
+                            log.warn("[{}] Read callback failed for ledger {} entries {}-{}", getName(), lh.getId(),
+                                    firstEntry, lastEntry, t);
+                        }
+                    }
+                }, ml.getExecutor());
     }
 
     @Override
     public void asyncReadEntry(ReadHandle lh, Position position, AsyncCallbacks.ReadEntryCallback callback,
                                Object ctx) {
-        ReadEntryUtils.readAsync(ml, lh, position.getEntryId(), position.getEntryId()).whenCompleteAsync(
-                (ledgerEntries, exception) -> {
-                    if (exception != null) {
-                        ml.invalidateLedgerHandle(lh);
-                        callback.readEntryFailed(createManagedLedgerException(exception), ctx);
-                        return;
-                    }
-
-                    try {
-                        Iterator<LedgerEntry> iterator = ledgerEntries.iterator();
+        asyncReadEntry(lh, position.getEntryId(), position.getEntryId(), NO_MAX_SIZE_LIMIT, () -> 0,
+                new AsyncCallbacks.ReadEntriesCallback() {
+                    @Override
+                    public void readEntriesComplete(List<Entry> entries, Object callbackCtx) {
+                        Iterator<Entry> iterator = entries.iterator();
                         if (iterator.hasNext()) {
-                            LedgerEntry ledgerEntry = iterator.next();
-                            EntryImpl returnEntry = EntryImpl.create(ledgerEntry, interceptor, 0);
-                            if (ml.getConfig().isPulsarMessageEntries()) {
-                                returnEntry.initializeMessageMetadataIfNeeded(ml.getName());
-                            }
-                            ml.getMbean().recordReadEntriesOpsCacheMisses(1, returnEntry.getLength());
-                            ml.getFactory().getMbean().recordCacheMiss(1, returnEntry.getLength());
-                            ml.getMbean().addReadEntriesSample(1, returnEntry.getLength());
-                            callback.readEntryComplete(returnEntry, ctx);
+                            callback.readEntryComplete(iterator.next(), callbackCtx);
                         } else {
                             callback.readEntryFailed(new ManagedLedgerException("Could not read given position"),
-                                    ctx);
+                                    callbackCtx);
                         }
-                    } finally {
-                        ledgerEntries.close();
                     }
-                }, ml.getExecutor());
+
+                    @Override
+                    public void readEntriesFailed(ManagedLedgerException exception, Object callbackCtx) {
+                        if (!(exception instanceof ManagedLedgerException.TooManyRequestsException)) {
+                            ml.invalidateLedgerHandle(lh);
+                        }
+                        callback.readEntryFailed(exception, callbackCtx);
+                    }
+                }, ctx);
     }
 
     @Override
