@@ -1915,6 +1915,15 @@ public class ManagedLedgerImpl implements ManagedLedger, CreateCallback {
                         + " stored in metadata store is {}.", name, lh.getId(), currentLedger.getLastAddConfirmed(),
                         lh.getLastAddConfirmed());
                 ledgerClosed(currentLedger, lh.getLastAddConfirmed(), LedgerRollReason.ConcurrentModification);
+                // Close the abandoned write handle, or it leaks with its periodic explicit-LAC flush task.
+                currentLedger.asyncClose((closeRc, closedLedger, closeCtx) -> {
+                    if (closeRc != Code.OK) {
+                        if (log.isDebugEnabled()) {
+                            log.debug("[{}] Error when closing ledger {} after it was concurrently modified: {}",
+                                    name, currentLedger.getId(), BKException.getMessage(closeRc));
+                        }
+                    }
+                }, null);
             } else {
                 log.error("[{}] Fencing the topic to ensure durability and consistency(the current ledger was"
                     + " concurrent modified by a other bookie client, which is not expected)."
