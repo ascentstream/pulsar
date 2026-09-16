@@ -18,6 +18,7 @@
  */
 package org.apache.bookkeeper.mledger.impl;
 
+import static org.apache.bookkeeper.mledger.util.ManagedLedgerTestUtil.rawEntryConfig;
 import static org.apache.bookkeeper.mledger.util.ManagedLedgerUtils.NO_MAX_SIZE_LIMIT;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.doAnswer;
@@ -49,7 +50,6 @@ import org.testng.annotations.Test;
 
 @Slf4j
 public class InflightReadsLimiterIntegrationTest extends MockedBookKeeperTestCase {
-
     @DataProvider
     public Object[][] readMissingCases() {
         return new Object[][]{
@@ -76,7 +76,7 @@ public class InflightReadsLimiterIntegrationTest extends MockedBookKeeperTestCas
         final int readCount2 = (int) (end2 - start2 + 1);
 
         final DefaultThreadFactory threadFactory = new DefaultThreadFactory(UUID.randomUUID().toString());
-        final ManagedLedgerConfig config = new ManagedLedgerConfig();
+        final ManagedLedgerConfig config = rawEntryConfig();
         config.setMaxEntriesPerLedger(100000);
         ManagedLedgerFactoryConfig factoryConfig = new ManagedLedgerFactoryConfig();
         factoryConfig.setCacheEvictionIntervalMs(3600 * 1000);
