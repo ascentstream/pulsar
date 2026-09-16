@@ -19,9 +19,20 @@
 package org.apache.bookkeeper.mledger.util;
 
 import lombok.extern.slf4j.Slf4j;
+import org.apache.bookkeeper.mledger.ManagedLedgerConfig;
 
 @Slf4j
 public abstract class ManagedLedgerTestUtil {
+
+    /**
+     * Creates a config for tests that store raw bytes rather than serialized Pulsar messages.
+     * Disables message metadata parsing when entries are inserted into the cache or read from storage.
+     */
+    public static ManagedLedgerConfig rawEntryConfig() {
+        ManagedLedgerConfig config = new ManagedLedgerConfig();
+        config.setPulsarMessageEntries(false);
+        return config;
+    }
 
     public static <T> T retry(ThrowingSupplier<T> supplier) {
         return retry(10, supplier);
