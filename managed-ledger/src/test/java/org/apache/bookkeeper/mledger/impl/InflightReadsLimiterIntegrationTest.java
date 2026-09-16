@@ -18,6 +18,7 @@
  */
 package org.apache.bookkeeper.mledger.impl;
 
+import static org.apache.bookkeeper.mledger.util.ManagedLedgerUtils.NO_MAX_SIZE_LIMIT;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.doAnswer;
 import io.netty.util.concurrent.DefaultThreadFactory;
@@ -139,7 +140,7 @@ public class InflightReadsLimiterIntegrationTest extends MockedBookKeeperTestCas
         // Initialize "entryCache.estimatedEntrySize" to the correct value.
         Object ctx = new Object();
         SimpleReadEntriesCallback cb0 = new SimpleReadEntriesCallback();
-        entryCache.asyncReadEntry(spyCurrentLedger, 125, 125, () -> 1, cb0, ctx);
+        entryCache.asyncReadEntry(spyCurrentLedger, 125, 125, NO_MAX_SIZE_LIMIT, () -> 1, cb0, ctx);
         cb0.entries.join();
         int sizePerEntry = Long.valueOf(entryCache.getEstimatedEntrySize(ml.currentLedger)).intValue();
         Awaitility.await().untilAsserted(() -> {
@@ -153,7 +154,7 @@ public class InflightReadsLimiterIntegrationTest extends MockedBookKeeperTestCas
         SimpleReadEntriesCallback cb1 = new SimpleReadEntriesCallback();
         SimpleReadEntriesCallback cb2 = new SimpleReadEntriesCallback();
         threadFactory.newThread(() -> {
-            entryCache.asyncReadEntry(spyCurrentLedger, start1, end1, () -> 1, cb1, ctx);
+            entryCache.asyncReadEntry(spyCurrentLedger, start1, end1, NO_MAX_SIZE_LIMIT, () -> 1, cb1, ctx);
         }).start();
         threadFactory.newThread(() -> {
             try {
@@ -161,7 +162,7 @@ public class InflightReadsLimiterIntegrationTest extends MockedBookKeeperTestCas
             } catch (InterruptedException e) {
                 throw new RuntimeException(e);
             }
-            entryCache.asyncReadEntry(spyCurrentLedger, start2, end2, () -> 1, cb2, ctx);
+            entryCache.asyncReadEntry(spyCurrentLedger, start2, end2, NO_MAX_SIZE_LIMIT, () -> 1, cb2, ctx);
         }).start();
 
         long bytesAcquired1 = calculateBytesSizeBeforeFirstReading(readCount1 + readCount2, sizePerEntry);

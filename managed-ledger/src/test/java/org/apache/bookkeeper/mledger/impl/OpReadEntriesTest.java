@@ -164,10 +164,10 @@ public class OpReadEntriesTest extends MockedBookKeeperTestCase {
         AtomicInteger invocations = new AtomicInteger();
         doAnswer((InvocationOnMock invocation) -> {
             invocations.incrementAndGet();
-            ReadEntriesCallback callback = invocation.getArgument(4);
-            callback.readEntriesComplete(Collections.emptyList(), invocation.getArgument(5));
+            ReadEntriesCallback callback = invocation.getArgument(5);
+            callback.readEntriesComplete(Collections.emptyList(), invocation.getArgument(6));
             return null;
-        }).when(spyCache).asyncReadEntry(any(ReadHandle.class), anyLong(), anyLong(),
+        }).when(spyCache).asyncReadEntry(any(ReadHandle.class), anyLong(), anyLong(), anyLong(),
                 any(), any(ReadEntriesCallback.class), any());
 
         Field f = ManagedLedgerImpl.class.getDeclaredField("entryCache");

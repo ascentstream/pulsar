@@ -20,6 +20,7 @@ package org.apache.bookkeeper.mledger.impl;
 
 import static org.apache.pulsar.common.util.PortManager.releaseLockedPort;
 import static org.testng.Assert.assertEquals;
+import static org.testng.Assert.assertFalse;
 import static org.testng.Assert.assertNotEquals;
 import static org.testng.Assert.assertNotNull;
 import static org.testng.Assert.assertTrue;
@@ -45,6 +46,7 @@ import org.apache.bookkeeper.client.BookKeeper;
 import org.apache.bookkeeper.client.BookKeeperTestClient;
 import org.apache.bookkeeper.client.LedgerEntry;
 import org.apache.bookkeeper.client.api.DigestType;
+import org.apache.bookkeeper.conf.ClientConfiguration;
 import org.apache.bookkeeper.mledger.AsyncCallbacks;
 import org.apache.bookkeeper.mledger.AsyncCallbacks.AddEntryCallback;
 import org.apache.bookkeeper.mledger.AsyncCallbacks.DeleteCallback;
@@ -75,6 +77,32 @@ public class ManagedLedgerBkTest extends BookKeeperClusterTestCase {
 
     public ManagedLedgerBkTest() {
         super(2);
+        // Use the v2 wire protocol so that reads exercise the BookKeeper batch read API against real bookies
+        baseClientConf.setUseV2WireProtocol(true);
+    }
+
+    @Test
+    public void testBatchReadNotUsedWithV3WireProtocolClient() throws Exception {
+        // The suite's client uses the v2 wire protocol; a v3 client cannot batch read, so reads must not use it
+        ClientConfiguration v3ClientConf = new ClientConfiguration(baseClientConf);
+        v3ClientConf.setUseV2WireProtocol(false);
+        @Cleanup
+        BookKeeper v3Client = BookKeeper.forConfig(v3ClientConf).build();
+        @Cleanup("shutdown")
+        ManagedLedgerFactoryImpl factory =
+                new ManagedLedgerFactoryImpl(metadataStore, v3Client, new ManagedLedgerFactoryConfig(),
+                        new ManagedLedgerConfig());
+        ManagedLedgerConfig config = new ManagedLedgerConfig();
+        config.setEnsembleSize(2).setAckQuorumSize(2);
+        ManagedLedgerImpl ledger = (ManagedLedgerImpl) factory.open("my_test_ledger" + testName, config);
+        assertFalse(ledger.isBatchReadEnabled());
+        ManagedCursor cursor = ledger.openCursor("c1");
+        for (int i = 0; i < 10; i++) {
+            ledger.addEntry(("entry-" + i).getBytes());
+        }
+        List<Entry> entries = cursor.readEntries(10);
+        assertEquals(entries.size(), 10);
+        entries.forEach(Entry::release);
     }
 
     @Test

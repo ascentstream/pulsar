@@ -22,6 +22,7 @@ import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkState;
 import static java.lang.Math.min;
 import static org.apache.bookkeeper.mledger.util.Errors.isNoSuchLedgerExistsException;
+import static org.apache.bookkeeper.mledger.util.ManagedLedgerUtils.NO_MAX_SIZE_LIMIT;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.BoundType;
 import com.google.common.collect.Lists;
@@ -77,6 +78,7 @@ import org.apache.bookkeeper.client.BKException;
 import org.apache.bookkeeper.client.BKException.Code;
 import org.apache.bookkeeper.client.BookKeeper;
 import org.apache.bookkeeper.client.BookKeeper.DigestType;
+import org.apache.bookkeeper.client.BookKeeperClientConfigAccessor;
 import org.apache.bookkeeper.client.LedgerHandle;
 import org.apache.bookkeeper.client.api.LedgerEntry;
 import org.apache.bookkeeper.client.api.LedgerMetadata;
@@ -164,6 +166,8 @@ public class ManagedLedgerImpl implements ManagedLedger, CreateCallback {
     protected static final int AsyncOperationTimeoutSeconds = 30;
 
     protected final BookKeeper bookKeeper;
+    /** Whether the BookKeeper client can batch read: the v2 wire protocol with batch reads enabled. */
+    private final boolean batchReadSupported;
     protected final String name;
     private final Map<String, byte[]> ledgerMetadata;
     protected final BookKeeper.DigestType digestType;
@@ -388,6 +392,7 @@ public class ManagedLedgerImpl implements ManagedLedger, CreateCallback {
         }
         this.factory = factory;
         this.bookKeeper = bookKeeper;
+        this.batchReadSupported = BookKeeperClientConfigAccessor.supportsBatchRead(bookKeeper);
         this.config = config;
         this.store = store;
         this.name = name;
@@ -2515,9 +2520,11 @@ public class ManagedLedgerImpl implements ManagedLedger, CreateCallback {
             ReadEntryCallbackWrapper readCallback = ReadEntryCallbackWrapper.create(name, ledger.getId(), firstEntry,
                     opReadEntry, readOpCount, createdTime, ctx);
             lastReadCallback = readCallback;
-            entryCache.asyncReadEntry(ledger, firstEntry, lastEntry, expectedReadCount, readCallback, readOpCount);
+            entryCache.asyncReadEntry(ledger, firstEntry, lastEntry, opReadEntry.maxSizeBytes, expectedReadCount,
+                    readCallback, readOpCount);
         } else {
-            entryCache.asyncReadEntry(ledger, firstEntry, lastEntry, expectedReadCount, opReadEntry, ctx);
+            entryCache.asyncReadEntry(ledger, firstEntry, lastEntry, opReadEntry.maxSizeBytes, expectedReadCount,
+                    opReadEntry, ctx);
         }
     }
 
@@ -2530,9 +2537,10 @@ public class ManagedLedgerImpl implements ManagedLedger, CreateCallback {
             ReadEntryCallbackWrapper readCallback = ReadEntryCallbackWrapper.create(name, ledger.getId(), firstEntry,
                     callback, readOpCount, createdTime, ctx);
             lastReadCallback = readCallback;
-            entryCache.asyncReadEntry(ledger, firstEntry, lastEntry, () -> 0, readCallback, readOpCount);
+            entryCache.asyncReadEntry(ledger, firstEntry, lastEntry, NO_MAX_SIZE_LIMIT, () -> 0,
+                    readCallback, readOpCount);
         } else {
-            entryCache.asyncReadEntry(ledger, firstEntry, lastEntry, () -> 0, callback, ctx);
+            entryCache.asyncReadEntry(ledger, firstEntry, lastEntry, NO_MAX_SIZE_LIMIT, () -> 0, callback, ctx);
         }
     }
 
@@ -4569,6 +4577,14 @@ public class ManagedLedgerImpl implements ManagedLedger, CreateCallback {
     @Override
     public ManagedLedgerConfig getConfig() {
         return config;
+    }
+
+    /**
+     * Whether storage reads use the BookKeeper batch read API: it must be enabled in the config and supported by
+     * the BookKeeper client (v2 wire protocol with batch reads enabled in its configuration).
+     */
+    public boolean isBatchReadEnabled() {
+        return batchReadSupported && config.isBatchReadEnabled();
     }
 
     @Override
