@@ -369,7 +369,19 @@ public class OpAddEntry implements AddCallback, CloseCallback, Runnable, Managed
                     || rc.intValue() == BKException.Code.LedgerFencedException)) {
                 finalMl.addEntryFailedDueToConcurrentlyModified(lh, rc);
             } else {
-                finalMl.ledgerClosedWithReason(lh, LedgerRollReason.APPEND_FAIL);
+                // Close the failed ledger before switching, or the abandoned handle leaks with its
+                // periodic explicit-LAC flush task.
+                lh.asyncClose(new CloseCallback() {
+                    @Override
+                    public void closeComplete(int closeRc, LedgerHandle closedLedger, Object closeCtx) {
+                        if (closeRc != BKException.Code.OK) {
+                            log.warn("[{}] Error when closing ledger {} after add-entry failure: {}",
+                                    ml.getName(), lh.getId(), BKException.getMessage(closeRc));
+                        }
+                        finalMl.getExecutor().execute(
+                                () -> finalMl.ledgerClosedWithReason(lh, LedgerRollReason.APPEND_FAIL));
+                    }
+                }, null);
             }
         });
     }
