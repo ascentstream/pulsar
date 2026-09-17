@@ -3775,6 +3775,17 @@ public class ManagedCursorImpl implements ManagedCursor {
                             // fails the reset itself instead of returning success with a stale
                             // ZK md; the in-memory state stays untouched and a caller retry
                             // re-runs the refresh with the refreshed stat.
+                            //
+                            // Failure semantics are at-least-once, same as a regular mark-delete:
+                            // the BK reset checkpoint is already durable when the refresh fails, so
+                            // a reported failure can still take effect after a restart with no
+                            // further writes. A reset is idempotent toward its target position, so
+                            // the effect equals what the caller asked for; the retry stays cheap
+                            // (it re-runs the refresh, not the whole state change).
+                            //
+                            // A concurrent setCursorProperties / computeCursorProperties can race
+                            // the refresh's last-known-stat write into a BadVersion; that fails
+                            // this reset (retryable) without corrupting either write.
                             persistPositionMetaStore(lh.getId(), mdEntry.newPosition, mdEntry.properties,
                                     new MetaStoreCallback<Void>() {
                                         @Override
