@@ -6937,7 +6937,7 @@ public class ManagedCursorTest extends MockedBookKeeperTestCase {
 
         // Restart: recovery reads the last durable entry — the hole-free reset checkpoint —
         // so the reported-failed reset has taken effect.
-                ManagedLedgerFactoryImpl recoveryFactory = new ManagedLedgerFactoryImpl(metadataStore, bkc);
+        ManagedLedgerFactoryImpl recoveryFactory = new ManagedLedgerFactoryImpl(metadataStore, bkc);
         ManagedLedger recoveredLedger = recoveryFactory.open(ledgerName, config);
         ManagedCursorImpl recoveredCursor = (ManagedCursorImpl) recoveredLedger.openCursor("c1");
         // The reported-failed reset took effect: the recovered mark-delete is behind the
@@ -7280,7 +7280,7 @@ public class ManagedCursorTest extends MockedBookKeeperTestCase {
 
         ledger.close();
 
-                ManagedLedgerFactoryImpl recoveryFactory = new ManagedLedgerFactoryImpl(metadataStore, bkc);
+        ManagedLedgerFactoryImpl recoveryFactory = new ManagedLedgerFactoryImpl(metadataStore, bkc);
         ManagedLedger recoveredLedger = recoveryFactory.open(ledgerName, config);
         ManagedCursorImpl recoveredCursor = (ManagedCursorImpl) recoveredLedger.openCursor("c1");
         assertThat(recoveredCursor.isMessageDeleted(positions.get(2))).isTrue();
@@ -7810,7 +7810,7 @@ public class ManagedCursorTest extends MockedBookKeeperTestCase {
         Awaitility.await().untilAsserted(
                 () -> assertThat(resetCursor.getStats().getPersistLedgerSucceed()).isGreaterThan(2));
 
-                ManagedLedgerFactoryImpl recoveryFactory = new ManagedLedgerFactoryImpl(metadataStore, bkc);
+        ManagedLedgerFactoryImpl recoveryFactory = new ManagedLedgerFactoryImpl(metadataStore, bkc);
         ManagedLedger recoveredLedger = recoveryFactory.open(ledgerName, config);
         ManagedCursorImpl recoveredCursor = (ManagedCursorImpl) recoveredLedger.openCursor("c1");
         assertThat(recoveredCursor.getMarkDeletedPosition())

@@ -3786,6 +3786,13 @@ public class ManagedCursorImpl implements ManagedCursor {
                             // A concurrent setCursorProperties / computeCursorProperties can race
                             // the refresh's last-known-stat write into a BadVersion; that fails
                             // this reset (retryable) without corrupting either write.
+                            //
+                            // Trade-off: the gate makes a reset depend on metadata-store
+                            // availability (a briefly unavailable store fails resets; regular
+                            // acks are unaffected). The refresh only exists on the per-msgLedger
+                            // path — legacy-mode backward resets never refresh the ZK md, so the
+                            // recovery-rollback-to-stale-md boundary there is pre-existing
+                            // behavior this feature does not change.
                             persistPositionMetaStore(lh.getId(), mdEntry.newPosition, mdEntry.properties,
                                     new MetaStoreCallback<Void>() {
                                         @Override
