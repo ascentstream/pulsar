@@ -180,13 +180,10 @@ public class MultiRolesTokenAuthorizationProvider extends PulsarAuthorizationPro
         if (roleData instanceof RoleAuthenticationData resolved) {
             return CompletableFuture.completedFuture(Collections.singleton(resolved.role));
         }
-<<<<<<< HEAD
         if (roleData instanceof AuthenticationDataForwarded forwarded && forwarded.getProxiedRequestData() != null
                 && role != null) {
             return getProxiedRequestRolesAsync(role, forwarded.getProxiedRequestData());
         }
-=======
->>>>>>> e67d32f7cac ([fix][broker] Fix multi-role authorization regressions and optimize nested checks (#26551))
         if (roleData == null || roleData instanceof AuthenticationDataAnonymous
                 || roleData instanceof AuthenticationDataForwarded) {
             return CompletableFuture.completedFuture(

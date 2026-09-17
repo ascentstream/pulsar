@@ -124,7 +124,6 @@ public class AuthorizationServiceTest {
         }
     }
 
-<<<<<<< HEAD
     @Test
     public void testIsSuperUserOrTenantAdminUsesProviderAdminChecks() throws Exception {
         ServiceConfiguration config = new ServiceConfiguration();
@@ -144,8 +143,6 @@ public class AuthorizationServiceTest {
         assertFalse(service.isSuperUserOrTenantAdmin("tenant", "pass.client", null).get());
     }
 
-=======
->>>>>>> e67d32f7cac ([fix][broker] Fix multi-role authorization regressions and optimize nested checks (#26551))
     /**
      * See {@link MockAuthorizationProvider} for the implementation of the mock authorization provider.
      */

@@ -22,7 +22,6 @@ package org.apache.pulsar.broker.authentication;
  * Authentication data for a forwarded principal without authenticated original credentials.
  */
 public final class AuthenticationDataForwarded implements AuthenticationDataSource {
-<<<<<<< HEAD
     public static final AuthenticationDataForwarded INSTANCE = new AuthenticationDataForwarded(null);
 
     private final AuthenticationDataSource proxiedRequestData;
@@ -44,10 +43,5 @@ public final class AuthenticationDataForwarded implements AuthenticationDataSour
      */
     public AuthenticationDataSource getProxiedRequestData() {
         return proxiedRequestData;
-=======
-    public static final AuthenticationDataForwarded INSTANCE = new AuthenticationDataForwarded();
-
-    private AuthenticationDataForwarded() {
->>>>>>> e67d32f7cac ([fix][broker] Fix multi-role authorization regressions and optimize nested checks (#26551))
     }
 }
