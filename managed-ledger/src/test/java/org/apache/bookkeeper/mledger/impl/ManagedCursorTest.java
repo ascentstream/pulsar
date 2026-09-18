@@ -2189,6 +2189,67 @@ public class ManagedCursorTest extends MockedBookKeeperTestCase {
     }
 
     /**
+     * A backward reset completes as soon as its BK checkpoint is durable, and a best-effort
+     * background write pulls the ZK md back to the reset position. The ZK write may fail
+     * (or race a restart); when it fails the reset still succeeded — recovery falls back to
+     * the stale pre-reset ZK md only when the checkpoint recovery itself also fails.
+     */
+    @Test(timeOut = 30000)
+    public void testCheckpointBackwardResetPullsZkMdInBackground() throws Exception {
+        ManagedLedgerConfig config = new ManagedLedgerConfig();
+        config.setPersistentUnackedRangesWithPerLedgerEntryEnabled(true);
+        config.setMaxEntriesPerLedger(3);
+        config.setMetadataMaxEntriesPerLedger(2); // force a rollover so ZK snapshots the pre-reset md
+        config.setMaxUnackedRangesToPersistInMetadataStore(-1);
+        config.setThrottleMarkDelete(0);
+
+        String ledgerName = "test_checkpoint_reset_bg_zk_refresh";
+        ManagedLedger ledger = factory.open(ledgerName, config);
+        ManagedCursorImpl cursor = (ManagedCursorImpl) ledger.openCursor("c1");
+
+        List<Position> positions = new ArrayList<>();
+        for (int i = 0; i < 9; i++) {
+            positions.add(ledger.addEntry(("m-" + i).getBytes(Encoding)));
+        }
+        cursor.markDelete(positions.get(1));
+        long initialCursorLedger = cursor.getCursorLedger();
+        cursor.delete(positions.get(5));
+        ManagedCursorImpl cursorRef = cursor;
+        Awaitility.await().untilAsserted(() ->
+                assertThat(cursorRef.getCursorLedger()).isNotEqualTo(initialCursorLedger));
+
+        // Backward reset: succeeds on the BK checkpoint alone; the background refresh then
+        // pulls the ZK md to the reset position without gating the reset.
+        cursor.resetCursor(positions.get(0));
+        Position expectedResetMd = ledger.getPreviousPosition(positions.get(0));
+        assertThat(cursor.getMarkDeletedPosition()).isEqualTo(expectedResetMd);
+        assertThat(cursor.isMessageDeleted(positions.get(5))).isFalse();
+
+        AtomicReference<ManagedCursorInfo> infoRef = new AtomicReference<>();
+        Awaitility.await().untilAsserted(() -> {
+            infoRef.set(null);
+            readCursorInfoViaMetadataStore(ledgerName, infoRef);
+            assertThat(infoRef.get()).isNotNull();
+            assertThat(infoRef.get().getMarkDeleteLedgerId()).isEqualTo(expectedResetMd.getLedgerId());
+            assertThat(infoRef.get().getMarkDeleteEntryId()).isEqualTo(expectedResetMd.getEntryId());
+        });
+        assertThat(infoRef.get().getCursorsLedgerId()).isEqualTo(cursor.getCursorLedger());
+        ledger.close();
+    }
+
+    private void readCursorInfoViaMetadataStore(String ledgerName,
+            AtomicReference<ManagedCursorInfo> ref) {
+        try {
+            byte[] raw = metadataStore
+                    .get(String.format("/managed-ledgers/%s/c1", ledgerName)).join()
+                    .orElseThrow(() -> new IllegalStateException("cursor znode missing")).getValue();
+            ref.set(ManagedCursorInfo.parseFrom(raw));
+        } catch (Exception e) {
+            // leave the ref untouched; the caller retries
+        }
+    }
+
+    /**
      * A clear-backlog whose BK checkpoint fails must take the metadata-store fallback (master
      * semantics) instead of the lenient retry: advancing the mark-delete to the last position
      * absorbs every ack hole, so the md-only fallback is a complete representation and the

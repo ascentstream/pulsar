@@ -3776,11 +3776,34 @@ public class ManagedCursorImpl implements ManagedCursor {
                         pendingCheckpointHintEntryId = result.commitEntryId();
                         mbean.persistToLedger(true);
                         mbean.addWriteCursorLedgerSize(result.totalBytes());
-                        // A successful BK checkpoint completes the reset immediately (matching
-                        // upstream master: the success path does not touch the metadata store —
-                        // the ZK md is only rewritten on the next rollover/close). Known boundary,
-                        // shared with master: after a backward reset, a checkpoint-recovery failure
-                        // rewinds to the stale pre-reset ZK md and skips the replay window.
+                        if (mdEntry.propagatePersistFailure) {
+                            // A backward reset moves the position behind the ZK snapshot, and a
+                            // checkpoint-recovery failure (or an unreadable cursor ledger) would
+                            // rewind to the stale pre-reset ZK md and skip the messages the reset
+                            // meant to replay — losing messages rather than replaying them. Pull the
+                            // ZK md back to the reset position with a best-effort background write:
+                            // the reset itself is already complete (the BK checkpoint is durable and
+                            // md-only is a complete post-reset representation), so a failure here
+                            // only logs; the next rollover/close rewrite ZK regardless. The window
+                            // where ZK stays ahead shrinks from "until the next rollover" to the
+                            // duration of this write.
+                            persistPositionMetaStore(lh.getId(), mdEntry.newPosition, mdEntry.properties,
+                                    new MetaStoreCallback<Void>() {
+                                        @Override
+                                        public void operationComplete(Void ignored, Stat stat) {
+                                            mbean.persistToZookeeper(true);
+                                        }
+
+                                        @Override
+                                        public void operationFailed(MetaStoreException e) {
+                                            log.warn("[{}-{}] Background metadata-store md refresh after "
+                                                    + "cursor reset failed; the next rollover/close will "
+                                                    + "rewrite it, ledgerId: {}, errorMessage: {}",
+                                                    ledger.getName(), name, lh.getId(), e.getMessage());
+                                            mbean.persistToZookeeper(false);
+                                        }
+                                    }, false);
+                        }
                         rolloverLedgerIfNeeded(lh);
                         persistCallback.operationComplete();
                     })
