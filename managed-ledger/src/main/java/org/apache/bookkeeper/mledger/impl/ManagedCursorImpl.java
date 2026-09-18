@@ -2188,7 +2188,11 @@ public class ManagedCursorImpl implements ManagedCursor {
 
     @Override
     public void asyncClearBacklog(final ClearBacklogCallback callback, Object ctx) {
-        asyncMarkDelete(ledger.getLastPosition(), new MarkDeleteCallback() {
+        // durableFallback: a clear-backlog is a management operation; on a BK persist failure it
+        // falls back to the metadata store (master semantics) instead of the lenient retry path
+        // used by regular acks. The md-only fallback is complete because advancing the
+        // mark-delete to the last position absorbs every ack hole.
+        asyncMarkDelete(ledger.getLastPosition(), null, new MarkDeleteCallback() {
             @Override
             public void markDeleteComplete(Object ctx) {
                 callback.clearBacklogComplete(ctx);
@@ -2204,7 +2208,7 @@ public class ManagedCursorImpl implements ManagedCursor {
                     callback.clearBacklogFailed(exception, ctx);
                 }
             }
-        }, ctx);
+        }, ctx, true);
     }
 
     @Override
@@ -2430,6 +2434,11 @@ public class ManagedCursorImpl implements ManagedCursor {
     @Override
     public void asyncMarkDelete(final Position position, Map<String, Long> properties,
             final MarkDeleteCallback callback, final Object ctx) {
+        asyncMarkDelete(position, properties, callback, ctx, false);
+    }
+
+    void asyncMarkDelete(final Position position, Map<String, Long> properties,
+            final MarkDeleteCallback callback, final Object ctx, boolean durableFallback) {
         requireNonNull(position);
         final long ackStartTimeNanos = System.nanoTime();
         final MarkDeleteCallback ackCallback = new MarkDeleteCallback() {
@@ -2513,7 +2522,7 @@ public class ManagedCursorImpl implements ManagedCursor {
             ackCallback.markDeleteComplete(ctx);
             return;
         }
-        internalAsyncMarkDelete(newPosition, properties, ackCallback, ctx, null);
+        internalAsyncMarkDelete(newPosition, properties, ackCallback, ctx, null, durableFallback);
     }
 
     private Position ackBatchPosition(Position position) {
@@ -2543,6 +2552,13 @@ public class ManagedCursorImpl implements ManagedCursor {
 
     protected void internalAsyncMarkDelete(final Position newPosition, Map<String, Long> properties,
             final MarkDeleteCallback callback, final Object ctx, Runnable alignAcknowledgeStatusAfterPersisted) {
+        internalAsyncMarkDelete(newPosition, properties, callback, ctx, alignAcknowledgeStatusAfterPersisted,
+                alignAcknowledgeStatusAfterPersisted != null);
+    }
+
+    protected void internalAsyncMarkDelete(final Position newPosition, Map<String, Long> properties,
+            final MarkDeleteCallback callback, final Object ctx, Runnable alignAcknowledgeStatusAfterPersisted,
+            boolean propagatePersistFailure) {
         ledger.mbean.addMarkDeleteOp();
 
         // We cannot write to the ledger during the switch, need to wait until the new metadata ledger is available
@@ -2552,7 +2568,7 @@ public class ManagedCursorImpl implements ManagedCursor {
             Map<String, Long> propertiesToUse =
                     properties != null ? properties : (last != null ? last.properties : getProperties());
             MarkDeleteEntry mdEntry = new MarkDeleteEntry(newPosition, propertiesToUse, callback, ctx,
-                    alignAcknowledgeStatusAfterPersisted, alignAcknowledgeStatusAfterPersisted != null);
+                    alignAcknowledgeStatusAfterPersisted, propagatePersistFailure);
 
             // The state might have changed while we were waiting on the queue mutex
             switch (state) {
@@ -3760,62 +3776,13 @@ public class ManagedCursorImpl implements ManagedCursor {
                         pendingCheckpointHintEntryId = result.commitEntryId();
                         mbean.persistToLedger(true);
                         mbean.addWriteCursorLedgerSize(result.totalBytes());
-                        if (mdEntry.propagatePersistFailure) {
-                            // A backward reset moves the position behind the ZK snapshot. Until
-                            // the next rollover rewrites ZK, a checkpoint recovery failure would
-                            // rewind (getRollbackPosition) to the pre-reset position and skip the
-                            // messages the reset meant to replay. Refresh the ZK mark-delete with
-                            // the reset position — md-only is a complete representation because
-                            // the post-reset state has no holes.
-                            //
-                            // The refresh gates the reset's completion (persistCallback), so the
-                            // RESET_CURSOR_IN_PROGRESS guard covers it: consecutive resets are
-                            // serialized and an older refresh can never land after a newer one.
-                            // A failure — including BadVersion against a racing rollover write —
-                            // fails the reset itself instead of returning success with a stale
-                            // ZK md; the in-memory state stays untouched and a caller retry
-                            // re-runs the refresh with the refreshed stat.
-                            //
-                            // Failure semantics are at-least-once, same as a regular mark-delete:
-                            // the BK reset checkpoint is already durable when the refresh fails, so
-                            // a reported failure can still take effect after a restart with no
-                            // further writes. A reset is idempotent toward its target position, so
-                            // the effect equals what the caller asked for; the retry stays cheap
-                            // (it re-runs the refresh, not the whole state change).
-                            //
-                            // A concurrent setCursorProperties / computeCursorProperties can race
-                            // the refresh's last-known-stat write into a BadVersion; that fails
-                            // this reset (retryable) without corrupting either write.
-                            //
-                            // Trade-off: the gate makes a reset depend on metadata-store
-                            // availability (a briefly unavailable store fails resets; regular
-                            // acks are unaffected). The refresh only exists on the per-msgLedger
-                            // path — legacy-mode backward resets never refresh the ZK md, so the
-                            // recovery-rollback-to-stale-md boundary there is pre-existing
-                            // behavior this feature does not change.
-                            persistPositionMetaStore(lh.getId(), mdEntry.newPosition, mdEntry.properties,
-                                    new MetaStoreCallback<Void>() {
-                                        @Override
-                                        public void operationComplete(Void ignored, Stat stat) {
-                                            mbean.persistToZookeeper(true);
-                                            rolloverLedgerIfNeeded(lh);
-                                            persistCallback.operationComplete();
-                                        }
-
-                                        @Override
-                                        public void operationFailed(MetaStoreException e) {
-                                            log.warn("[{}-{}] Failed to refresh metadata store after cursor "
-                                                    + "reset, failing the reset, ledgerId: {}, errorMessage: {}",
-                                                    ledger.getName(), name, lh.getId(), e.getMessage());
-                                            mbean.persistToZookeeper(false);
-                                            persistCallback.operationFailed(
-                                                    createManagedLedgerException(e));
-                                        }
-                                    }, false);
-                        } else {
-                            rolloverLedgerIfNeeded(lh);
-                            persistCallback.operationComplete();
-                        }
+                        // A successful BK checkpoint completes the reset immediately (matching
+                        // upstream master: the success path does not touch the metadata store —
+                        // the ZK md is only rewritten on the next rollover/close). Known boundary,
+                        // shared with master: after a backward reset, a checkpoint-recovery failure
+                        // rewinds to the stale pre-reset ZK md and skips the replay window.
+                        rolloverLedgerIfNeeded(lh);
+                        persistCallback.operationComplete();
                     })
                     .exceptionally(error -> {
                         Throwable cause = FutureUtil.unwrapCompletionException(error);

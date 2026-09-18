@@ -20,7 +20,6 @@ package org.apache.bookkeeper.mledger.impl;
 
 import static org.apache.bookkeeper.mledger.impl.EntryCountEstimator.estimateEntryCountByBytesSize;
 import static org.apache.bookkeeper.mledger.impl.cache.RangeEntryCacheImpl.BOOKKEEPER_READ_OVERHEAD_PER_ENTRY;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.AssertionsForInterfaceTypes.assertThat;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
@@ -2187,6 +2186,51 @@ public class ManagedCursorTest extends MockedBookKeeperTestCase {
         assertEquals(c1.getNumberOfEntries(), 1);
         assertEquals(c1.getReadPosition(), pos10);
         assertEquals(c1.getMarkDeletedPosition(), pos9);
+    }
+
+    /**
+     * A clear-backlog whose BK checkpoint fails must take the metadata-store fallback (master
+     * semantics) instead of the lenient retry: advancing the mark-delete to the last position
+     * absorbs every ack hole, so the md-only fallback is a complete representation and the
+     * backlog is gone immediately and after a restart.
+     */
+    @Test(timeOut = 30000)
+    public void testCheckpointClearBacklogFallsBackToMetaStoreWhenBkFails() throws Exception {
+        ManagedLedgerConfig config = new ManagedLedgerConfig();
+        config.setPersistentUnackedRangesWithPerLedgerEntryEnabled(true);
+        config.setMaxEntriesPerLedger(3);
+        config.setMaxUnackedRangesToPersistInMetadataStore(-1);
+        config.setThrottleMarkDelete(0);
+
+        String ledgerName = "test_checkpoint_clear_backlog_bk_fail";
+        ManagedLedger ledger = factory.open(ledgerName, config);
+        ManagedCursorImpl cursor = (ManagedCursorImpl) ledger.openCursor("c1");
+
+        List<Position> positions = new ArrayList<>();
+        for (int i = 0; i < 6; i++) {
+            positions.add(ledger.addEntry(("m-" + i).getBytes(Encoding)));
+        }
+        cursor.markDelete(positions.get(0));
+        cursor.delete(positions.get(3));
+        Thread.sleep(300); // let the pre-clear state persist
+
+        // Fail the next BK appends: the clear-backlog checkpoint cannot land.
+        bkc.addEntryFailAfter(0, BKException.Code.NoBookieAvailableException);
+        bkc.addEntryFailAfter(1, BKException.Code.NoBookieAvailableException);
+        bkc.addEntryFailAfter(2, BKException.Code.NoBookieAvailableException);
+
+        cursor.clearBacklog();
+        assertThat(cursor.hasMoreEntries()).isFalse();
+        assertThat(cursor.isMessageDeleted(positions.get(5))).isTrue();
+        ledger.close();
+
+        // Restart: the metadata-store fallback (md at the last position, no holes) is durable.
+        ManagedLedgerFactoryImpl recoveryFactory = new ManagedLedgerFactoryImpl(metadataStore, bkc);
+        ManagedLedger recoveredLedger = recoveryFactory.open(ledgerName, config);
+        ManagedCursorImpl recoveredCursor = (ManagedCursorImpl) recoveredLedger.openCursor("c1");
+        assertThat(recoveredCursor.hasMoreEntries()).isFalse();
+        recoveredLedger.close();
+        recoveryFactory.shutdown();
     }
 
     @Test(timeOut = 20000, dataProvider = "useOpenRangeSet")
@@ -6784,185 +6828,6 @@ public class ManagedCursorTest extends MockedBookKeeperTestCase {
         ledger.close();
     }
 
-    @Test(timeOut = 60000)
-    public void testCheckpointBackwardResetRefreshesMetaStoreMarkDelete() throws Exception {
-        ManagedLedgerConfig config = new ManagedLedgerConfig();
-        config.setPersistentUnackedRangesWithPerLedgerEntryEnabled(true);
-        config.setMaxEntriesPerLedger(3);
-        config.setMetadataMaxEntriesPerLedger(2); // one rollover before the reset, none after
-        config.setMaxUnackedRangesToPersistInMetadataStore(-1);
-        config.setThrottleMarkDelete(0);
-
-        String ledgerName = "test_checkpoint_backward_reset_zk_refresh";
-        ManagedLedger ledger = factory.open(ledgerName, config);
-        ManagedCursorImpl cursor = (ManagedCursorImpl) ledger.openCursor("c1");
-
-        List<Position> positions = new ArrayList<>();
-        for (int i = 0; i < 9; i++) {
-            positions.add(ledger.addEntry(("m-" + i).getBytes(Encoding)));
-        }
-        cursor.markDelete(positions.get(1));
-        long initialCursorLedger = cursor.getCursorLedger();
-        cursor.delete(positions.get(5));
-
-        // Wait for the rollover: its ZK switch-write snapshots md=p1, leaving the ZK
-        // mark-delete AHEAD of the later reset target. Observing the new cursor ledger
-        // implies the ZK write completed (cursorLedger is assigned in its callback).
-        MetaStore store = factory.getMetaStore();
-        ManagedCursorImpl cursorRef = cursor;
-        Awaitility.await().untilAsserted(() ->
-                assertThat(cursorRef.getCursorLedger()).isNotEqualTo(initialCursorLedger));
-        AtomicReference<ManagedCursorInfo> infoRef = new AtomicReference<>();
-        fetchCursorInfo(store, ledgerName, infoRef);
-        Awaitility.await().until(() -> infoRef.get() != null);
-        // Precondition: the stale ZK md is exactly p1 — ahead of the reset target.
-        assertThat(infoRef.get().getMarkDeleteLedgerId()).isEqualTo(positions.get(1).getLedgerId());
-        assertThat(infoRef.get().getMarkDeleteEntryId()).isEqualTo(positions.get(1).getEntryId());
-
-        // Backward reset: md moves behind the ZK snapshot. The reset must refresh the ZK
-        // mark-delete, or a checkpoint recovery failure before the next rollover would rewind
-        // (getRollbackPosition) to the pre-reset position and skip the replayed messages.
-        cursor.resetCursor(positions.get(0));
-        Position expectedResetMd = ledger.getPreviousPosition(positions.get(0));
-        assertThat(cursor.getMarkDeletedPosition()).isEqualTo(expectedResetMd);
-        assertThat(cursor.isMessageDeleted(positions.get(5))).isFalse();
-
-        AtomicReference<ManagedCursorInfo> afterResetRef = new AtomicReference<>();
-        Awaitility.await().untilAsserted(() -> {
-            fetchCursorInfo(store, ledgerName, afterResetRef);
-            assertThat(afterResetRef.get()).isNotNull();
-            assertThat(afterResetRef.get().getMarkDeleteLedgerId()).isEqualTo(expectedResetMd.getLedgerId());
-            assertThat(afterResetRef.get().getMarkDeleteEntryId()).isEqualTo(expectedResetMd.getEntryId());
-        });
-        ledger.close();
-    }
-
-    @Test(timeOut = 60000)
-    public void testCheckpointResetFailsWhenMetaStoreRefreshFails() throws Exception {
-        ManagedLedgerConfig config = new ManagedLedgerConfig();
-        config.setPersistentUnackedRangesWithPerLedgerEntryEnabled(true);
-        config.setMaxEntriesPerLedger(3);
-        config.setMetadataMaxEntriesPerLedger(2); // one rollover before the resets, none after
-        config.setMaxUnackedRangesToPersistInMetadataStore(-1);
-        config.setThrottleMarkDelete(0);
-
-        String ledgerName = "test_checkpoint_reset_zk_refresh_failure";
-        ManagedLedger ledger = factory.open(ledgerName, config);
-        ManagedCursorImpl cursor = (ManagedCursorImpl) ledger.openCursor("c1");
-
-        List<Position> positions = new ArrayList<>();
-        for (int i = 0; i < 9; i++) {
-            positions.add(ledger.addEntry(("m-" + i).getBytes(Encoding)));
-        }
-        cursor.markDelete(positions.get(1));
-        long initialCursorLedger = cursor.getCursorLedger();
-        cursor.delete(positions.get(5));
-        MetaStore store = factory.getMetaStore();
-        ManagedCursorImpl cursorRef = cursor;
-        Awaitility.await().untilAsserted(() ->
-                assertThat(cursorRef.getCursorLedger()).isNotEqualTo(initialCursorLedger));
-
-        // The first reset's ZK refresh fails (e.g. a BadVersion against a racing rollover
-        // write). The reset must not report success while the ZK md stays ahead: the in-memory
-        // state stays untouched for the caller's retry.
-        metadataStore.failConditional(new MetadataStoreException.BadVersionException("simulated conflict"),
-                (op, path) -> op == FaultInjectionMetadataStore.OperationType.PUT
-                        && path.contains(ledgerName));
-        assertThatThrownBy(() -> cursor.resetCursor(positions.get(1)))
-                .isInstanceOf(ManagedLedgerException.class);
-        assertThat(cursor.getMarkDeletedPosition()).isEqualTo(positions.get(1));
-        assertThat(cursor.isMessageDeleted(positions.get(5))).isTrue();
-
-        // The retry to an even earlier target heals: with a fresh stat the refresh lands, and
-        // the final ZK md equals the LAST reset's md — never the stale forward one.
-        Position expectedFinalMd = ledger.getPreviousPosition(positions.get(0));
-        cursor.resetCursor(positions.get(0));
-        assertThat(cursor.getMarkDeletedPosition()).isEqualTo(expectedFinalMd);
-        assertThat(cursor.isMessageDeleted(positions.get(5))).isFalse();
-        AtomicReference<ManagedCursorInfo> afterRetryRef = new AtomicReference<>();
-        Awaitility.await().untilAsserted(() -> {
-            fetchCursorInfo(store, ledgerName, afterRetryRef);
-            assertThat(afterRetryRef.get()).isNotNull();
-            assertThat(afterRetryRef.get().getMarkDeleteLedgerId()).isEqualTo(expectedFinalMd.getLedgerId());
-            assertThat(afterRetryRef.get().getMarkDeleteEntryId()).isEqualTo(expectedFinalMd.getEntryId());
-        });
-        ledger.close();
-    }
-
-    /**
-     * A reset whose ZK refresh fails reports failure while the BK reset checkpoint is already durable.
-     * With no retry and no further writes, a restart still applies the reset — the same at-least-once
-     * window a regular mark-delete has. The effect equals the caller's request (a reset is idempotent
-     * toward its target), so this documents the semantics rather than a defect.
-     */
-    @Test(timeOut = 30000)
-    public void testCheckpointResetReportedFailureStillTakesEffectAfterRestart() throws Exception {
-        ManagedLedgerConfig config = new ManagedLedgerConfig();
-        config.setPersistentUnackedRangesWithPerLedgerEntryEnabled(true);
-        config.setMaxEntriesPerLedger(3);
-        config.setMaxUnackedRangesToPersistInMetadataStore(-1);
-        config.setThrottleMarkDelete(0);
-
-        String ledgerName = "test_checkpoint_reset_refresh_fail_durable";
-        ManagedLedger ledger = factory.open(ledgerName, config);
-        ManagedCursorImpl cursor = (ManagedCursorImpl) ledger.openCursor("c1");
-
-        List<Position> positions = new ArrayList<>();
-        for (int i = 0; i < 6; i++) {
-            positions.add(ledger.addEntry(("m-" + i).getBytes(Encoding)));
-        }
-        cursor.markDelete(positions.get(4));
-        cursor.delete(positions.get(5));
-        Thread.sleep(300); // let the pre-reset state persist
-        // The individual delete may have advanced the mark-delete through the contiguous
-        // acked prefix; capture the actual pre-reset position instead of assuming it.
-        Position preResetMd = cursor.getMarkDeletedPosition();
-
-        // Fail the ZK writes only for the duration of the reset: its checkpoint lands in BK,
-        // the refresh cannot, and the reset reports failure with the in-memory state untouched.
-        // The injection is released before the restart so recovery itself is not degraded.
-        AtomicBoolean failZk = new AtomicBoolean(true);
-        metadataStore.failConditional(new MetadataStoreException.BadVersionException("simulated conflict"),
-                (op, path) -> failZk.get()
-                        && op == FaultInjectionMetadataStore.OperationType.PUT
-                        && path.contains(ledgerName));
-        Position resetTarget = positions.get(1);
-        assertThatThrownBy(() -> cursor.resetCursor(resetTarget))
-                .isInstanceOf(ManagedLedgerException.class);
-        failZk.set(false);
-        assertThat(cursor.getMarkDeletedPosition()).isEqualTo(preResetMd);
-        assertThat(cursor.isMessageDeleted(positions.get(5))).isTrue();
-        // Simulate a crash: no clean close — a clean close would flush the in-memory
-        // (pre-reset) state as the final entry and overwrite the reset checkpoint.
-
-        // Restart: recovery reads the last durable entry — the hole-free reset checkpoint —
-        // so the reported-failed reset has taken effect.
-        ManagedLedgerFactoryImpl recoveryFactory = new ManagedLedgerFactoryImpl(metadataStore, bkc);
-        ManagedLedger recoveredLedger = recoveryFactory.open(ledgerName, config);
-        ManagedCursorImpl recoveredCursor = (ManagedCursorImpl) recoveredLedger.openCursor("c1");
-        // The reported-failed reset took effect: the recovered mark-delete is behind the
-        // pre-reset position (the exact target depends on the next-valid-position adjustment),
-        // and the ack holes are gone.
-        assertThat(recoveredCursor.getMarkDeletedPosition().compareTo(preResetMd) < 0).isTrue();
-        assertThat(recoveredCursor.isMessageDeleted(positions.get(5))).isFalse();
-        recoveredLedger.close();
-        recoveryFactory.shutdown();
-    }
-
-    private static void fetchCursorInfo(MetaStore store, String ledgerName,
-            AtomicReference<ManagedCursorInfo> ref) {
-        store.asyncGetCursorInfo(ledgerName, "c1", new MetaStoreCallback<ManagedCursorInfo>() {
-            @Override
-            public void operationComplete(ManagedCursorInfo info, Stat stat) {
-                ref.set(info);
-            }
-
-            @Override
-            public void operationFailed(MetaStoreException e) {
-                // leave the ref untouched; the caller retries
-            }
-        });
-    }
 
     @Test(timeOut = 30000)
     public void testCheckpointBatchAckPersistAndRecover() throws Exception {
