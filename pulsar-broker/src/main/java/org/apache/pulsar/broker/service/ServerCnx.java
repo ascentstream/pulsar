@@ -82,8 +82,6 @@ import org.apache.pulsar.broker.PulsarServerException;
 import org.apache.pulsar.broker.PulsarService;
 import org.apache.pulsar.broker.ServiceConfiguration;
 import org.apache.pulsar.broker.TransactionMetadataStoreService;
-import org.apache.pulsar.broker.authentication.AuthenticationDataAnonymous;
-import org.apache.pulsar.broker.authentication.AuthenticationDataForwarded;
 import org.apache.pulsar.broker.authentication.AuthenticationDataSource;
 import org.apache.pulsar.broker.authentication.AuthenticationDataSubscription;
 import org.apache.pulsar.broker.authentication.AuthenticationProvider;
@@ -105,6 +103,7 @@ import org.apache.pulsar.broker.limiter.ConnectionController;
 import org.apache.pulsar.broker.loadbalance.extensions.ExtensibleLoadManagerImpl;
 import org.apache.pulsar.broker.loadbalance.extensions.data.BrokerLookupData;
 import org.apache.pulsar.broker.namespace.LookupOptions;
+import org.apache.pulsar.broker.namespace.NamespaceService;
 import org.apache.pulsar.broker.service.BrokerServiceException.ConsumerBusyException;
 import org.apache.pulsar.broker.service.BrokerServiceException.ServerMetadataException;
 import org.apache.pulsar.broker.service.BrokerServiceException.ServiceUnitNotReadyException;
@@ -591,8 +590,8 @@ public class ServerCnx extends PulsarHandler implements TransportCnx {
                     new AuthenticationDataSubscription(getAuthenticationData(), subscriptionName);
             AuthenticationDataSource originalAuthDataSource = null;
             AuthenticationDataSource originalAuthData = getOriginalAuthData();
-            if (getOriginalAuthData() != null) {
-                originalAuthDataSource = new AuthenticationDataSubscription(getOriginalAuthData(), subscriptionName);
+            if (originalAuthData != null) {
+                originalAuthDataSource = new AuthenticationDataSubscription(originalAuthData, subscriptionName);
             }
             return isTopicOperationAllowed(topicName, operation, authDataSource, originalAuthDataSource);
         } else {
@@ -640,8 +639,7 @@ public class ServerCnx extends PulsarHandler implements TransportCnx {
             String originalPrincipal = getOriginalPrincipal();
             AuthenticationDataSource authenticationData = getAuthenticationData();
             AuthenticationDataSource originalAuthData = getOriginalAuthData();
-            isTopicOperationAllowed(topicName, TopicOperation.LOOKUP, getAuthenticationData(), getOriginalAuthData())
-                    .thenApply(
+            isTopicOperationAllowed(topicName, TopicOperation.LOOKUP, authenticationData, originalAuthData).thenApply(
                     isAuthorized -> {
                 if (isAuthorized) {
                     final Map<String, String> properties;
@@ -655,8 +653,8 @@ public class ServerCnx extends PulsarHandler implements TransportCnx {
                         properties = Collections.emptyMap();
                     }
                     lookupTopicAsync(getBrokerService().pulsar(), topicName, authoritative,
-                            authRole, originalPrincipal, getAuthenticationData(),
-                            getOriginalAuthData() != null ? getOriginalAuthData() : getAuthenticationData(),
+                            authRole, originalPrincipal, authenticationData,
+                            originalAuthData != null ? originalAuthData : authenticationData,
                             requestId, advertisedListenerName, properties, this).handle((lookupResponse, ex) -> {
                                 if (ex == null) {
                                     writeAndFlush(lookupResponse);
@@ -730,41 +728,113 @@ public class ServerCnx extends PulsarHandler implements TransportCnx {
 
         final Semaphore lookupSemaphore = service.getLookupRequestSemaphore();
         if (lookupSemaphore.tryAcquire()) {
-            FutureUtil.supplySafely(() -> isTopicOperationAllowed(topicName, TopicOperation.LOOKUP,
-                    getAuthenticationData(), getOriginalAuthData())).handle((isAuthorized, ex) -> {
-                if (ex != null) {
-                    logAuthException(remoteAddress, "partition-metadata", getPrincipal(), Optional.of(topicName), ex);
-                    Throwable actEx = FutureUtil.unwrapCompletionException(ex);
-                    if (actEx instanceof WebApplicationException restException
-                            && restException.getResponse().getStatus() == NOT_FOUND.getStatusCode()) {
-                        writeAndFlush(Commands.newPartitionMetadataResponse(ServerError.TopicNotFound,
-                                "Tenant or namespace or topic does not exist: " + topicName.getNamespace(), requestId));
-                    } else {
-                        writeAndFlush(Commands.newPartitionMetadataResponse(ServerError.AuthorizationError,
-                                "Exception occurred while trying to authorize get Partition Metadata", requestId));
-                    }
-                    return false;
-                }
-                if (!isAuthorized) {
+            AuthenticationDataSource authenticationData = getAuthenticationData();
+            AuthenticationDataSource originalAuthData = getOriginalAuthData();
+            isTopicOperationAllowed(topicName, TopicOperation.LOOKUP, authenticationData, originalAuthData).thenApply(
+                    isAuthorized -> {
+                if (isAuthorized) {
+                    // Get if exists, respond not found error if not exists.
+                    getBrokerService().isAllowAutoTopicCreationAsync(topicName).thenAccept(brokerAllowAutoCreate -> {
+                        boolean autoCreateIfNotExist = partitionMetadata.isMetadataAutoCreationEnabled()
+                                && brokerAllowAutoCreate;
+                        if (!autoCreateIfNotExist) {
+                            NamespaceService namespaceService = getBrokerService().getPulsar().getNamespaceService();
+                            namespaceService.checkTopicExistsAsync(topicName).thenAccept(topicExistsInfo -> {
+                                lookupSemaphore.release();
+                                if (!topicExistsInfo.isExists()) {
+                                    writeAndFlush(Commands.newPartitionMetadataResponse(
+                                            ServerError.TopicNotFound, "", requestId));
+                                } else if (topicExistsInfo.getTopicType().equals(TopicType.PARTITIONED)) {
+                                    commandSender.sendPartitionMetadataResponse(topicExistsInfo.getPartitions(),
+                                            requestId);
+                                } else {
+                                    commandSender.sendPartitionMetadataResponse(0, requestId);
+                                }
+                                // release resources.
+                                topicExistsInfo.recycle();
+                            }).exceptionally(ex -> {
+                                lookupSemaphore.release();
+                                Throwable actEx = FutureUtil.unwrapCompletionException(ex);
+                                if (actEx instanceof WebApplicationException restException
+                                        && restException.getResponse().getStatus() == NOT_FOUND.getStatusCode()) {
+                                    log.warn("{} {} Failed to get partition metadata for nonexistent resource: {}",
+                                            topicName, ServerCnx.this, actEx.getMessage());
+                                } else {
+                                    log.error("{} {} Failed to get partition metadata", topicName,
+                                            ServerCnx.this, ex);
+                                }
+                                writeAndFlush(
+                                        Commands.newPartitionMetadataResponse(ServerError.MetadataError,
+                                                "Failed to get partition metadata",
+                                                requestId));
+                                return null;
+                            });
+                        } else {
+                            // Get if exists, create a new one if not exists.
+                            unsafeGetPartitionedTopicMetadataAsync(getBrokerService().pulsar(), topicName)
+                                .whenComplete((metadata, ex) -> {
+                                    lookupSemaphore.release();
+                                    if (ex == null) {
+                                        int partitions = metadata.partitions;
+                                        commandSender.sendPartitionMetadataResponse(partitions, requestId);
+                                    } else {
+                                        if (ex instanceof PulsarClientException) {
+                                            log.warn("Failed to authorize {} at [{}] on topic {} : {}", getRole(),
+                                                    remoteAddress, topicName, ex.getMessage());
+                                            commandSender.sendPartitionMetadataResponse(ServerError.AuthorizationError,
+                                                    ex.getMessage(), requestId);
+                                        } else {
+                                            ServerError error = ServerError.ServiceNotReady;
+                                            if (ex instanceof MetadataStoreException) {
+                                                error = ServerError.MetadataError;
+                                            } else if (ex instanceof RestException restException){
+                                                int responseCode = restException.getResponse().getStatus();
+                                                if (responseCode == NOT_FOUND.getStatusCode()){
+                                                    error = ServerError.TopicNotFound;
+                                                } else if (responseCode < INTERNAL_SERVER_ERROR.getStatusCode()){
+                                                    error = ServerError.MetadataError;
+                                                }
+                                            }
+                                            if (error == ServerError.TopicNotFound) {
+                                                log.info("Trying to get Partitioned Metadata for a resource not exist"
+                                                                + "[{}] {}: {}", remoteAddress,
+                                                        topicName, ex.getMessage());
+                                            } else {
+                                                log.warn("Failed to get Partitioned Metadata [{}] {}: {}",
+                                                        remoteAddress, topicName, ex.getMessage(), ex);
+                                            }
+                                            commandSender.sendPartitionMetadataResponse(error, ex.getMessage(),
+                                                    requestId);
+                                        }
+                                    }
+                                });
+                        }
+                    });
+                } else {
                     final String msg = "Client is not authorized to Get Partition Metadata";
                     log.warn("[{}] {} with role {} on topic {}", remoteAddress, msg, getPrincipal(), topicName);
-                    writeAndFlush(Commands.newPartitionMetadataResponse(ServerError.AuthorizationError,
-                            msg, requestId));
+                    writeAndFlush(
+                            Commands.newPartitionMetadataResponse(ServerError.AuthorizationError, msg, requestId));
+                    lookupSemaphore.release();
                 }
-                return isAuthorized;
-            }).thenCompose(isAuthorized -> {
-                if (!isAuthorized) {
-                    return CompletableFuture.completedFuture(null);
+                return null;
+            }).exceptionally(ex -> {
+                logAuthException(remoteAddress, "partition-metadata", getPrincipal(), Optional.of(topicName), ex);
+                Throwable actEx = FutureUtil.unwrapCompletionException(ex);
+                if (actEx instanceof WebApplicationException restException) {
+                    if (restException.getResponse().getStatus() == Response.Status.NOT_FOUND.getStatusCode()) {
+                        writeAndFlush(Commands.newPartitionMetadataResponse(ServerError.TopicNotFound,
+                        "Tenant or namespace or topic does not exist: " + topicName.getNamespace() ,
+                                requestId));
+                        lookupSemaphore.release();
+                        return null;
+                    }
                 }
-                return lookupPartitionMetadata(topicName, requestId, partitionMetadata.isMetadataAutoCreationEnabled());
-            }).whenComplete((ignored, ex) -> {
-                // All branches, including their response handling and cleanup, finish before releasing the permit.
+                final String msg = "Exception occurred while trying to authorize get Partition Metadata";
+                writeAndFlush(Commands.newPartitionMetadataResponse(ServerError.AuthorizationError, msg,
+                        requestId));
                 lookupSemaphore.release();
-                if (ex != null) {
-                    // Stage-specific failures have already been handled. Do not attempt another response here.
-                    log.error("{} {} Failed to process partition metadata request {}", topicName, ServerCnx.this,
-                            requestId, FutureUtil.unwrapCompletionException(ex));
-                }
+                return null;
             });
         } else {
             if (log.isDebugEnabled()) {
@@ -774,95 +844,6 @@ public class ServerCnx extends PulsarHandler implements TransportCnx {
             commandSender.sendPartitionMetadataResponse(ServerError.TooManyRequests,
                     "Failed due to too many pending lookup requests", requestId);
         }
-    }
-
-    private CompletableFuture<Void> lookupPartitionMetadata(TopicName topicName, long requestId,
-                                                             boolean metadataAutoCreationEnabled) {
-        return FutureUtil.supplySafely(() -> getBrokerService().isAllowAutoTopicCreationAsync(topicName))
-                .<CompletableFuture<Void>>handle((brokerAllowAutoCreate, ex) -> {
-                    if (ex != null) {
-                        sendPartitionMetadataLookupError(topicName, requestId, ex);
-                        return CompletableFuture.completedFuture(null);
-                    }
-                    if (metadataAutoCreationEnabled && brokerAllowAutoCreate) {
-                        return lookupOrCreatePartitionMetadata(topicName, requestId);
-                    }
-                    return lookupExistingTopicMetadata(topicName, requestId);
-                }).thenCompose(future -> future);
-    }
-
-    private CompletableFuture<Void> lookupExistingTopicMetadata(TopicName topicName, long requestId) {
-        return FutureUtil.supplySafely(() -> getBrokerService().getPulsar().getNamespaceService()
-                .checkTopicExistsAsync(topicName)).handle((topicExistsInfo, ex) -> {
-            if (ex != null) {
-                sendPartitionMetadataLookupError(topicName, requestId, ex);
-                return null;
-            }
-            try {
-                if (!topicExistsInfo.isExists()) {
-                    writeAndFlush(Commands.newPartitionMetadataResponse(ServerError.TopicNotFound, "", requestId));
-                } else if (topicExistsInfo.getTopicType().equals(TopicType.PARTITIONED)) {
-                    commandSender.sendPartitionMetadataResponse(topicExistsInfo.getPartitions(), requestId);
-                } else {
-                    commandSender.sendPartitionMetadataResponse(0, requestId);
-                }
-            } finally {
-                topicExistsInfo.recycle();
-            }
-            return null;
-        });
-    }
-
-    private void sendPartitionMetadataLookupError(TopicName topicName, long requestId, Throwable ex) {
-        Throwable actEx = FutureUtil.unwrapCompletionException(ex);
-        if (actEx instanceof WebApplicationException restException
-                && restException.getResponse().getStatus() == NOT_FOUND.getStatusCode()) {
-            log.warn("{} {} Failed to get partition metadata for nonexistent resource: {}",
-                    topicName, ServerCnx.this, actEx.getMessage());
-        } else {
-            log.error("{} {} Failed to get partition metadata", topicName, ServerCnx.this, ex);
-        }
-        writeAndFlush(Commands.newPartitionMetadataResponse(ServerError.MetadataError,
-                "Failed to get partition metadata", requestId));
-    }
-
-    private CompletableFuture<Void> lookupOrCreatePartitionMetadata(TopicName topicName, long requestId) {
-        return FutureUtil.supplySafely(() ->
-                        unsafeGetPartitionedTopicMetadataAsync(getBrokerService().pulsar(), topicName))
-                .handle((metadata, ex) -> {
-                    if (ex == null) {
-                        commandSender.sendPartitionMetadataResponse(metadata.partitions, requestId);
-                        return null;
-                    }
-                    Throwable actEx = FutureUtil.unwrapCompletionException(ex);
-                    if (actEx instanceof PulsarClientException) {
-                        log.warn("Failed to authorize {} at [{}] on topic {} : {}", getRole(),
-                                remoteAddress, topicName, actEx.getMessage());
-                        commandSender.sendPartitionMetadataResponse(ServerError.AuthorizationError,
-                                actEx.getMessage(), requestId);
-                        return null;
-                    }
-                    ServerError error = ServerError.ServiceNotReady;
-                    if (actEx instanceof MetadataStoreException) {
-                        error = ServerError.MetadataError;
-                    } else if (actEx instanceof RestException restException) {
-                        int responseCode = restException.getResponse().getStatus();
-                        if (responseCode == NOT_FOUND.getStatusCode()) {
-                            error = ServerError.TopicNotFound;
-                        } else if (responseCode < INTERNAL_SERVER_ERROR.getStatusCode()) {
-                            error = ServerError.MetadataError;
-                        }
-                    }
-                    if (error == ServerError.TopicNotFound) {
-                        log.info("Trying to get Partitioned Metadata for a resource not exist"
-                                + "[{}] {}: {}", remoteAddress, topicName, actEx.getMessage());
-                    } else {
-                        log.warn("Failed to get Partitioned Metadata [{}] {}: {}",
-                                remoteAddress, topicName, actEx.getMessage(), actEx);
-                    }
-                    commandSender.sendPartitionMetadataResponse(error, actEx.getMessage(), requestId);
-                    return null;
-                });
     }
 
     @Override
@@ -1105,7 +1086,6 @@ public class ServerCnx extends PulsarHandler implements TransportCnx {
                 sslSession = ((SslHandler) sslHandler).engine().getSession();
             }
 
-<<<<<<< HEAD
             binaryAuthSession = service.getAuthenticationService().createBinaryAuthSession(BinaryAuthContext.builder()
                     .executor(ctx.executor())
                     .remoteAddress(remoteAddress)
@@ -1123,71 +1103,6 @@ public class ServerCnx extends PulsarHandler implements TransportCnx {
                             handleAuthResult(authResult);
                         }
                     }, ctx.executor());
-=======
-            authState = authenticationProvider.newAuthState(clientData, remoteAddress, sslSession);
-
-            if (log.isDebugEnabled()) {
-                String role = "";
-                if (authState != null && authState.isComplete()) {
-                    role = authState.getAuthRole();
-                } else {
-                    role = "authentication incomplete or null";
-                }
-                log.debug("[{}] Authenticate role : {}", remoteAddress, role);
-            }
-
-            if (connect.hasOriginalPrincipal() && service.getPulsar().getConfig().isAuthenticateOriginalAuthData()
-                    && !WEBSOCKET_DUMMY_ORIGINAL_PRINCIPLE.equals(connect.getOriginalPrincipal())) {
-                // Flow:
-                // 1. Initialize original authentication.
-                // 2. Authenticate the proxy's authentication data.
-                // 3. Authenticate the original authentication data.
-                String originalAuthMethod;
-                if (connect.hasOriginalAuthMethod()) {
-                    originalAuthMethod = connect.getOriginalAuthMethod();
-                } else {
-                    originalAuthMethod = "none";
-                }
-
-                AuthenticationProvider originalAuthenticationProvider = getBrokerService()
-                        .getAuthenticationService()
-                        .getAuthenticationProvider(originalAuthMethod);
-
-                /**
-                 * When both the broker and the proxy are configured with anonymousUserRole
-                 * if the client does not configure an authentication method
-                 * the proxy side will set the value of anonymousUserRole to clientAuthRole when it creates a connection
-                 * and the value of clientAuthMethod will be none.
-                 * The broker uses that role for the original principal while authenticating the proxy separately.
-                 */
-                if (originalAuthenticationProvider == null) {
-                    originalPrincipal = getBrokerService().getAuthenticationService().getAnonymousUserRole()
-                            .orElseThrow(() ->
-                                    new AuthenticationException("No anonymous role, and can't find "
-                                            + "AuthenticationProvider for original role using auth method "
-                                            + "[" + originalAuthMethod + "] is not available"));
-                    originalAuthData = AuthenticationDataAnonymous.INSTANCE;
-                } else {
-                    originalAuthDataCopy = AuthData.of(connect.getOriginalAuthData().getBytes());
-                    originalAuthState = originalAuthenticationProvider.newAuthState(
-                            originalAuthDataCopy,
-                            remoteAddress,
-                            sslSession);
-                }
-            } else if (connect.hasOriginalPrincipal()) {
-                originalPrincipal = connect.getOriginalPrincipal();
-                if (!WEBSOCKET_DUMMY_ORIGINAL_PRINCIPLE.equals(originalPrincipal)) {
-                    originalAuthData = AuthenticationDataForwarded.INSTANCE;
-                }
-
-                if (log.isDebugEnabled()) {
-                    log.debug("[{}] Setting original role (forwarded from proxy): {}",
-                        remoteAddress, originalPrincipal);
-                }
-            }
-
-            doAuthentication(clientData, false, clientProtocolVersion, clientVersion);
->>>>>>> e67d32f7cac ([fix][broker] Fix multi-role authorization regressions and optimize nested checks (#26551))
         } catch (Exception e) {
             authenticationFailed(e);
         }
@@ -2660,12 +2575,12 @@ public class ServerCnx extends PulsarHandler implements TransportCnx {
         AuthenticationDataSource authenticationData = getAuthData();
         if (originalPrincipal != null) {
             isProxyAuthorizedFuture = service.getAuthorizationService().allowNamespaceOperationAsync(
-                    namespaceName, operation, originalPrincipal, getOriginalAuthData());
+                    namespaceName, operation, originalPrincipal, originalAuthData);
         } else {
             isProxyAuthorizedFuture = CompletableFuture.completedFuture(true);
         }
         CompletableFuture<Boolean> isAuthorizedFuture = service.getAuthorizationService().allowNamespaceOperationAsync(
-                namespaceName, operation, authRole, getAuthenticationData());
+                namespaceName, operation, authRole, authenticationData);
         return isProxyAuthorizedFuture.thenCombine(isAuthorizedFuture, (isProxyAuthorized, isAuthorized) -> {
             if (!isProxyAuthorized) {
                 log.warn("OriginalRole {} is not authorized to perform operation {} on namespace {}",
@@ -2839,40 +2754,26 @@ public class ServerCnx extends PulsarHandler implements TransportCnx {
         }
 
         final String topic = commandGetSchema.getTopic();
-        final TopicName topicName;
-        final String schemaName;
+        String schemaName;
         try {
-            topicName = TopicName.get(topic);
-            schemaName = topicName.getSchemaName();
+            schemaName = TopicName.get(topic).getSchemaName();
         } catch (Throwable t) {
             commandSender.sendGetSchemaErrorResponse(requestId, ServerError.InvalidTopicName, t.getMessage());
             return;
         }
-        final SchemaVersion requestedVersion = schemaVersion;
 
-        // Producers, consumers and readers fetch the schema of a topic they have looked up, so LOOKUP is a
-        // permission every legitimate caller already holds.
-        isTopicOperationAllowed(topicName, TopicOperation.LOOKUP, getAuthenticationData(), getOriginalAuthData())
-                .thenCompose(isAuthorized -> {
-                    if (!isAuthorized) {
-                        commandSender.sendGetSchemaErrorResponse(requestId, ServerError.AuthorizationError,
-                                "Client is not authorized to get the schema of " + topic);
-                        return CompletableFuture.completedFuture(null);
-                    }
-                    return schemaService.getSchema(schemaName, requestedVersion).thenAccept(schemaAndMetadata -> {
-                        if (schemaAndMetadata == null) {
-                            commandSender.sendGetSchemaErrorResponse(requestId, ServerError.TopicNotFound,
-                                    String.format("Topic not found or no-schema %s", topic));
-                        } else {
-                            commandSender.sendGetSchemaResponse(requestId,
-                                    SchemaInfoUtil.newSchemaInfo(schemaName, schemaAndMetadata.schema),
-                                    schemaAndMetadata.version);
-                        }
-                    });
-                }).exceptionally(ex -> {
-                    commandSender.sendGetSchemaErrorResponse(requestId, ServerError.UnknownError, ex.getMessage());
-                    return null;
-                });
+        schemaService.getSchema(schemaName, schemaVersion).thenAccept(schemaAndMetadata -> {
+            if (schemaAndMetadata == null) {
+                commandSender.sendGetSchemaErrorResponse(requestId, ServerError.TopicNotFound,
+                        String.format("Topic not found or no-schema %s", topic));
+            } else {
+                commandSender.sendGetSchemaResponse(requestId,
+                        SchemaInfoUtil.newSchemaInfo(schemaName, schemaAndMetadata.schema), schemaAndMetadata.version);
+            }
+        }).exceptionally(ex -> {
+            commandSender.sendGetSchemaErrorResponse(requestId, ServerError.UnknownError, ex.getMessage());
+            return null;
+        });
     }
 
     @Override
@@ -2883,29 +2784,9 @@ public class ServerCnx extends PulsarHandler implements TransportCnx {
         }
         long requestId = commandGetOrCreateSchema.getRequestId();
         final String topicName = commandGetOrCreateSchema.getTopic();
-        final TopicName parsedTopicName;
-        try {
-            parsedTopicName = TopicName.get(topicName);
-        } catch (Throwable t) {
-            commandSender.sendGetOrCreateSchemaErrorResponse(requestId, ServerError.InvalidTopicName,
-                    t.getMessage());
-            return;
-        }
         SchemaData schemaData = getSchema(commandGetOrCreateSchema.getSchema());
         SchemaData schema = schemaData.getType() == SchemaType.NONE ? null : schemaData;
-        // Adding a schema version changes what the topic's producers may send, so it takes PRODUCE, as the
-        // REST schema upload does.
-        CompletableFuture<Optional<Topic>> topicFuture =
-                isTopicOperationAllowed(parsedTopicName, TopicOperation.PRODUCE, getAuthenticationData(),
-                        getOriginalAuthData())
-                        .thenCompose(isAuthorized -> {
-                            if (!isAuthorized) {
-                                return CompletableFuture.failedFuture(new BrokerServiceException.NotAuthorizedException(
-                                        "Client is not authorized to add a schema to " + topicName));
-                            }
-                            return service.getTopicIfExists(topicName);
-                        });
-        topicFuture.thenAccept(topicOpt -> {
+        service.getTopicIfExists(topicName).thenAccept(topicOpt -> {
             if (topicOpt.isPresent()) {
                 Topic topic = topicOpt.get();
                 CompletableFuture<SchemaVersion> schemaVersionFuture = tryAddSchema(topic, schema);
@@ -3123,7 +3004,7 @@ public class ServerCnx extends PulsarHandler implements TransportCnx {
                     "Invalid topic name " + topic + ": " + e.getMessage()));
         }
         CompletableFuture<Boolean> isAuthorized = subscription == null
-                ? isTopicOperationAllowed(topicName, operation, getAuthenticationData(), getOriginalAuthData())
+                ? isTopicOperationAllowed(topicName, operation, authenticationData, originalAuthData)
                 : isTopicOperationAllowed(topicName, subscription, operation);
         return isAuthorized.thenCompose(authorized -> authorized
                 ? CompletableFuture.<Void>completedFuture(null)
@@ -3190,11 +3071,11 @@ public class ServerCnx extends PulsarHandler implements TransportCnx {
             AuthenticationDataSource originalAuthData = getOriginalAuthData();
             AuthenticationDataSource authenticationData = getAuthData();
             CompletableFuture<Boolean> isAuthRoleAuthorized = service.getAuthorizationService().isSuperUser(
-                    getAuthRole(), getAuthenticationData());
+                    getAuthRole(), authenticationData);
             if (getOriginalPrincipal() != null) {
                 CompletableFuture<Boolean> isOriginalPrincipalAuthorized = service.getAuthorizationService()
                         .isSuperUser(getOriginalPrincipal(),
-                                getOriginalAuthData() != null ? getOriginalAuthData() : getAuthenticationData());
+                                originalAuthData != null ? originalAuthData : authenticationData);
                 return isOriginalPrincipalAuthorized.thenCombine(isAuthRoleAuthorized,
                         (originalPrincipal, authRole) -> originalPrincipal && authRole);
             } else {
