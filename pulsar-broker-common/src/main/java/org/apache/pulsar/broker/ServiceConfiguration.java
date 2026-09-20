@@ -2498,6 +2498,13 @@ public class ServiceConfiguration implements PulsarConfiguration {
                 + "Changes the on-disk cursor-ledger format: brokers without this feature cannot "
                 + "parse these ledgers, so do not enable it on clusters that may need to roll back.")
     private boolean persistentUnackedRangesWithPerLedgerEntryEnabled = false;
+    @FieldContext(
+        category = CATEGORY_STORAGE_ML,
+        doc = "Maximum serialized size for a single CursorLogEntry when per-msgLedger checkpoint "
+                + "persistence is enabled. Checkpoints exceeding this size are transparently chunked "
+                + "into consecutive entries. Only takes effect when "
+                + "persistentUnackedRangesWithPerLedgerEntryEnabled is true.")
+    private int persistentUnackedRangesMaxEntrySize = 5 * 1024 * 1024;
     @Deprecated
     @FieldContext(
         category = CATEGORY_STORAGE_ML,
