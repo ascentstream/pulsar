@@ -2237,6 +2237,67 @@ public class ManagedCursorTest extends MockedBookKeeperTestCase {
         ledger.close();
     }
 
+    /**
+     * The tracked cursor-ledger set is embedded in every checkpoint, so a restart rebuilds it
+     * from the recovery point itself. After the restart, once mark-delete passes the acks and
+     * a rollover triggers GC, every pre-restart old ledger is reclaimed — no orphans even
+     * though the in-memory set was lost.
+     */
+    @Test(timeOut = 60000)
+    public void testCheckpointTrackedCursorLedgerIdsRebuiltAfterRestartAndGced() throws Exception {
+        ManagedLedgerConfig config = new ManagedLedgerConfig();
+        config.setPersistentUnackedRangesWithPerLedgerEntryEnabled(true);
+        config.setMaxEntriesPerLedger(3);
+        config.setMetadataMaxEntriesPerLedger(2); // rollover the cursor ledger aggressively
+        config.setMaxUnackedRangesToPersistInMetadataStore(-1);
+        config.setThrottleMarkDelete(0);
+
+        String ledgerName = "test_checkpoint_tracked_ledgers_restart_gc";
+        ManagedLedger ledger = factory.open(ledgerName, config);
+        ManagedCursorImpl cursor = (ManagedCursorImpl) ledger.openCursor("c1");
+
+        List<Position> positions = new ArrayList<>();
+        for (int i = 0; i < 12; i++) {
+            positions.add(ledger.addEntry(("m-" + i).getBytes(Encoding)));
+        }
+        cursor.markDelete(positions.get(0));
+        cursor.delete(positions.get(6)); // hole on a mid ledger keeps refs (and old ledgers) alive
+        cursor.markDelete(positions.get(1));
+        final ManagedCursorImpl preRestartCursorRef = cursor;
+        Awaitility.await().untilAsserted(() ->
+                assertThat(preRestartCursorRef.getAllCursorLedgerIds()).isNotEmpty());
+
+        // Snapshot the pre-restart tracked set (old ledgers retained by AckStateRefs).
+        Set<Long> preRestartTracked = new HashSet<>(cursor.getAllCursorLedgerIds());
+        long preRestartCursorLedger = cursor.getCursorLedger();
+        assertThat(preRestartTracked).doesNotContain(preRestartCursorLedger); // live ledger untracked
+        assertThat(preRestartTracked).isNotEmpty();
+        ledger.close();
+
+        // Restart: the recovery point's embedded tracked set rebuilds allCursorLedgerIds.
+        ManagedLedgerFactoryImpl recoveryFactory = new ManagedLedgerFactoryImpl(metadataStore, bkc);
+        ledger = recoveryFactory.open(ledgerName, config);
+        cursor = (ManagedCursorImpl) ledger.openCursor("c1");
+        assertThat(cursor.getAllCursorLedgerIds()).containsAll(preRestartTracked);
+
+        // Clear the hole and push mark-delete past the last ack-holding ledger, then rollover
+        // (write enough entries) to trigger GC: every pre-restart ledger is reclaimed.
+        final ManagedCursorImpl recoveredCursorRef = cursor;
+        recoveredCursorRef.clearBacklog();
+        for (int i = 12; i < 24; i++) {
+            positions.add(ledger.addEntry(("m-" + i).getBytes(Encoding)));
+        }
+        recoveredCursorRef.markDelete(ledger.getLastConfirmedEntry());
+        Awaitility.await().untilAsserted(() -> {
+            recoveredCursorRef.gcOldCursorLedgers();
+            for (long id : preRestartTracked) {
+                assertThat(bkc.getLedgers()).doesNotContain(id);
+            }
+        });
+        ledger.close();
+        recoveryFactory.shutdown();
+    }
+
     private void readCursorInfoViaMetadataStore(String ledgerName,
             AtomicReference<ManagedCursorInfo> ref) {
         try {

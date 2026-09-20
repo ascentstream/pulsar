@@ -34,7 +34,7 @@ public class CursorCheckpointPersistenceOrderingTest {
 
     private CursorCheckpointPersistence newInstance() {
         return new CursorCheckpointPersistence(null, new ReentrantReadWriteLock(),
-                null, null, new byte[0], true);
+                null, null, new byte[0], true, java.util.Collections::emptyList);
     }
 
     @Test

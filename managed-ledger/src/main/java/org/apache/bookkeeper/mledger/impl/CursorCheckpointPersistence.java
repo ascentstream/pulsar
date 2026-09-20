@@ -22,6 +22,7 @@ import com.google.common.annotations.VisibleForTesting;
 import com.google.protobuf.ByteString;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -31,6 +32,7 @@ import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.locks.ReadWriteLock;
+import java.util.function.Supplier;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.bookkeeper.client.BKException;
@@ -55,6 +57,9 @@ class CursorCheckpointPersistence {
     private final byte[] password;
     @Getter
     private final boolean perLedgerEntryPersistEnabled;
+    // Live view of the cursor's tracked (created, not yet confirmed deleted) cursor ledger ids;
+    // snapshotted into every checkpoint so recovery rebuilds the full GC set.
+    private final Supplier<Collection<Long>> trackedCursorLedgerIds;
 
     // Position of each msg ledger's latest checkpoint in the cursor ledger; the AckStateRef
     // targets are derived from this index.
@@ -65,13 +70,15 @@ class CursorCheckpointPersistence {
     public CursorCheckpointPersistence(CursorCheckpointLog writer, ReadWriteLock lock,
                                          BookKeeper bookKeeper,
                                          BookKeeper.DigestType digestType, byte[] password,
-                                         boolean perLedgerEntryPersistEnabled) {
+                                         boolean perLedgerEntryPersistEnabled,
+                                         Supplier<Collection<Long>> trackedCursorLedgerIds) {
         this.writer = writer;
         this.lock = lock;
         this.bookKeeper = bookKeeper;
         this.digestType = digestType;
         this.password = password;
         this.perLedgerEntryPersistEnabled = perLedgerEntryPersistEnabled;
+        this.trackedCursorLedgerIds = trackedCursorLedgerIds;
     }
 
     public void setZkCheckpointHint(long cursorLedgerId, long entryId) {
@@ -105,6 +112,7 @@ class CursorCheckpointPersistence {
                         properties.forEach((name, value) -> cpBuilder.addProperties(
                                 LongProperty.newBuilder().setName(name).setValue(value).build()));
                     }
+                    cpBuilder.addAllTrackedCursorLedgerIds(trackedCursorLedgerIds.get());
                     return writer.appendCheckpoint(lh, cpBuilder.build()).thenApply(result -> {
                         lock.writeLock().lock();
                         try {
@@ -483,6 +491,7 @@ class CursorCheckpointPersistence {
             });
         }
         addAckState(cpBuilder, msgLedgerId, bitmap, batchAcks);
+        cpBuilder.addAllTrackedCursorLedgerIds(trackedCursorLedgerIds.get());
         lock.readLock().lock();
         try {
             for (long id : ctx.activeLedgers) {

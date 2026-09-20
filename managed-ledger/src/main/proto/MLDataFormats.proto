@@ -161,6 +161,10 @@ message CursorCheckpoint {
     repeated LongProperty properties = 3;
     repeated AckState ackStates = 4;
     repeated AckStateRef ackStateRefs = 5;
+    // Every cursor ledger this cursor has created and not yet confirmed deleted, so recovery
+    // rebuilds the full GC set from the recovery point itself instead of relying on in-memory
+    // state that a restart loses. Shrinks automatically after GC deletes the ledgers.
+    repeated int64 trackedCursorLedgerIds = 6;
 }
 
 message AckState {

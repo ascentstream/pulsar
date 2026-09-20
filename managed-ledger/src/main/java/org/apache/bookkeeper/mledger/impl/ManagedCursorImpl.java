@@ -218,6 +218,11 @@ public class ManagedCursorImpl implements ManagedCursor {
     private volatile long pendingCheckpointHintLedgerId = -1;
     private volatile long pendingCheckpointHintEntryId = -1;
     private final Set<Long> allCursorLedgerIds = ConcurrentHashMap.newKeySet();
+
+    @VisibleForTesting
+    Set<Long> getAllCursorLedgerIds() {
+        return allCursorLedgerIds;
+    }
     private RateLimiter markDeleteLimiter;
     // The cursor is considered "dirty" when there are mark-delete updates that are only applied in memory,
     // because of the rate limiting.
@@ -399,7 +404,8 @@ public class ManagedCursorImpl implements ManagedCursor {
         this.ackPersistence = new CursorCheckpointPersistence(
                 writer, lock, bookkeeper,
                 this.digestType, getConfig().getPassword(),
-                getConfig().isPersistentUnackedRangesWithPerLedgerEntryEnabled());
+                getConfig().isPersistentUnackedRangesWithPerLedgerEntryEnabled(),
+                () -> allCursorLedgerIds);
         PENDING_MARK_DELETED_SUBMITTED_COUNT_UPDATER.set(this, 0);
         PENDING_READ_OPS_UPDATER.set(this, 0);
         RESET_CURSOR_IN_PROGRESS_UPDATER.set(this, FALSE);
@@ -887,12 +893,14 @@ public class ManagedCursorImpl implements ManagedCursor {
         }
         Position position = PositionFactory.create(cp.getMarkDeleteLedgerId(), cp.getMarkDeleteEntryId());
 
-        // Track the recovered cursor ledger and every referenced old cursor ledger so GC can
-        // reclaim them across restarts once mark-delete passes the last ledger holding acks.
+        // Track the recovered cursor ledger, every referenced old cursor ledger, and the
+        // checkpoint-embedded tracked set, so GC can reclaim them across restarts once
+        // mark-delete passes the last ledger holding acks.
         allCursorLedgerIds.add(lh.getId());
         for (AckStateRef ref : cp.getAckStateRefsList()) {
             allCursorLedgerIds.add(ref.getCursorLedgerId());
         }
+        allCursorLedgerIds.addAll(cp.getTrackedCursorLedgerIdsList());
 
         // Apply per-ledger ack bitmaps via bulk build (RoaringBitmap bytes → LongBitmap).
         Map<Long, byte[]> bitmaps = new HashMap<>();
@@ -3456,6 +3464,13 @@ public class ManagedCursorImpl implements ManagedCursor {
     // //////////////////////////////////////////////////
 
     void startCreatingNewMetadataLedger() {
+        // Track the outgoing ledger before creating its replacement: the new ledger's initial
+        // checkpoint then embeds it in the tracked set, so a restart before the first GC still
+        // recovers the full set from that checkpoint. Safe on failure paths — the live ledger
+        // is excluded from GC and the set is idempotent.
+        if (cursorLedger != null) {
+            allCursorLedgerIds.add(cursorLedger.getId());
+        }
         // Change the state so that new mark-delete ops will be queued and not immediately submitted
         State oldState = changeStateIfNotClosed(State.SwitchingLedger);
         if (oldState == State.SwitchingLedger || oldState.isClosed()) {
