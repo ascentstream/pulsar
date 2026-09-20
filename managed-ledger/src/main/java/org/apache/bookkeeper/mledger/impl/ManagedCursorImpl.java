@@ -3776,7 +3776,7 @@ public class ManagedCursorImpl implements ManagedCursor {
                         pendingCheckpointHintEntryId = result.commitEntryId();
                         mbean.persistToLedger(true);
                         mbean.addWriteCursorLedgerSize(result.totalBytes());
-                        if (mdEntry.propagatePersistFailure) {
+                        if (mdEntry.propagatePersistFailure && state == State.Open) {
                             // A backward reset moves the position behind the ZK snapshot, and a
                             // checkpoint-recovery failure (or an unreadable cursor ledger) would
                             // rewind to the stale pre-reset ZK md and skip the messages the reset
@@ -3787,11 +3787,19 @@ public class ManagedCursorImpl implements ManagedCursor {
                             // only logs; the next rollover/close rewrite ZK regardless. The window
                             // where ZK stays ahead shrinks from "until the next rollover" to the
                             // duration of this write.
+                            //
+                            // Only on the Open path. During a ledger switch (the initial persist into
+                            // a freshly created ledger, state == SwitchingLedger) the switch write in
+                            // switchToNewLedger immediately follows with the same md — a background
+                            // write here would race it on the same znode version and could break the
+                            // switch itself when the switch write loses. Deferring the rollover until
+                            // the background write settles keeps the two writes ordered.
                             persistPositionMetaStore(lh.getId(), mdEntry.newPosition, mdEntry.properties,
                                     new MetaStoreCallback<Void>() {
                                         @Override
                                         public void operationComplete(Void ignored, Stat stat) {
                                             mbean.persistToZookeeper(true);
+                                            rolloverLedgerIfNeeded(lh);
                                         }
 
                                         @Override
@@ -3801,10 +3809,12 @@ public class ManagedCursorImpl implements ManagedCursor {
                                                     + "rewrite it, ledgerId: {}, errorMessage: {}",
                                                     ledger.getName(), name, lh.getId(), e.getMessage());
                                             mbean.persistToZookeeper(false);
+                                            rolloverLedgerIfNeeded(lh);
                                         }
                                     }, false);
+                        } else {
+                            rolloverLedgerIfNeeded(lh);
                         }
-                        rolloverLedgerIfNeeded(lh);
                         persistCallback.operationComplete();
                     })
                     .exceptionally(error -> {
