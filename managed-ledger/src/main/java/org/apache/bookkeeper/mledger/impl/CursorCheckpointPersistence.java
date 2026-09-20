@@ -347,6 +347,12 @@ class CursorCheckpointPersistence {
      * clear-backlog (md at the last position absorbs every hole) the drained ledgers' entries
      * survive that flush as stale pointers into old cursor ledgers. Releasing them lets an
      * immediate GC reclaim those ledgers instead of waiting for the next flush or rollover.
+     *
+     * <p>Caller contract: the last durable checkpoint must not reference the pruned targets —
+     * only call this after a post-drain checkpoint has been appended (and, for a reset, after
+     * {@link #persistReset} cleared the index). GC relies on the invariant that every ledger
+     * referenced by the last durable checkpoint survives; pruning entries a durable checkpoint
+     * still points at would make recovery rewind to the ZK snapshot and lose persisted holes.
      */
     void releaseRefsBelowMarkDelete(long mdLedgerId, Set<Long> activeLedgers) {
         lock.writeLock().lock();
