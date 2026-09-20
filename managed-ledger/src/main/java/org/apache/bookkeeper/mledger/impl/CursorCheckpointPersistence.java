@@ -341,6 +341,22 @@ class CursorCheckpointPersistence {
         }
     }
 
+    /**
+     * Drops reference-index entries for msgLedgers below the mark-delete that no longer hold
+     * in-memory acks. A flush takes its "active" snapshot before the cursor aligns, so after a
+     * clear-backlog (md at the last position absorbs every hole) the drained ledgers' entries
+     * survive that flush as stale pointers into old cursor ledgers. Releasing them lets an
+     * immediate GC reclaim those ledgers instead of waiting for the next flush or rollover.
+     */
+    void releaseRefsBelowMarkDelete(long mdLedgerId, Set<Long> activeLedgers) {
+        lock.writeLock().lock();
+        try {
+            lastCheckpointPos.keySet().removeIf(id -> id < mdLedgerId && !activeLedgers.contains(id));
+        } finally {
+            lock.writeLock().unlock();
+        }
+    }
+
     /** Validates no duplicate msgLedgerIds and that all refs resolved. Fails fast on corruption. */
     private static void validateRecoveredAckData(CursorCheckpoint cp, Map<Long, AckStateData> fetched) {
         Set<Long> expected = new HashSet<>(cp.getAckStatesCount() + cp.getAckStateRefsCount());

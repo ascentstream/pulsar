@@ -1884,6 +1884,10 @@ public class ManagedCursorImpl implements ManagedCursor {
                 }
                 updateLastActive();
                 callback.resetComplete(newReadPosition);
+                // The hole-free reset checkpoint is now the last entry and persistReset has
+                // cleared the reference index, so no AckStateRef points at old cursor ledgers:
+                // reclaim them now instead of waiting for the next rollover.
+                gcOldCursorLedgers();
             }
 
             @Override
@@ -2204,6 +2208,11 @@ public class ManagedCursorImpl implements ManagedCursor {
             @Override
             public void markDeleteComplete(Object ctx) {
                 callback.clearBacklogComplete(ctx);
+                // md at the last position absorbs every hole, so the drained ledgers'
+                // reference-index entries are stale pointers into old cursor ledgers (the
+                // clear's own flush snapshotted them as active before the align). Release
+                // them, then reclaim the ledgers now instead of waiting for the next rollover.
+                releaseRefsBelowMdAndGc();
             }
 
             @Override
@@ -4136,6 +4145,31 @@ public class ManagedCursorImpl implements ManagedCursor {
                 }
             }, null);
         }
+    }
+
+    /**
+     * Post-management-operation GC hook (reset / clear-backlog). Both operations leave the
+     * mark-delete past every ack-holding msgLedger with no holes in memory, so once the
+     * reference index stops protecting drained ledgers, all tracked old cursor ledgers are
+     * reclaimable without waiting for the next rollover.
+     */
+    private void releaseRefsBelowMdAndGc() {
+        if (!ackPersistence.isPerLedgerEntryPersistEnabled()) {
+            return;
+        }
+        long mdLedgerId = markDeletePosition.getLedgerId();
+        Set<Long> active = new HashSet<>();
+        lock.readLock().lock();
+        try {
+            individualDeletedMessages.forEachActiveLedger(active::add);
+            if (batchDeletedIndexes != null) {
+                batchDeletedIndexes.keySet().forEach(pos -> active.add(pos.getLedgerId()));
+            }
+        } finally {
+            lock.readLock().unlock();
+        }
+        ackPersistence.releaseRefsBelowMarkDelete(mdLedgerId, active);
+        gcOldCursorLedgers();
     }
 
     void switchToNewLedger(final LedgerHandle lh, final VoidCallback callback) {
