@@ -146,7 +146,6 @@
                   <include>commons-*:*</include>
                   <include>commons-codec:commons-codec</include>
                   <include>io.airlift:*</include>
-                  <include>io.netty.incubator:*</include>
                   <include>io.netty:*</include>
                   <include>io.netty:netty-codec-http</include>
                   <include>io.netty:netty-transport-native-epoll</include>

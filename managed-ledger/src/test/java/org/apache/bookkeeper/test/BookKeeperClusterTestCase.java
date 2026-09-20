@@ -112,6 +112,12 @@ public abstract class BookKeeperClusterTestCase {
     protected final ServerConfiguration baseConf = TestBKConfiguration.newServerConfiguration();
     protected final ClientConfiguration baseClientConf = TestBKConfiguration.newClientConfiguration();
 
+    {
+        // BookieId validation in BookKeeper 4.18+ rejects zone-scoped IPv6 addresses (e.g. the
+        // fe80::1%lo0 address of the loopback interface on macOS), so always advertise loopback.
+        baseConf.setAdvertisedAddress("127.0.0.1");
+    }
+
     private boolean isAutoRecoveryEnabled;
     protected ExecutorService executor;
     private final List<Integer> bookiePorts = new ArrayList<>();

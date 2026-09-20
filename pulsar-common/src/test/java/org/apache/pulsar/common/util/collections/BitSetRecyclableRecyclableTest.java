@@ -28,11 +28,13 @@ public class BitSetRecyclableRecyclableTest {
         BitSetRecyclable bitset1 = BitSetRecyclable.create();
         bitset1.set(3);
         bitset1.recycle();
+        // Netty 4.2's Recycler (which is itself deprecated) no longer guarantees same-thread
+        // immediate reuse, so we only assert on functional behavior: any recycled instance
+        // must come back cleared, and distinct create() calls must return distinct objects.
         BitSetRecyclable bitset2 = BitSetRecyclable.create();
         BitSetRecyclable bitset3 = BitSetRecyclable.create();
-        Assert.assertSame(bitset2, bitset1);
         Assert.assertFalse(bitset2.get(3));
-        Assert.assertNotSame(bitset3, bitset1);
+        Assert.assertNotSame(bitset3, bitset2);
     }
 
     @Test

@@ -80,7 +80,11 @@ flexible messaging model and an intuitive client API.</description>
     <maven.compiler.source>17</maven.compiler.source>
     <maven.compiler.target>17</maven.compiler.target>
     <pulsar.broker.compiler.release>${maven.compiler.target}</pulsar.broker.compiler.release>
-    <pulsar.client.compiler.release>8</pulsar.client.compiler.release>
+    <!-- Java 17 bytecode for the client artifacts as well: BookKeeper 4.18.0 jars are Java 17
+         bytecode (and netty-transport-classes-io_uring is Java 9) and they are part of the client
+         dependency chain, so a Java 8 client bytecode guarantee is no longer possible
+         (aligned with Apache Pulsar master). -->
+    <pulsar.client.compiler.release>17</pulsar.client.compiler.release>
 
     <pulsar.client.python.version>3.13.0</pulsar.client.python.version>
 
@@ -182,18 +186,17 @@ flexible messaging model and an intuitive client API.</description>
     <!-- apache commons -->
     <commons-compress.version>1.28.0</commons-compress.version>
 
-    <storage.groupId>com.ascentstream</storage.groupId>
-    <bookkeeper.groupId>${storage.groupId}.bookkeeper</bookkeeper.groupId>
-    <distributedlog.groupId>${storage.groupId}.distributedlog</distributedlog.groupId>
-    <bookkeeper.version>4.17.4.0</bookkeeper.version>
+    <bookkeeper.groupId>org.apache.bookkeeper</bookkeeper.groupId>
+    <distributedlog.groupId>org.apache.distributedlog</distributedlog.groupId>
+    <bookkeeper.version>4.18.0</bookkeeper.version>
+    <distributedlog.version>4.18.0</distributedlog.version>
     <zookeeper.version>3.9.5</zookeeper.version>
     <commons-cli.version>1.11.0</commons-cli.version>
     <commons-text.version>1.15.0</commons-text.version>
     <snappy.version>1.1.10.8</snappy.version> <!-- ZooKeeper server -->
     <dropwizardmetrics.version>4.1.12.1</dropwizardmetrics.version> <!-- ZooKeeper server -->
     <curator.version>5.7.1</curator.version>
-    <netty.version>4.1.137.Final</netty.version>
-    <netty-iouring.version>0.0.26.Final</netty-iouring.version>
+    <netty.version>4.2.17.Final</netty.version>
     <jetty.version>12.1.12</jetty.version>
     <!-- Jetty 9 is used in tiered-storage/file-system tests and pulsar-io/alluxio -->
     <jetty9.version>9.4.58.v20250814</jetty9.version>
@@ -202,7 +205,7 @@ flexible messaging model and an intuitive client API.</description>
     <athenz.version>1.10.62</athenz.version>
     <prometheus.version>0.16.0</prometheus.version>
     <vertx.version>4.5.28</vertx.version>
-    <rocksdb.version>7.9.2</rocksdb.version>
+    <rocksdb.version>9.9.3</rocksdb.version>
     <slf4j.version>2.0.18</slf4j.version>
     <commons.collections4.version>4.5.0</commons.collections4.version>
     <log4j2.version>2.26.1</log4j2.version>
@@ -784,25 +787,30 @@ flexible messaging model and an intuitive client API.</description>
       </dependency>
 
       <dependency>
-        <groupId>io.netty.incubator</groupId>
-        <artifactId>netty-incubator-transport-classes-io_uring</artifactId>
-        <version>${netty-iouring.version}</version>
+        <groupId>io.netty</groupId>
+        <artifactId>netty-transport-classes-epoll</artifactId>
+        <version>${netty.version}</version>
       </dependency>
       <dependency>
-        <groupId>io.netty.incubator</groupId>
-        <artifactId>netty-incubator-transport-native-io_uring</artifactId>
-        <version>${netty-iouring.version}</version>
+        <groupId>io.netty</groupId>
+        <artifactId>netty-transport-classes-io_uring</artifactId>
+        <version>${netty.version}</version>
       </dependency>
       <dependency>
-        <groupId>io.netty.incubator</groupId>
-        <artifactId>netty-incubator-transport-native-io_uring</artifactId>
-        <version>${netty-iouring.version}</version>
+        <groupId>io.netty</groupId>
+        <artifactId>netty-transport-native-io_uring</artifactId>
+        <version>${netty.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>io.netty</groupId>
+        <artifactId>netty-transport-native-io_uring</artifactId>
+        <version>${netty.version}</version>
         <classifier>linux-x86_64</classifier>
       </dependency>
       <dependency>
-        <groupId>io.netty.incubator</groupId>
-        <artifactId>netty-incubator-transport-native-io_uring</artifactId>
-        <version>${netty-iouring.version}</version>
+        <groupId>io.netty</groupId>
+        <artifactId>netty-transport-native-io_uring</artifactId>
+        <version>${netty.version}</version>
         <classifier>linux-aarch_64</classifier>
       </dependency>
 
@@ -1354,7 +1362,7 @@ flexible messaging model and an intuitive client API.</description>
       <dependency>
         <groupId>${distributedlog.groupId}</groupId>
         <artifactId>distributedlog-core</artifactId>
-        <version>${bookkeeper.version}</version>
+        <version>${distributedlog.version}</version>
         <exclusions>
           <!-- exclude bookkeeper, reply on the bookkeeper version that pulsar uses -->
           <exclusion>
@@ -1956,6 +1964,7 @@ flexible messaging model and an intuitive client API.</description>
         <configuration>
           <argLine>${testJacocoAgentArgument} -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=${testHeapDumpPath}
             -XX:+ExitOnOutOfMemoryError -Xmx${testMaxHeapSize} -XX:+UseZGC
+            -Djava.net.preferIPv4Stack=true
             ${test.additional.args}
           </argLine>
           <reuseForks>${testReuseFork}</reuseForks>
@@ -2514,20 +2523,6 @@ flexible messaging model and an intuitive client API.</description>
   </build>
 
   <profiles>
-    <profile>
-      <!-- used for running integration tests on Java 8 -->
-      <id>integration-test-java8</id>
-      <activation>
-        <jdk>1.8</jdk>
-      </activation>
-      <properties>
-        <test.additional.args/>
-        <maven.compiler.source>8</maven.compiler.source>
-        <maven.compiler.target>8</maven.compiler.target>
-        <pulsar.broker.compiler.release/>
-        <pulsar.client.compiler.release/>
-      </properties>
-    </profile>
     <profile>
       <id>coverage</id>
       <properties>

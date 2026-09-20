@@ -53,6 +53,40 @@
       <artifactId>pulsar-io-core</artifactId>
       <version>${project.version}</version>
     </dependency>
+    <!-- Netty jars must never leak into java-instance.jar (the interface jar handed to user code,
+         see JavaInstanceDepsTest). With BookKeeper 4.18 / Netty 4.2 the transitive resolution widens
+         some netty artifacts to runtime scope; declaring them test-scoped here keeps the assembly's
+         runtime dependency set free of io.netty classes. -->
+    <dependency>
+      <groupId>io.netty</groupId>
+      <artifactId>netty-buffer</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>io.netty</groupId>
+      <artifactId>netty-common</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>io.netty</groupId>
+      <artifactId>netty-resolver</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>io.netty</groupId>
+      <artifactId>netty-transport</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>io.netty</groupId>
+      <artifactId>netty-transport-native-unix-common</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>io.netty</groupId>
+      <artifactId>netty-transport-classes-epoll</artifactId>
+      <scope>test</scope>
+    </dependency>
 
     <dependency>
       <groupId>${project.groupId}</groupId>
