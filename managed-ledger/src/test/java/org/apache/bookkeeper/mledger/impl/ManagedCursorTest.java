@@ -2298,6 +2298,91 @@ public class ManagedCursorTest extends MockedBookKeeperTestCase {
         recoveryFactory.shutdown();
     }
 
+    /**
+     * A successful clear-backlog reclaims the tracked old cursor ledgers immediately: md at the
+     * last position absorbs every hole, the stale reference-index entries are released, and the
+     * GC no longer has to wait for the next rollover (up to 4h for an idle cursor).
+     */
+    @Test(timeOut = 60000)
+    public void testCheckpointClearBacklogReclaimsOldCursorLedgersWithoutRollover() throws Exception {
+        ManagedLedgerConfig config = new ManagedLedgerConfig();
+        config.setPersistentUnackedRangesWithPerLedgerEntryEnabled(true);
+        config.setMaxEntriesPerLedger(3);
+        config.setMetadataMaxEntriesPerLedger(2); // rollover the cursor ledger aggressively
+        config.setMaxUnackedRangesToPersistInMetadataStore(-1);
+        config.setThrottleMarkDelete(0);
+
+        String ledgerName = "test_checkpoint_clear_backlog_immediate_gc";
+        ManagedLedger ledger = factory.open(ledgerName, config);
+        ManagedCursorImpl cursor = (ManagedCursorImpl) ledger.openCursor("c1");
+
+        List<Position> positions = new ArrayList<>();
+        for (int i = 0; i < 12; i++) {
+            positions.add(ledger.addEntry(("m-" + i).getBytes(Encoding)));
+        }
+        cursor.markDelete(positions.get(0));
+        cursor.delete(positions.get(6)); // holes force rollovers that populate the tracked set
+        cursor.markDelete(positions.get(1));
+        final ManagedCursorImpl cursorRef = cursor;
+        Awaitility.await().untilAsserted(() ->
+                assertThat(cursorRef.getAllCursorLedgerIds()).isNotEmpty());
+
+        Set<Long> tracked = new HashSet<>(cursor.getAllCursorLedgerIds());
+        assertThat(tracked).doesNotContain(cursor.getCursorLedger()); // live ledger untracked
+
+        // No further writes, mark-deletes or rollovers after this point.
+        cursor.clearBacklog();
+        Awaitility.await().untilAsserted(() -> {
+            for (long id : tracked) {
+                assertThat(bkc.getLedgers()).doesNotContain(id);
+            }
+        });
+        assertThat(cursor.getAllCursorLedgerIds()).isEmpty();
+        ledger.close();
+    }
+
+    /**
+     * A successful backward reset writes a hole-free checkpoint that clears the reference index,
+     * so the tracked old cursor ledgers are reclaimed immediately without waiting for a rollover.
+     */
+    @Test(timeOut = 60000)
+    public void testCheckpointResetReclaimsOldCursorLedgersWithoutRollover() throws Exception {
+        ManagedLedgerConfig config = new ManagedLedgerConfig();
+        config.setPersistentUnackedRangesWithPerLedgerEntryEnabled(true);
+        config.setMaxEntriesPerLedger(3);
+        config.setMetadataMaxEntriesPerLedger(2); // rollover the cursor ledger aggressively
+        config.setMaxUnackedRangesToPersistInMetadataStore(-1);
+        config.setThrottleMarkDelete(0);
+
+        String ledgerName = "test_checkpoint_reset_immediate_gc";
+        ManagedLedger ledger = factory.open(ledgerName, config);
+        ManagedCursorImpl cursor = (ManagedCursorImpl) ledger.openCursor("c1");
+
+        List<Position> positions = new ArrayList<>();
+        for (int i = 0; i < 12; i++) {
+            positions.add(ledger.addEntry(("m-" + i).getBytes(Encoding)));
+        }
+        cursor.markDelete(positions.get(0));
+        cursor.delete(positions.get(6)); // holes force rollovers that populate the tracked set
+        cursor.markDelete(positions.get(1));
+        final ManagedCursorImpl cursorRef = cursor;
+        Awaitility.await().untilAsserted(() ->
+                assertThat(cursorRef.getAllCursorLedgerIds()).isNotEmpty());
+
+        Set<Long> tracked = new HashSet<>(cursor.getAllCursorLedgerIds());
+        assertThat(tracked).doesNotContain(cursor.getCursorLedger()); // live ledger untracked
+
+        // No further writes, mark-deletes or rollovers after this point.
+        cursor.resetCursor(positions.get(0));
+        Awaitility.await().untilAsserted(() -> {
+            for (long id : tracked) {
+                assertThat(bkc.getLedgers()).doesNotContain(id);
+            }
+        });
+        assertThat(cursor.getAllCursorLedgerIds()).isEmpty();
+        ledger.close();
+    }
+
     private void readCursorInfoViaMetadataStore(String ledgerName,
             AtomicReference<ManagedCursorInfo> ref) {
         try {
@@ -6345,7 +6430,7 @@ public class ManagedCursorTest extends MockedBookKeeperTestCase {
 
             return invocation.callRealMethod();
         }).when(spyCursor).internalAsyncMarkDelete(any(Position.class), nullable(Map.class),
-                any(MarkDeleteCallback.class), nullable(Object.class), nullable(Runnable.class));
+                any(MarkDeleteCallback.class), nullable(Object.class), nullable(Runnable.class), anyBoolean());
 
         // Start compaction mark-delete from another thread because the spy intentionally blocks it.
         CompletableFuture.runAsync(() -> spyCursor.asyncMarkDelete(
@@ -7952,8 +8037,11 @@ public class ManagedCursorTest extends MockedBookKeeperTestCase {
 
         ledger = factory.open(ledgerName, config);
         cursor = (ManagedCursorImpl) ledger.openCursor("c1");
-        // After recovery the backlog is drained: mark-delete at tail, no individual holes.
-        assertThat(cursor.getMarkDeletedPosition()).isEqualTo(positions.get(8));
+        // After recovery the backlog is drained: mark-delete at tail, no individual holes. The
+        // trim of the fully-consumed last data ledger may race the assertion and bump the
+        // recovered md from the tail entry to the next (empty) ledger's start — both mean
+        // every entry at or before the tail is acknowledged.
+        assertThat(cursor.getMarkDeletedPosition().compareTo(positions.get(8))).isGreaterThanOrEqualTo(0);
         assertThat(cursor.isMessageDeleted(positions.get(5))).isTrue();
         ledger.close();
     }
