@@ -22,6 +22,7 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.apache.bookkeeper.mledger.util.ManagedLedgerUtils.NO_MAX_SIZE_LIMIT;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyMap;
@@ -6091,7 +6092,7 @@ public class ManagedLedgerTest extends MockedBookKeeperTestCase {
             return invocation.callRealMethod();
         }).when(nonDurableCursor)
                 .internalAsyncMarkDelete(any(Position.class), nullable(Map.class), any(MarkDeleteCallback.class),
-                        nullable(Object.class), nullable(Runnable.class));
+                        nullable(Object.class), nullable(Runnable.class), anyBoolean());
 
         ledger.addEntry("entry-1".getBytes(Encoding));
         Position pos2 = ledger.addEntry("entry-2".getBytes(Encoding));
