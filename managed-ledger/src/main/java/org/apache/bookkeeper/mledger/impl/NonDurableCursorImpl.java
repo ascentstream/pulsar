@@ -100,7 +100,8 @@ public class NonDurableCursorImpl extends ManagedCursorImpl {
 
     @Override
     protected void internalAsyncMarkDelete(final Position newPosition, Map<String, Long> properties,
-            final MarkDeleteCallback callback, final Object ctx, Runnable alignAcknowledgeStatusAfterPersisted) {
+            final MarkDeleteCallback callback, final Object ctx, Runnable alignAcknowledgeStatusAfterPersisted,
+            boolean propagatePersistFailure) {
         // Bypass persistence of mark-delete position and individually deleted messages info
         MarkDeleteEntry mdEntry;
         lock.writeLock().lock();
