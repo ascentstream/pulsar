@@ -543,6 +543,9 @@ public class SecurityUtility {
         SSLParameters sslParameters = sslEngine.getSSLParameters();
         sslParameters.setEndpointIdentificationAlgorithm("HTTPS");
         sslEngine.setSSLParameters(sslParameters);
+        if (log.isInfoEnabled()) {
+            log.info("[CI-DEBUG] configureSSLHandler forced HTTPS", new Exception("caller-stack"));
+        }
     }
 
     public static Provider resolveProvider(String providerName) throws NoSuchAlgorithmException {

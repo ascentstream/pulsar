@@ -1565,6 +1565,11 @@ public class SchemaTest extends MockedPulsarServiceBaseTest {
     }
 
     private int countSchemaLedgers(PulsarMockBookKeeper mockBk, String schemaName) {
+        log.info("[CI-DEBUG] countSchemaLedgers for {}: ledgerMap={}", schemaName,
+                mockBk.getLedgerMap().values().stream()
+                        .map(lh -> lh.getId() + "->" + lh.getLedgerMetadata().getCustomMetadata().keySet()
+                                + ":state=" + lh.getLedgerMetadata().getState())
+                        .collect(Collectors.joining(", ")));
         int schemaLedgerCount = 0;
         for (PulsarMockLedgerHandle lh : mockBk.getLedgerMap().values()) {
             Map<String, byte[]> metadata = lh.getLedgerMetadata().getCustomMetadata();

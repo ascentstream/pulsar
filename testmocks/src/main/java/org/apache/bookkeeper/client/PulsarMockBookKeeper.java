@@ -221,6 +221,9 @@ public class PulsarMockBookKeeper extends BookKeeper {
 
     @Override
     public void asyncDeleteLedger(long lId, DeleteCallback cb, Object ctx) {
+        if (log.isInfoEnabled()) {
+            log.info("[CI-DEBUG] asyncDeleteLedger {}", lId, new Exception("caller-stack"));
+        }
         if (deleteLedgerFailure != null && deleteLedgerFailure.getAsBoolean()) {
             executor.execute(() ->
                     cb.deleteComplete(BKException.Code.NoBookieAvailableException, ctx));

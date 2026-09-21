@@ -135,11 +135,21 @@ public class PulsarChannelInitializer extends ChannelInitializer<SocketChannel> 
                 if (pulsarSslFactory == null) {
                     return;
                 }
-                SslHandler handler = new SslHandler(pulsarSslFactory
-                        .createClientSslEngine(ch.alloc(), sniHost.getHostName(), sniHost.getPort()));
+                javax.net.ssl.SSLEngine debugEngine = pulsarSslFactory
+                        .createClientSslEngine(ch.alloc(), sniHost.getHostName(), sniHost.getPort());
+                log.info("[CI-DEBUG] client engine: factory={} verifyEnabled={} engineClass={} endpointAlg={}"
+                                + " jvm={} {} tcnativeAvailable={}",
+                        pulsarSslFactory.getClass().getName(), tlsHostnameVerificationEnabled,
+                        debugEngine.getClass().getName(),
+                        debugEngine.getSSLParameters().getEndpointIdentificationAlgorithm(),
+                        System.getProperty("java.vendor"), System.getProperty("java.version"),
+                        io.netty.handler.ssl.OpenSsl.isAvailable());
+                SslHandler handler = new SslHandler(debugEngine);
 
                 if (tlsHostnameVerificationEnabled) {
                     SecurityUtility.configureSSLHandler(handler);
+                    log.info("[CI-DEBUG] configureSSLHandler applied, endpointAlg now {}",
+                            debugEngine.getSSLParameters().getEndpointIdentificationAlgorithm());
                 }
 
                 ch.pipeline().addFirst(TLS_HANDLER, handler);
