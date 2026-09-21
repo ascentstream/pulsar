@@ -223,6 +223,11 @@ public class ManagedCursorImpl implements ManagedCursor {
     Set<Long> getAllCursorLedgerIds() {
         return allCursorLedgerIds;
     }
+
+    @VisibleForTesting
+    Position checkpointPosOf(long msgLedgerId) {
+        return ackPersistence.checkpointPosOf(msgLedgerId);
+    }
     private RateLimiter markDeleteLimiter;
     // The cursor is considered "dirty" when there are mark-delete updates that are only applied in memory,
     // because of the rate limiting.
@@ -3477,7 +3482,10 @@ public class ManagedCursorImpl implements ManagedCursor {
         // checkpoint then embeds it in the tracked set, so a restart before the first GC still
         // recovers the full set from that checkpoint. Safe on failure paths — the live ledger
         // is excluded from GC and the set is idempotent.
-        if (cursorLedger != null) {
+        // Only tracked in per-msgLedger checkpoint mode: with the feature off the old ledger is
+        // deleted right after the switch (switchToNewLedger else-branch), so tracking it would
+        // grow the set without any GC path ever draining it — an unbounded leak per rollover.
+        if (ackPersistence.isPerLedgerEntryPersistEnabled() && cursorLedger != null) {
             allCursorLedgerIds.add(cursorLedger.getId());
         }
         // Change the state so that new mark-delete ops will be queued and not immediately submitted

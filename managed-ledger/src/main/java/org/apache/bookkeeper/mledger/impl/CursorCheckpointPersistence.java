@@ -217,15 +217,6 @@ class CursorCheckpointPersistence {
             ManagedCursorImpl cursor) {
         PersistContext ctx = createPersistContext(cursor, mdPos);
 
-        // Drop positions for ledgers below mark-delete that are no longer active. Active ledgers
-        // are kept: batch-index entries may still be in memory before the align cleanup runs.
-        lock.writeLock().lock();
-        try {
-            lastCheckpointPos.keySet().removeIf(id -> id < ctx.mdLedgerId && !ctx.activeLedgers.contains(id));
-        } finally {
-            lock.writeLock().unlock();
-        }
-
         List<Long> dirtyOrder = new ArrayList<>(ctx.flushedLedgers);
         Collections.sort(dirtyOrder);
         // mdLedger is written first so other checkpoints in this flush can reference its position.
@@ -261,7 +252,26 @@ class CursorCheckpointPersistence {
             });
         }
 
-        return chain.exceptionally(error -> {
+        // Drop index entries for ledgers below mark-delete that are no longer active — but only
+        // AFTER this flush's last append is durable. The checkpoints just written only reference
+        // ctx.activeLedgers (buildCheckpoint), so dropped ids are absent from the new last
+        // durable checkpoint; until the appends complete, the stale entries keep protecting the
+        // old targets against a GC that fires outside the lastPersist chain (rollover, reset and
+        // clear-backlog callbacks all call gcOldCursorLedgers directly). Pruning earlier would
+        // let such a GC delete a ledger still referenced by the previous durable checkpoint —
+        // a crash in that window rewinds recovery to the ZK snapshot. Active ledgers are kept:
+        // batch-index entries may still be in memory before the align cleanup runs. A failed
+        // flush skips the prune; the next successful flush retries it.
+        return chain.thenApply(result -> {
+            lock.writeLock().lock();
+            try {
+                lastCheckpointPos.keySet().removeIf(id -> id < ctx.mdLedgerId
+                        && !ctx.activeLedgers.contains(id));
+            } finally {
+                lock.writeLock().unlock();
+            }
+            return result;
+        }).exceptionally(error -> {
             restoreDirtyForFailedLedgers(cursor, ctx.flushedLedgers, appendedLedgers);
             throw new CompletionException(error);
         });

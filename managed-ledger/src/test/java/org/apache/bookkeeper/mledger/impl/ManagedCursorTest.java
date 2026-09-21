@@ -2299,6 +2299,97 @@ public class ManagedCursorTest extends MockedBookKeeperTestCase {
     }
 
     /**
+     * A GC firing while a flush is in flight must not delete a cursor ledger referenced by the
+     * last DURABLE checkpoint. doPersist used to prune reference-index entries for drained
+     * ledgers before appending; a failed append left the index pruned while the previous
+     * durable checkpoint still referenced the old ledger, so a rollover/reset/clear-backlog
+     * callback GC (which runs outside the lastPersist chain) could delete it — a crash in that
+     * window rewound recovery to the ZK snapshot. The prune now happens only after the flush's
+     * last append succeeds.
+     */
+    @Test(timeOut = 60000)
+    public void testCheckpointGcKeepsLedgerReferencedByLastDurableCheckpointDuringFailedFlush()
+            throws Exception {
+        ManagedLedgerConfig config = new ManagedLedgerConfig();
+        config.setPersistentUnackedRangesWithPerLedgerEntryEnabled(true);
+        config.setMaxEntriesPerLedger(3);
+        config.setMetadataMaxEntriesPerLedger(2); // rollover the cursor ledger aggressively
+        config.setMaxUnackedRangesToPersistInMetadataStore(-1);
+        config.setThrottleMarkDelete(0);
+
+        String ledgerName = "test_checkpoint_gc_failed_flush_race";
+        ManagedLedger ledger = factory.open(ledgerName, config);
+        ManagedCursorImpl cursor = (ManagedCursorImpl) ledger.openCursor("c1");
+
+        List<Position> positions = new ArrayList<>();
+        for (int i = 0; i < 9; i++) {
+            positions.add(ledger.addEntry(("m-" + i).getBytes(Encoding)));
+        }
+        // msgLedger holding the hole = positions 3..5's ledger; its inline checkpoint must land
+        // in a cursor ledger that later rolls over, so a ref into it survives on disk.
+        cursor.markDelete(positions.get(0));
+        cursor.delete(positions.get(4)); // hole keeps the ledger active and dirty
+        cursor.markDelete(positions.get(1));
+        final ManagedCursorImpl cursorRef = cursor;
+        Awaitility.await().untilAsserted(() ->
+                assertThat(cursorRef.getAllCursorLedgerIds()).isNotEmpty()); // rollover happened
+
+        // Drain the hole with a mark-delete still inside the hole's ledger: this flush succeeds,
+        // its checkpoint (the new last durable one) keeps a ref to the hole ledger's checkpoint
+        // in the old cursor ledger, and the post-flush align clears the in-memory hole.
+        cursor.markDelete(positions.get(5));
+        long holeLedgerId = positions.get(4).getLedgerId();
+        Position persistedHoleCheckpoint = cursor.checkpointPosOf(holeLedgerId);
+        assertThat(persistedHoleCheckpoint).isNotNull();
+        long referencedCursorLedger = persistedHoleCheckpoint.getLedgerId();
+
+        // Fail the next flush (md now advances past the hole's ledger): under the old ordering
+        // the index entry was pruned before this failed append, arming the race.
+        bkc.addEntryFailAfter(0, BKException.Code.NoBookieAvailableException);
+        cursor.markDelete(positions.get(8)); // in a later msgLedger, append fails
+
+        // GC as the rollover/reset/clear callbacks would, right in the race window.
+        cursor.gcOldCursorLedgers();
+        assertThat(bkc.getLedgers()).contains(referencedCursorLedger);
+        ledger.close();
+    }
+
+    /**
+     * With the per-msgLedger checkpoint feature disabled (the default), the tracked-set
+     * maintenance must stay off: rollovers delete the old cursor ledger right away, so tracking
+     * it would grow the set with no GC path ever draining it — an unbounded per-rollover leak.
+     */
+    @Test(timeOut = 60000)
+    public void testTrackedCursorLedgerSetStaysEmptyWhenFeatureDisabled() throws Exception {
+        ManagedLedgerConfig config = new ManagedLedgerConfig();
+        config.setPersistentUnackedRangesWithPerLedgerEntryEnabled(false);
+        config.setMaxEntriesPerLedger(3);
+        config.setMetadataMaxEntriesPerLedger(1); // rollover the cursor ledger on every persist
+        config.setThrottleMarkDelete(0);
+
+        String ledgerName = "test_tracked_ledger_set_disabled";
+        ManagedLedger ledger = factory.open(ledgerName, config);
+        ManagedCursorImpl cursor = (ManagedCursorImpl) ledger.openCursor("c1");
+
+        List<Position> positions = new ArrayList<>();
+        for (int i = 0; i < 9; i++) {
+            positions.add(ledger.addEntry(("m-" + i).getBytes(Encoding)));
+        }
+        long firstCursorLedger = cursor.getCursorLedger();
+        cursor.markDelete(positions.get(0));
+        cursor.delete(positions.get(4));
+        cursor.markDelete(positions.get(1));
+        cursor.delete(positions.get(5));
+        cursor.markDelete(positions.get(2));
+
+        final ManagedCursorImpl cursorRef = cursor;
+        Awaitility.await().untilAsserted(() ->
+                assertThat(cursorRef.getCursorLedger()).isNotEqualTo(firstCursorLedger)); // rolled over
+        assertThat(cursor.getAllCursorLedgerIds()).isEmpty();
+        ledger.close();
+    }
+
+    /**
      * A successful clear-backlog reclaims the tracked old cursor ledgers immediately: md at the
      * last position absorbs every hole, the stale reference-index entries are released, and the
      * GC no longer has to wait for the next rollover (up to 4h for an idle cursor).
