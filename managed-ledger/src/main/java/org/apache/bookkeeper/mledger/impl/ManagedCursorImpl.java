@@ -3216,6 +3216,9 @@ public class ManagedCursorImpl implements ManagedCursor {
                     // At this point the position had already been safely stored in the cursor z-node
                     callback.closeComplete(ctx);
                     asyncDeleteLedger(cursorLedger);
+                    // Recovery now reads the -1 ZK state instead of BK: any per-msgLedger
+                    // checkpoint ledgers tracked from a recovery are obsolete.
+                    deleteObsoleteCursorLedgersAfterLegacyPersist();
                 }
 
                 @Override
@@ -3986,6 +3989,10 @@ public class ManagedCursorImpl implements ManagedCursor {
 
                 mbean.persistToLedger(true);
                 mbean.addWriteCursorLedgerSize(data.length);
+                // The appended PositionInfo is a self-contained legacy snapshot and is now the
+                // last entry: any per-msgLedger checkpoint ledgers tracked from a recovery are
+                // obsolete (legacy recovery only reads this entry).
+                deleteObsoleteCursorLedgersAfterLegacyPersist();
                 persistCallback.operationComplete();
             } else {
                 if (!ignoreClosedStateAfterFailure && state.isClosed()) {
@@ -4053,6 +4060,9 @@ public class ManagedCursorImpl implements ManagedCursor {
                 }
                 mdEntry.persistedSuccessfully = true;
                 mbean.persistToZookeeper(true);
+                // The -1 ZK state is now the recovery source instead of BK: any per-msgLedger
+                // checkpoint ledgers tracked from a recovery are obsolete.
+                deleteObsoleteCursorLedgersAfterLegacyPersist();
                 callback.operationComplete();
             }
 
@@ -4150,6 +4160,41 @@ public class ManagedCursorImpl implements ManagedCursor {
                     log.warn("Failed to GC old cursor ledger, will retry on next rollover, ledgerId: {}, "
                                     + "errorMessage: {}",
                             id, BKException.getMessage(rc));
+                }
+            }, null);
+        }
+    }
+
+    /**
+     * Downgrade cleanup for the per-msgLedger checkpoint ledgers. A flag-off process that
+     * recovered new-format data rebuilds the tracked set, but gcOldCursorLedgers is
+     * feature-gated and the legacy rollover only deletes the ledger it switches from — the
+     * remaining checkpoint-history ledgers would leak forever, because old binaries cannot
+     * know about them. Once this process has durably written a self-contained legacy
+     * representation (a PositionInfo appended to the cursor ledger, or a ZK state that
+     * recovery reads instead of BK), every other tracked ledger is obsolete: legacy recovery
+     * only consumes that representation. Idempotent — the set empties after the first sweep;
+     * a crash before the sweep leaves the ledgers for the next legacy persist to reclaim.
+     */
+    private void deleteObsoleteCursorLedgersAfterLegacyPersist() {
+        if (ackPersistence.isPerLedgerEntryPersistEnabled() || allCursorLedgerIds.isEmpty()) {
+            return;
+        }
+        final long liveLedgerId = cursorLedger != null ? cursorLedger.getId() : -1;
+        for (long id : new ArrayList<>(allCursorLedgerIds)) {
+            if (id == liveLedgerId) {
+                // The live ledger is deleted by the legacy rollover / close paths.
+                continue;
+            }
+            log.info("[{}-{}] Deleting obsolete per-msgLedger checkpoint ledger after legacy persist, ledgerId: {}",
+                    ledger.getName(), name, id);
+            bookkeeper.asyncDeleteLedger(id, (rc, ctx) -> {
+                if (rc == BKException.Code.OK || rc == BKException.Code.NoSuchLedgerExistsException) {
+                    allCursorLedgerIds.remove(id);
+                } else {
+                    log.warn("[{}-{}] Failed to delete obsolete cursor ledger after legacy persist, will retry on"
+                            + " the next legacy persist, ledgerId: {}, errorMessage: {}",
+                            ledger.getName(), name, id, BKException.getMessage(rc));
                 }
             }, null);
         }
