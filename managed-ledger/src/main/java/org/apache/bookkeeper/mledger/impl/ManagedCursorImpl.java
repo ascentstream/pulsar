@@ -3989,11 +3989,12 @@ public class ManagedCursorImpl implements ManagedCursor {
 
                 mbean.persistToLedger(true);
                 mbean.addWriteCursorLedgerSize(data.length);
+                persistCallback.operationComplete();
                 // The appended PositionInfo is a self-contained legacy snapshot and is now the
                 // last entry: any per-msgLedger checkpoint ledgers tracked from a recovery are
-                // obsolete (legacy recovery only reads this entry).
+                // obsolete (legacy recovery only reads this entry). Fired after the callback,
+                // matching the rollover/reset GC convention.
                 deleteObsoleteCursorLedgersAfterLegacyPersist();
-                persistCallback.operationComplete();
             } else {
                 if (!ignoreClosedStateAfterFailure && state.isClosed()) {
                     // After closed the cursor, the in-progress persistence task will get a
@@ -4060,10 +4061,11 @@ public class ManagedCursorImpl implements ManagedCursor {
                 }
                 mdEntry.persistedSuccessfully = true;
                 mbean.persistToZookeeper(true);
-                // The -1 ZK state is now the recovery source instead of BK: any per-msgLedger
-                // checkpoint ledgers tracked from a recovery are obsolete.
-                deleteObsoleteCursorLedgersAfterLegacyPersist();
                 callback.operationComplete();
+                // The -1 ZK state is now the recovery source instead of BK: any per-msgLedger
+                // checkpoint ledgers tracked from a recovery are obsolete. Fired after the
+                // callback, matching the rollover/reset GC convention.
+                deleteObsoleteCursorLedgersAfterLegacyPersist();
             }
 
             @Override
