@@ -51,6 +51,9 @@ import org.testng.annotations.Test;
  *        - this gets included possibly due to a maven-assembly-plugin bug since there is no direct or transitive
  *          dependency in pulsar-functions/runtime-all to this library for runtime scope. In the test scope, it is
  *          present.
+ *     14. slog
+ *        - bundled so its backend-discovery probe (including the disruptor probe of the Log4j2 backend) runs
+ *          in this jar's classloader, where disruptor is absent; see the comment in runtime-all's pom.xml.
  */
 public class JavaInstanceDepsTest {
 
@@ -85,7 +88,8 @@ public class JavaInstanceDepsTest {
                         && !name.startsWith("org/jspecify/annotations")
                         && !name.startsWith("javax/annotation")
                         && !name.startsWith("org/apache/logging/slf4j")
-                        && !name.startsWith("org/apache/logging/log4j")) {
+                        && !name.startsWith("org/apache/logging/log4j")
+                        && !name.startsWith("io/github/merlimat/slog")) {
                     notAllowedClasses.add(name);
                 }
             }

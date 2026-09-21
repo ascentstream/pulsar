@@ -129,6 +129,17 @@
       <version>${gson.version}</version>
     </dependency>
 
+    <!-- Bundle slog into java-instance.jar: BookKeeper 4.18's allocator classes log through slog, and
+         slog's Log4j2 backend probes for disruptor using its own classloader. When the probe runs in
+         the function instance's root classloader (this jar), where disruptor is absent, the async-logger
+         fast path is disabled; without slog here the probe runs in the child classloader (/pulsar/lib,
+         which has disruptor via bookkeeper-server), enabling a code path that loads log4j's AsyncLogger
+         from this jar and fails with NoClassDefFoundError: com/lmax/disruptor/EventTranslatorVararg. -->
+    <dependency>
+      <groupId>io.github.merlimat.slog</groupId>
+      <artifactId>slog</artifactId>
+    </dependency>
+
     <!-- logging -->
 
     <dependency>
