@@ -2344,13 +2344,25 @@ public class ManagedCursorTest extends MockedBookKeeperTestCase {
         long referencedCursorLedger = persistedHoleCheckpoint.getLedgerId();
 
         // Fail the next flush (md now advances past the hole's ledger): under the old ordering
-        // the index entry was pruned before this failed append, arming the race.
-        bkc.addEntryFailAfter(0, BKException.Code.NoBookieAvailableException);
+        // the index entry was pruned before this failed append, arming the race. Fail several
+        // consecutive appends: draining the last msgLedger also triggers an internal
+        // mark-delete bump ("all entries consumed") whose flush must fail too, otherwise its
+        // post-append prune legitimately drops the hole ledger's index entry and stalemates
+        // the captured expectation below.
+        for (int i = 0; i < 5; i++) {
+            bkc.addEntryFailAfter(i, BKException.Code.NoBookieAvailableException);
+        }
         cursor.markDelete(positions.get(8)); // in a later msgLedger, append fails
 
         // GC as the rollover/reset/clear callbacks would, right in the race window.
         cursor.gcOldCursorLedgers();
         assertThat(bkc.getLedgers()).contains(referencedCursorLedger);
+        // Consistency guard: whatever the index points at now must also survive GC (the entry
+        // itself may only disappear via a successful flush's post-append prune).
+        Position holeCheckpointNow = cursor.checkpointPosOf(holeLedgerId);
+        if (holeCheckpointNow != null) {
+            assertThat(bkc.getLedgers()).contains(holeCheckpointNow.getLedgerId());
+        }
         ledger.close();
     }
 
