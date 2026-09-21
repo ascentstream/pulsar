@@ -4383,8 +4383,9 @@ public class ManagedCursorImpl implements ManagedCursor {
         closeWaitingCursor();
 
         // The cursor is going away, so every old cursor ledger retained for AckStateRefs becomes
-        // unreferenced. gcOldCursorLedgers only runs on rollover and never observes a deleted
-        // cursor — without this cleanup those ledgers (and their metadata) would leak.
+        // unreferenced. gcOldCursorLedgers only runs on rollover, reset and clear-backlog — none
+        // of which observe a deleted cursor — so without this cleanup those ledgers (and their
+        // metadata) would leak.
         deleteOldCursorLedgersOnCursorDeletion();
 
         if (cursorLedger == null) {
