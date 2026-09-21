@@ -420,7 +420,7 @@ ci_create_test_coverage_report() {
 
     local sourcefilesArgs="--sourcefiles $({
       # find the source file folders for the pulsar .jar files that are on the classpath
-      for artifactId in $(cat $completeClasspathFile  | sort | uniq | { grep -v -E "$excludeJarsPattern" || true; } | perl -p -e 's|.*/com/ascentstream/([^/]*)/.*|$1|'); do
+      for artifactId in $(cat $completeClasspathFile  | sort | uniq | { grep -v -E "$excludeJarsPattern" || true; } | perl -p -e 's|.*/com/ascentstream/pulsar/([^/]*)/.*|$1|'); do
         local project="$(printf "%s" "$projectToArtifactIdMapping" | { grep $artifactId || true; } | cut -d' ' -f1)"
         if [[ -n "$project" && -d "$project/src/main/java" ]]; then
           echo "$project/src/main/java"
