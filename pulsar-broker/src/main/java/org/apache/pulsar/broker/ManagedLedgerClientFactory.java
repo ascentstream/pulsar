@@ -105,6 +105,15 @@ public class ManagedLedgerClientFactory implements ManagedLedgerStorage {
                     (conf.getDispatcherMaxReadSizeBytes() / (1024L * 1024L)) + 1);
         }
         managedLedgerFactoryConfig.setManagedLedgerMaxReadsInFlightSize(managedLedgerMaxReadsInFlightSizeBytes);
+        if (conf.isPersistentUnackedRangesWithPerLedgerEntryEnabled()
+                && conf.getPersistentUnackedRangesMaxEntrySize() < 1024) {
+            // CursorCheckpointLog enforces this floor when the first cursor is created; fail at
+            // startup instead so the misconfiguration surfaces before serving traffic.
+            throw new IllegalArgumentException("Invalid configuration for persistentUnackedRangesMaxEntrySize: "
+                    + conf.getPersistentUnackedRangesMaxEntrySize()
+                    + ". It must be at least 1024 bytes when persistentUnackedRangesWithPerLedgerEntryEnabled"
+                    + " is enabled");
+        }
         managedLedgerFactoryConfig.setManagedLedgerMaxReadsInFlightPermitsAcquireTimeoutMillis(
                 conf.getManagedLedgerMaxReadsInFlightPermitsAcquireTimeoutMillis());
         managedLedgerFactoryConfig.setManagedLedgerMaxReadsInFlightPermitsAcquireQueueSize(

@@ -176,6 +176,10 @@ class PositionRangeSet implements LongPairRangeSet<Position> {
     @Override
     public void removeAtMost(long ledgerId, long entryId) {
         if (enableMultiEntry && ledgerId >= 0) {
+            // Dirty bits are stored at ledgerId + 1 and the removal range is right-open, so
+            // only ledgers strictly below the mark-delete's ledger lose their dirty bit. The
+            // mark-delete's own ledger keeps its bit: its remaining above-md bits (and the
+            // just-drained state) must be re-flushed by the next persist.
             long end = Math.min(ledgerId + 1L, (long) Integer.MAX_VALUE + 1);
             dirtyLedgers.remove(0, end);
         }

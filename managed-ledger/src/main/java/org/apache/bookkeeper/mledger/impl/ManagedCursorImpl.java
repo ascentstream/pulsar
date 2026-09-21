@@ -223,6 +223,11 @@ public class ManagedCursorImpl implements ManagedCursor {
     Set<Long> getAllCursorLedgerIds() {
         return allCursorLedgerIds;
     }
+
+    @VisibleForTesting
+    Position checkpointPosOf(long msgLedgerId) {
+        return ackPersistence.checkpointPosOf(msgLedgerId);
+    }
     private RateLimiter markDeleteLimiter;
     // The cursor is considered "dirty" when there are mark-delete updates that are only applied in memory,
     // because of the rate limiting.
@@ -2846,6 +2851,7 @@ public class ManagedCursorImpl implements ManagedCursor {
 
         lock.writeLock().lock();
         boolean skipMarkDeleteBecauseAckedNothing = false;
+        boolean batchIndexChanged = false;
         try {
             if (log.isDebugEnabled()) {
                 log.debug("[{}] [{}] Deleting individual messages at {}. Current status: {} - md-position: {}",
@@ -2911,14 +2917,22 @@ public class ManagedCursorImpl implements ManagedCursor {
                         batchDeletedIndexes.remove(position);
                     } else {
                         // Batch-index deletions are not reflected in the individual range bitmap, so
-                        // mark the ledger dirty explicitly to ensure they are persisted.
+                        // mark the ledger dirty explicitly; the mark alone does not persist them —
+                        // a flush must still fire (see the skip paths below).
                         individualDeletedMessages.markDirtyLedger(position.getLedgerId());
+                        batchIndexChanged = true;
                     }
                 }
             }
 
             if (individualDeletedMessages.isEmpty()) {
-                // No changes to individually deleted messages, so nothing to do at this point
+                // No changes to individually deleted messages, so nothing to do at this point.
+                // Batch-index acks may still have marked a ledger dirty: flag the cursor so the
+                // periodic flush persists them, otherwise they stay memory-only until the next
+                // ack-driven event (unbounded window across a restart).
+                if (batchIndexChanged) {
+                    isDirty = true;
+                }
                 skipMarkDeleteBecauseAckedNothing = true;
                 return;
             }
@@ -2937,6 +2951,10 @@ public class ManagedCursorImpl implements ManagedCursor {
 
             if (range == null) {
                 // The set was completely cleaned up now
+                if (batchIndexChanged) {
+                    // Same as above: batch-index acks still need the periodic flush.
+                    isDirty = true;
+                }
                 skipMarkDeleteBecauseAckedNothing = true;
                 return;
             }
@@ -3229,6 +3247,9 @@ public class ManagedCursorImpl implements ManagedCursor {
                     // At this point the position had already been safely stored in the cursor z-node
                     callback.closeComplete(ctx);
                     asyncDeleteLedger(cursorLedger);
+                    // Recovery now reads the -1 ZK state instead of BK: any per-msgLedger
+                    // checkpoint ledgers tracked from a recovery are obsolete.
+                    deleteObsoleteCursorLedgersAfterLegacyPersist();
                 }
 
                 @Override
@@ -3495,7 +3516,10 @@ public class ManagedCursorImpl implements ManagedCursor {
         // checkpoint then embeds it in the tracked set, so a restart before the first GC still
         // recovers the full set from that checkpoint. Safe on failure paths — the live ledger
         // is excluded from GC and the set is idempotent.
-        if (cursorLedger != null) {
+        // Only tracked in per-msgLedger checkpoint mode: with the feature off the old ledger is
+        // deleted right after the switch (switchToNewLedger else-branch), so tracking it would
+        // grow the set without any GC path ever draining it — an unbounded leak per rollover.
+        if (ackPersistence.isPerLedgerEntryPersistEnabled() && cursorLedger != null) {
             allCursorLedgerIds.add(cursorLedger.getId());
         }
         // Change the state so that new mark-delete ops will be queued and not immediately submitted
@@ -3997,6 +4021,11 @@ public class ManagedCursorImpl implements ManagedCursor {
                 mbean.persistToLedger(true);
                 mbean.addWriteCursorLedgerSize(data.length);
                 persistCallback.operationComplete();
+                // The appended PositionInfo is a self-contained legacy snapshot and is now the
+                // last entry: any per-msgLedger checkpoint ledgers tracked from a recovery are
+                // obsolete (legacy recovery only reads this entry). Fired after the callback,
+                // matching the rollover/reset GC convention.
+                deleteObsoleteCursorLedgersAfterLegacyPersist();
             } else {
                 if (!ignoreClosedStateAfterFailure && state.isClosed()) {
                     // After closed the cursor, the in-progress persistence task will get a
@@ -4064,6 +4093,10 @@ public class ManagedCursorImpl implements ManagedCursor {
                 mdEntry.persistedSuccessfully = true;
                 mbean.persistToZookeeper(true);
                 callback.operationComplete();
+                // The -1 ZK state is now the recovery source instead of BK: any per-msgLedger
+                // checkpoint ledgers tracked from a recovery are obsolete. Fired after the
+                // callback, matching the rollover/reset GC convention.
+                deleteObsoleteCursorLedgersAfterLegacyPersist();
             }
 
             @Override
@@ -4160,6 +4193,41 @@ public class ManagedCursorImpl implements ManagedCursor {
                     log.warn("Failed to GC old cursor ledger, will retry on next rollover, ledgerId: {}, "
                                     + "errorMessage: {}",
                             id, BKException.getMessage(rc));
+                }
+            }, null);
+        }
+    }
+
+    /**
+     * Downgrade cleanup for the per-msgLedger checkpoint ledgers. A flag-off process that
+     * recovered new-format data rebuilds the tracked set, but gcOldCursorLedgers is
+     * feature-gated and the legacy rollover only deletes the ledger it switches from — the
+     * remaining checkpoint-history ledgers would leak forever, because old binaries cannot
+     * know about them. Once this process has durably written a self-contained legacy
+     * representation (a PositionInfo appended to the cursor ledger, or a ZK state that
+     * recovery reads instead of BK), every other tracked ledger is obsolete: legacy recovery
+     * only consumes that representation. Idempotent — the set empties after the first sweep;
+     * a crash before the sweep leaves the ledgers for the next legacy persist to reclaim.
+     */
+    private void deleteObsoleteCursorLedgersAfterLegacyPersist() {
+        if (ackPersistence.isPerLedgerEntryPersistEnabled() || allCursorLedgerIds.isEmpty()) {
+            return;
+        }
+        final long liveLedgerId = cursorLedger != null ? cursorLedger.getId() : -1;
+        for (long id : new ArrayList<>(allCursorLedgerIds)) {
+            if (id == liveLedgerId) {
+                // The live ledger is deleted by the legacy rollover / close paths.
+                continue;
+            }
+            log.info("[{}-{}] Deleting obsolete per-msgLedger checkpoint ledger after legacy persist, ledgerId: {}",
+                    ledger.getName(), name, id);
+            bookkeeper.asyncDeleteLedger(id, (rc, ctx) -> {
+                if (rc == BKException.Code.OK || rc == BKException.Code.NoSuchLedgerExistsException) {
+                    allCursorLedgerIds.remove(id);
+                } else {
+                    log.warn("[{}-{}] Failed to delete obsolete cursor ledger after legacy persist, will retry on"
+                            + " the next legacy persist, ledgerId: {}, errorMessage: {}",
+                            ledger.getName(), name, id, BKException.getMessage(rc));
                 }
             }, null);
         }
@@ -4393,8 +4461,9 @@ public class ManagedCursorImpl implements ManagedCursor {
         closeWaitingCursor();
 
         // The cursor is going away, so every old cursor ledger retained for AckStateRefs becomes
-        // unreferenced. gcOldCursorLedgers only runs on rollover and never observes a deleted
-        // cursor — without this cleanup those ledgers (and their metadata) would leak.
+        // unreferenced. gcOldCursorLedgers only runs on rollover, reset and clear-backlog — none
+        // of which observe a deleted cursor — so without this cleanup those ledgers (and their
+        // metadata) would leak.
         deleteOldCursorLedgersOnCursorDeletion();
 
         if (cursorLedger == null) {

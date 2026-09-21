@@ -2304,6 +2304,223 @@ public class ManagedCursorTest extends MockedBookKeeperTestCase {
     }
 
     /**
+     * A GC firing while a flush is in flight must not delete a cursor ledger referenced by the
+     * last DURABLE checkpoint. doPersist used to prune reference-index entries for drained
+     * ledgers before appending; a failed append left the index pruned while the previous
+     * durable checkpoint still referenced the old ledger, so a rollover/reset/clear-backlog
+     * callback GC (which runs outside the lastPersist chain) could delete it — a crash in that
+     * window rewound recovery to the ZK snapshot. The prune now happens only after the flush's
+     * last append succeeds.
+     */
+    @Test(timeOut = 60000)
+    public void testCheckpointGcKeepsLedgerReferencedByLastDurableCheckpointDuringFailedFlush()
+            throws Exception {
+        ManagedLedgerConfig config = new ManagedLedgerConfig();
+        config.setPersistentUnackedRangesWithPerLedgerEntryEnabled(true);
+        config.setMaxEntriesPerLedger(3);
+        config.setMetadataMaxEntriesPerLedger(2); // rollover the cursor ledger aggressively
+        config.setMaxUnackedRangesToPersistInMetadataStore(-1);
+        config.setThrottleMarkDelete(0);
+
+        String ledgerName = "test_checkpoint_gc_failed_flush_race";
+        ManagedLedger ledger = factory.open(ledgerName, config);
+        ManagedCursorImpl cursor = (ManagedCursorImpl) ledger.openCursor("c1");
+
+        List<Position> positions = new ArrayList<>();
+        for (int i = 0; i < 9; i++) {
+            positions.add(ledger.addEntry(("m-" + i).getBytes(Encoding)));
+        }
+        // msgLedger holding the hole = positions 3..5's ledger; its inline checkpoint must land
+        // in a cursor ledger that later rolls over, so a ref into it survives on disk.
+        cursor.markDelete(positions.get(0));
+        cursor.delete(positions.get(4)); // hole keeps the ledger active and dirty
+        cursor.markDelete(positions.get(1));
+        final ManagedCursorImpl cursorRef = cursor;
+        Awaitility.await().untilAsserted(() ->
+                assertThat(cursorRef.getAllCursorLedgerIds()).isNotEmpty()); // rollover happened
+
+        // Drain the hole with a mark-delete still inside the hole's ledger: this flush succeeds,
+        // its checkpoint (the new last durable one) keeps a ref to the hole ledger's checkpoint
+        // in the old cursor ledger, and the post-flush align clears the in-memory hole.
+        cursor.markDelete(positions.get(5));
+        long holeLedgerId = positions.get(4).getLedgerId();
+        Position persistedHoleCheckpoint = cursor.checkpointPosOf(holeLedgerId);
+        assertThat(persistedHoleCheckpoint).isNotNull();
+        long referencedCursorLedger = persistedHoleCheckpoint.getLedgerId();
+
+        // Fail the next flush (md now advances past the hole's ledger): under the old ordering
+        // the index entry was pruned before this failed append, arming the race. Fail several
+        // consecutive appends: draining the last msgLedger also triggers an internal
+        // mark-delete bump ("all entries consumed") whose flush must fail too, otherwise its
+        // post-append prune legitimately drops the hole ledger's index entry and stalemates
+        // the captured expectation below.
+        for (int i = 0; i < 5; i++) {
+            bkc.addEntryFailAfter(i, BKException.Code.NoBookieAvailableException);
+        }
+        cursor.markDelete(positions.get(8)); // in a later msgLedger, append fails
+
+        // GC as the rollover/reset/clear callbacks would, right in the race window.
+        cursor.gcOldCursorLedgers();
+        assertThat(bkc.getLedgers()).contains(referencedCursorLedger);
+        // Consistency guard: whatever the index points at now must also survive GC (the entry
+        // itself may only disappear via a successful flush's post-append prune).
+        Position holeCheckpointNow = cursor.checkpointPosOf(holeLedgerId);
+        if (holeCheckpointNow != null) {
+            assertThat(bkc.getLedgers()).contains(holeCheckpointNow.getLedgerId());
+        }
+        ledger.close();
+    }
+
+    /**
+     * Batch-index acks on a cursor with no individual holes take the acked-nothing skip path
+     * (no mark-delete fires), so nothing would persist the dirty ledger they marked — an
+     * unbounded memory-only window across a restart. The skip path must flag the cursor
+     * dirty so the periodic flush (simulated here by flush()) persists them.
+     */
+    @Test(timeOut = 60000)
+    public void testBatchIndexAcksFlushedWhenNoIndividualHoles() throws Exception {
+        ManagedLedgerConfig config = new ManagedLedgerConfig();
+        config.setPersistentUnackedRangesWithPerLedgerEntryEnabled(true);
+        config.setDeletionAtBatchIndexLevelEnabled(true);
+        config.setThrottleMarkDelete(0);
+        config.setMaxUnackedRangesToPersistInMetadataStore(-1);
+
+        String ledgerName = "test_batch_only_acks_flushed";
+        ManagedLedger ledger = factory.open(ledgerName, config);
+        ManagedCursorImpl cursor = (ManagedCursorImpl) ledger.openCursor("c1");
+
+        List<Position> positions = new ArrayList<>();
+        for (int i = 0; i < 3; i++) {
+            positions.add(ledger.addEntry(("batch-" + i).getBytes(Encoding)));
+        }
+
+        // Partial batch-index ack on the middle entry: ackSet bits are the still-unacked
+        // indexes, so {1, 2} means index 0 was acked and the entry stays partial.
+        Position batchPosition = AckSetStateUtil.createPositionWithAckSet(
+                positions.get(1).getLedgerId(), positions.get(1).getEntryId(), new long[]{0b110L});
+        cursor.delete(batchPosition);
+
+        // The skip path fired: no individual holes, so no event-driven persist happened...
+        assertThat(cursor.getStats().getPersistLedgerSucceed()).isZero();
+        // ...but the cursor must be flagged so the periodic flush picks the batch acks up.
+        cursor.flush();
+        final ManagedCursorImpl cursorRef = cursor;
+        Awaitility.await().untilAsserted(() ->
+                assertThat(cursorRef.getStats().getPersistLedgerSucceed()).isGreaterThanOrEqualTo(1));
+        ledger.close();
+
+        // After a restart the partial state must survive. Discriminating probe: an ackSet of
+        // {0} (only index 0 unacked) ANDs with the recovered {1, 2} to empty, completing the
+        // entry — without the recovered state the entry would stay partial.
+        ledger = factory.open(ledgerName, config);
+        cursor = (ManagedCursorImpl) ledger.openCursor("c1");
+        Position completingPosition = AckSetStateUtil.createPositionWithAckSet(
+                positions.get(1).getLedgerId(), positions.get(1).getEntryId(), new long[]{0b001L});
+        cursor.delete(completingPosition);
+        assertThat(cursor.isMessageDeleted(positions.get(1))).isTrue();
+        ledger.close();
+    }
+
+    /**
+     * Downgrade cleanup: a flag-off process recovering per-msgLedger checkpoint data rebuilds
+     * the tracked set, but neither the feature-gated GC nor the legacy rollover can reclaim
+     * the checkpoint-history ledgers. The first durable legacy write (a PositionInfo appended
+     * to the cursor ledger) makes them obsolete — legacy recovery only reads the last entry —
+     * so the sweep must delete them, and the legacy representation must remain recoverable.
+     */
+    @Test(timeOut = 60000)
+    public void testObsoleteCheckpointLedgersSweptAfterDowngradeToLegacyMode() throws Exception {
+        ManagedLedgerConfig config = new ManagedLedgerConfig();
+        config.setPersistentUnackedRangesWithPerLedgerEntryEnabled(true);
+        config.setMaxEntriesPerLedger(3);
+        config.setMetadataMaxEntriesPerLedger(2); // rollover the cursor ledger aggressively
+        config.setMaxUnackedRangesToPersistInMetadataStore(-1);
+        config.setThrottleMarkDelete(0);
+
+        String ledgerName = "test_downgrade_sweep_obsolete_ledgers";
+        ManagedLedger ledger = factory.open(ledgerName, config);
+        ManagedCursorImpl cursor = (ManagedCursorImpl) ledger.openCursor("c1");
+        List<Position> positions = new ArrayList<>();
+        for (int i = 0; i < 12; i++) {
+            positions.add(ledger.addEntry(("m-" + i).getBytes(Encoding)));
+        }
+        cursor.markDelete(positions.get(0));
+        cursor.delete(positions.get(6)); // holes force rollovers that populate the tracked set
+        cursor.markDelete(positions.get(1));
+        final ManagedCursorImpl cursorRef = cursor;
+        Awaitility.await().untilAsserted(() ->
+                assertThat(cursorRef.getAllCursorLedgerIds()).isNotEmpty());
+        Set<Long> tracked = new HashSet<>(cursor.getAllCursorLedgerIds());
+        assertThat(tracked).doesNotContain(cursor.getCursorLedger()); // live ledger untracked
+        ledger.close();
+
+        // Downgrade step: restart with the feature disabled. Recovery is flag-independent,
+        // so the tracked set is rebuilt from the last checkpoint's embedded set.
+        ManagedLedgerConfig legacyConfig = new ManagedLedgerConfig();
+        legacyConfig.setMaxEntriesPerLedger(3);
+        legacyConfig.setThrottleMarkDelete(0);
+        ledger = factory.open(ledgerName, legacyConfig);
+        cursor = (ManagedCursorImpl) ledger.openCursor("c1");
+        assertThat(cursor.getAllCursorLedgerIds()).containsAll(tracked);
+        assertThat(cursor.isMessageDeleted(positions.get(6))).isTrue(); // hole survived recovery
+
+        // First legacy mark-delete appends a self-contained PositionInfo and sweeps the
+        // obsolete checkpoint ledgers.
+        cursor.markDelete(positions.get(2));
+        Awaitility.await().untilAsserted(() -> {
+            for (long id : tracked) {
+                assertThat(bkc.getLedgers()).doesNotContain(id);
+            }
+        });
+        assertThat(cursor.getAllCursorLedgerIds()).isEmpty();
+
+        // The legacy terminal state stays recoverable with the feature off.
+        ledger.close();
+        ledger = factory.open(ledgerName, legacyConfig);
+        cursor = (ManagedCursorImpl) ledger.openCursor("c1");
+        assertThat(cursor.isMessageDeleted(positions.get(6))).isTrue();
+        // The trim of the fully-consumed data ledger may race and bump the md from the tail
+        // entry to the next ledger's start — both mean everything at or before it is acked.
+        assertThat(cursor.getMarkDeletedPosition().compareTo(positions.get(2))).isGreaterThanOrEqualTo(0);
+        ledger.close();
+    }
+
+    /**
+     * With the per-msgLedger checkpoint feature disabled (the default), the tracked-set
+     * maintenance must stay off: rollovers delete the old cursor ledger right away, so tracking
+     * it would grow the set with no GC path ever draining it — an unbounded per-rollover leak.
+     */
+    @Test(timeOut = 60000)
+    public void testTrackedCursorLedgerSetStaysEmptyWhenFeatureDisabled() throws Exception {
+        ManagedLedgerConfig config = new ManagedLedgerConfig();
+        config.setPersistentUnackedRangesWithPerLedgerEntryEnabled(false);
+        config.setMaxEntriesPerLedger(3);
+        config.setMetadataMaxEntriesPerLedger(1); // rollover the cursor ledger on every persist
+        config.setThrottleMarkDelete(0);
+
+        String ledgerName = "test_tracked_ledger_set_disabled";
+        ManagedLedger ledger = factory.open(ledgerName, config);
+        ManagedCursorImpl cursor = (ManagedCursorImpl) ledger.openCursor("c1");
+
+        List<Position> positions = new ArrayList<>();
+        for (int i = 0; i < 9; i++) {
+            positions.add(ledger.addEntry(("m-" + i).getBytes(Encoding)));
+        }
+        long firstCursorLedger = cursor.getCursorLedger();
+        cursor.markDelete(positions.get(0));
+        cursor.delete(positions.get(4));
+        cursor.markDelete(positions.get(1));
+        cursor.delete(positions.get(5));
+        cursor.markDelete(positions.get(2));
+
+        final ManagedCursorImpl cursorRef = cursor;
+        Awaitility.await().untilAsserted(() ->
+                assertThat(cursorRef.getCursorLedger()).isNotEqualTo(firstCursorLedger)); // rolled over
+        assertThat(cursor.getAllCursorLedgerIds()).isEmpty();
+        ledger.close();
+    }
+
+    /**
      * A successful clear-backlog reclaims the tracked old cursor ledgers immediately: md at the
      * last position absorbs every hole, the stale reference-index entries are released, and the
      * GC no longer has to wait for the next rollover (up to 4h for an idle cursor).
