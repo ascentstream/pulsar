@@ -2833,6 +2833,7 @@ public class ManagedCursorImpl implements ManagedCursor {
 
         lock.writeLock().lock();
         boolean skipMarkDeleteBecauseAckedNothing = false;
+        boolean batchIndexChanged = false;
         try {
             if (log.isDebugEnabled()) {
                 log.debug("[{}] [{}] Deleting individual messages at {}. Current status: {} - md-position: {}",
@@ -2898,14 +2899,22 @@ public class ManagedCursorImpl implements ManagedCursor {
                         batchDeletedIndexes.remove(position);
                     } else {
                         // Batch-index deletions are not reflected in the individual range bitmap, so
-                        // mark the ledger dirty explicitly to ensure they are persisted.
+                        // mark the ledger dirty explicitly; the mark alone does not persist them —
+                        // a flush must still fire (see the skip paths below).
                         individualDeletedMessages.markDirtyLedger(position.getLedgerId());
+                        batchIndexChanged = true;
                     }
                 }
             }
 
             if (individualDeletedMessages.isEmpty()) {
-                // No changes to individually deleted messages, so nothing to do at this point
+                // No changes to individually deleted messages, so nothing to do at this point.
+                // Batch-index acks may still have marked a ledger dirty: flag the cursor so the
+                // periodic flush persists them, otherwise they stay memory-only until the next
+                // ack-driven event (unbounded window across a restart).
+                if (batchIndexChanged) {
+                    isDirty = true;
+                }
                 skipMarkDeleteBecauseAckedNothing = true;
                 return;
             }
@@ -2924,6 +2933,10 @@ public class ManagedCursorImpl implements ManagedCursor {
 
             if (range == null) {
                 // The set was completely cleaned up now
+                if (batchIndexChanged) {
+                    // Same as above: batch-index acks still need the periodic flush.
+                    isDirty = true;
+                }
                 skipMarkDeleteBecauseAckedNothing = true;
                 return;
             }

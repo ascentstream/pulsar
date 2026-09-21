@@ -2367,6 +2367,56 @@ public class ManagedCursorTest extends MockedBookKeeperTestCase {
     }
 
     /**
+     * Batch-index acks on a cursor with no individual holes take the acked-nothing skip path
+     * (no mark-delete fires), so nothing would persist the dirty ledger they marked — an
+     * unbounded memory-only window across a restart. The skip path must flag the cursor
+     * dirty so the periodic flush (simulated here by flush()) persists them.
+     */
+    @Test(timeOut = 60000)
+    public void testBatchIndexAcksFlushedWhenNoIndividualHoles() throws Exception {
+        ManagedLedgerConfig config = new ManagedLedgerConfig();
+        config.setPersistentUnackedRangesWithPerLedgerEntryEnabled(true);
+        config.setDeletionAtBatchIndexLevelEnabled(true);
+        config.setThrottleMarkDelete(0);
+        config.setMaxUnackedRangesToPersistInMetadataStore(-1);
+
+        String ledgerName = "test_batch_only_acks_flushed";
+        ManagedLedger ledger = factory.open(ledgerName, config);
+        ManagedCursorImpl cursor = (ManagedCursorImpl) ledger.openCursor("c1");
+
+        List<Position> positions = new ArrayList<>();
+        for (int i = 0; i < 3; i++) {
+            positions.add(ledger.addEntry(("batch-" + i).getBytes(Encoding)));
+        }
+
+        // Partial batch-index ack on the middle entry: ackSet bits are the still-unacked
+        // indexes, so {1, 2} means index 0 was acked and the entry stays partial.
+        Position batchPosition = AckSetStateUtil.createPositionWithAckSet(
+                positions.get(1).getLedgerId(), positions.get(1).getEntryId(), new long[]{0b110L});
+        cursor.delete(batchPosition);
+
+        // The skip path fired: no individual holes, so no event-driven persist happened...
+        assertThat(cursor.getStats().getPersistLedgerSucceed()).isZero();
+        // ...but the cursor must be flagged so the periodic flush picks the batch acks up.
+        cursor.flush();
+        final ManagedCursorImpl cursorRef = cursor;
+        Awaitility.await().untilAsserted(() ->
+                assertThat(cursorRef.getStats().getPersistLedgerSucceed()).isGreaterThanOrEqualTo(1));
+        ledger.close();
+
+        // After a restart the partial state must survive. Discriminating probe: an ackSet of
+        // {0} (only index 0 unacked) ANDs with the recovered {1, 2} to empty, completing the
+        // entry — without the recovered state the entry would stay partial.
+        ledger = factory.open(ledgerName, config);
+        cursor = (ManagedCursorImpl) ledger.openCursor("c1");
+        Position completingPosition = AckSetStateUtil.createPositionWithAckSet(
+                positions.get(1).getLedgerId(), positions.get(1).getEntryId(), new long[]{0b001L});
+        cursor.delete(completingPosition);
+        assertThat(cursor.isMessageDeleted(positions.get(1))).isTrue();
+        ledger.close();
+    }
+
+    /**
      * Downgrade cleanup: a flag-off process recovering per-msgLedger checkpoint data rebuilds
      * the tracked set, but neither the feature-gated GC nor the legacy rollover can reclaim
      * the checkpoint-history ledgers. The first durable legacy write (a PositionInfo appended
