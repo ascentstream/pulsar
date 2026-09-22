@@ -173,7 +173,6 @@
                   <include>commons-codec:commons-codec</include>
                   <include>io.airlift:*</include>
                   <include>io.grpc:*</include>
-                  <include>io.netty.incubator:*</include>
                   <include>io.netty:*</include>
                   <include>io.netty:netty</include>
                   <include>io.netty:netty-all</include>

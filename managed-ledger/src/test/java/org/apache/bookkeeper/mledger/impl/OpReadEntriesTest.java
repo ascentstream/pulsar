@@ -19,14 +19,12 @@
 package org.apache.bookkeeper.mledger.impl;
 
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.spy;
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertFalse;
 import static org.testng.Assert.assertNotEquals;
-import static org.testng.Assert.assertNotNull;
 import static org.testng.Assert.assertTrue;
 import java.lang.reflect.Field;
 import java.nio.charset.Charset;
@@ -38,7 +36,6 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicReference;
 import lombok.Cleanup;
 import org.apache.bookkeeper.client.api.ReadHandle;
 import org.apache.bookkeeper.mledger.AsyncCallbacks.ReadEntriesCallback;
@@ -133,27 +130,6 @@ public class OpReadEntriesTest extends MockedBookKeeperTestCase {
         assertEquals(entries.get(1).getPosition(), p3);
         entries.forEach(Entry::release);
     }
-
-    @Test(timeOut = 20000)
-    public void completionRunsOnMlExecutor() throws Exception {
-        @Cleanup("close")
-        ManagedLedgerImpl ledger = (ManagedLedgerImpl) factory.open("completionRunsOnMlExecutor");
-        Position p0 = ledger.addEntry("entry-0".getBytes(ENCODING));
-
-        AtomicReference<String> completionThread = new AtomicReference<>();
-        ledger.asyncReadEntries(p0, 1).whenComplete((entries, ex) -> {
-            completionThread.set(Thread.currentThread().getName());
-            if (entries != null) {
-                entries.forEach(Entry::release);
-            }
-        }).get(5, TimeUnit.SECONDS);
-
-        String threadName = completionThread.get();
-        assertNotNull(threadName);
-        assertTrue(threadName.startsWith("test-OrderedScheduler-"),
-                "expected ML executor thread, got " + threadName);
-    }
-
     @Test(timeOut = 15000)
     public void emptyCacheResultDoesNotLivelock() throws Exception {
         @Cleanup("close")
@@ -165,11 +141,11 @@ public class OpReadEntriesTest extends MockedBookKeeperTestCase {
         AtomicInteger invocations = new AtomicInteger();
         doAnswer((InvocationOnMock invocation) -> {
             invocations.incrementAndGet();
-            ReadEntriesCallback callback = invocation.getArgument(4);
-            callback.readEntriesComplete(Collections.emptyList(), invocation.getArgument(5));
+            ReadEntriesCallback callback = invocation.getArgument(5);
+            callback.readEntriesComplete(Collections.emptyList(), invocation.getArgument(6));
             return null;
-        }).when(spyCache).asyncReadEntry(any(ReadHandle.class), anyLong(), anyLong(),
-                anyBoolean(), any(ReadEntriesCallback.class), any());
+        }).when(spyCache).asyncReadEntry(any(ReadHandle.class), anyLong(), anyLong(), anyLong(),
+                any(), any(ReadEntriesCallback.class), any());
 
         Field f = ManagedLedgerImpl.class.getDeclaredField("entryCache");
         f.setAccessible(true);

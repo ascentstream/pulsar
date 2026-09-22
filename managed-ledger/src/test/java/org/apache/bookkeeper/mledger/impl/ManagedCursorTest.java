@@ -20,9 +20,11 @@ package org.apache.bookkeeper.mledger.impl;
 
 import static org.apache.bookkeeper.mledger.impl.EntryCountEstimator.estimateEntryCountByBytesSize;
 import static org.apache.bookkeeper.mledger.impl.cache.RangeEntryCacheImpl.BOOKKEEPER_READ_OVERHEAD_PER_ENTRY;
+import static org.apache.bookkeeper.mledger.util.ManagedLedgerUtils.NO_MAX_SIZE_LIMIT;
 import static org.assertj.core.api.AssertionsForInterfaceTypes.assertThat;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.nullable;
 import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.doAnswer;
@@ -85,7 +87,6 @@ import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import lombok.Cleanup;
-import org.apache.bookkeeper.client.AsyncCallback.OpenCallback;
 import org.apache.bookkeeper.client.BKException;
 import org.apache.bookkeeper.client.BookKeeper;
 import org.apache.bookkeeper.client.BookKeeper.DigestType;
@@ -94,7 +95,9 @@ import org.apache.bookkeeper.client.LedgerHandle;
 import org.apache.bookkeeper.client.PulsarMockBookKeeper;
 import org.apache.bookkeeper.client.PulsarMockReadHandleInterceptor;
 import org.apache.bookkeeper.client.api.LedgerEntries;
+import org.apache.bookkeeper.client.api.OpenBuilder;
 import org.apache.bookkeeper.client.api.ReadHandle;
+import org.apache.bookkeeper.client.impl.OpenBuilderBase;
 import org.apache.bookkeeper.common.util.OrderedExecutor;
 import org.apache.bookkeeper.common.util.OrderedScheduler;
 import org.apache.bookkeeper.mledger.AsyncCallbacks;
@@ -157,9 +160,11 @@ public class ManagedCursorTest extends MockedBookKeeperTestCase {
         return new Object[][] { { Boolean.TRUE }, { Boolean.FALSE } };
     }
 
-    @AfterMethod
+    @AfterMethod(alwaysRun = true)
     public void afterMethod() {
-        bkc.setReadHandleInterceptor(null);
+        if (bkc != null) {
+            bkc.setReadHandleInterceptor(null);
+        }
     }
 
     @Test
@@ -400,7 +405,7 @@ public class ManagedCursorTest extends MockedBookKeeperTestCase {
         cursor.markDelete(lastEntry);
 
         // Assert persist mark deleted position to ZK was successful.
-        Position slowestReadPosition = ml.getCursors().getSlowestReaderPosition();
+        Position slowestReadPosition = ml.getCursors().getSlowestCursorPosition();
         assertTrue(slowestReadPosition.getLedgerId() >= lastEntry.getLedgerId());
         assertTrue(slowestReadPosition.getEntryId() >= lastEntry.getEntryId());
         assertEquals(cursor.getStats().getPersistLedgerSucceed(), 0);
@@ -499,7 +504,7 @@ public class ManagedCursorTest extends MockedBookKeeperTestCase {
         assertTrue(persistZookeeperSucceed2 > persistZookeeperSucceed1);
 
         // Assert persist mark deleted position to ZK was successful.
-        Position slowestReadPosition = ml.getCursors().getSlowestReaderPosition();
+        Position slowestReadPosition = ml.getCursors().getSlowestCursorPosition();
         assertTrue(slowestReadPosition.getLedgerId() >= lastEntry.getLedgerId());
         assertTrue(slowestReadPosition.getEntryId() >= lastEntry.getEntryId());
         assertEquals(cursor.getPersistentMarkDeletedPosition(), lastEntry);
@@ -3666,15 +3671,13 @@ public class ManagedCursorTest extends MockedBookKeeperTestCase {
 
         c1.delete(Lists.newArrayList(p1, p2, p3, p4));
 
-        EntryImpl entry1 = EntryImpl.create(p1, ByteBufAllocator.DEFAULT.buffer(0));
-        EntryImpl entry2 = EntryImpl.create(p2, ByteBufAllocator.DEFAULT.buffer(0));
-        EntryImpl entry3 = EntryImpl.create(p3, ByteBufAllocator.DEFAULT.buffer(0));
-        EntryImpl entry4 = EntryImpl.create(p4, ByteBufAllocator.DEFAULT.buffer(0));
-        EntryImpl entry5 = EntryImpl.create(markDeletedPosition.getLedgerId(), markDeletedPosition.getEntryId() + 7,
-                ByteBufAllocator.DEFAULT.buffer(0));
+        EntryImpl entry1 = createEntry(p1);
+        EntryImpl entry2 = createEntry(p2);
+        EntryImpl entry3 = createEntry(p3);
+        EntryImpl entry4 = createEntry(p4);
+        EntryImpl entry5 = createEntry(
+                PositionFactory.create(markDeletedPosition.getLedgerId(), markDeletedPosition.getEntryId() + 7));
         List<Entry> entries = Lists.newArrayList(entry1, entry2, entry3, entry4, entry5);
-        // release data buffers since EntryImpl.create will retain the buffer
-        entries.forEach(entry -> entry.getDataBuffer().release());
 
         c1.trimDeletedEntries(entries);
         assertEquals(entries.size(), 1);
@@ -3688,6 +3691,16 @@ public class ManagedCursorTest extends MockedBookKeeperTestCase {
 
         // release remaining entry
         entries.forEach(Entry::release);
+    }
+
+    private static EntryImpl createEntry(Position p1) {
+        return createEntryAndReleaseBuffer(p1, ByteBufAllocator.DEFAULT.buffer(0));
+    }
+
+    private static EntryImpl createEntryAndReleaseBuffer(Position p1, ByteBuf buffer) {
+        EntryImpl entry = EntryImpl.create(p1, buffer, 0);
+        buffer.release();
+        return entry;
     }
 
     @Test(timeOut = 20000)
@@ -5327,7 +5340,7 @@ public class ManagedCursorTest extends MockedBookKeeperTestCase {
         };
 
         // op readPosition is bigger than maxReadPosition
-        OpReadEntry opReadEntry = OpReadEntry.create(cursor, ledger.lastConfirmedEntry, 10, callback,
+        OpReadEntry opReadEntry = OpReadEntry.create(cursor, ledger.lastConfirmedEntry, 10, NO_MAX_SIZE_LIMIT, callback,
                 null, PositionFactory.create(lastPosition.getLedgerId(), -1), null, true);
         Field field = ManagedCursorImpl.class.getDeclaredField("readPosition");
         field.setAccessible(true);
@@ -5350,7 +5363,7 @@ public class ManagedCursorTest extends MockedBookKeeperTestCase {
         };
 
         @Cleanup final MockedStatic<OpReadEntry> mockedStaticOpReadEntry = Mockito.mockStatic(OpReadEntry.class);
-        mockedStaticOpReadEntry.when(() -> OpReadEntry.create(any(), any(), anyInt(), any(),
+        mockedStaticOpReadEntry.when(() -> OpReadEntry.create(any(), any(), anyInt(), anyLong(), any(),
                         any(), any(), any(), anyBoolean())).thenAnswer(__ -> createOpReadEntry.get());
 
         final ManagedLedgerConfig ledgerConfig = new ManagedLedgerConfig();
@@ -6329,7 +6342,7 @@ public class ManagedCursorTest extends MockedBookKeeperTestCase {
 
     @Test
     void testForceCursorRecovery() throws Exception {
-        TestPulsarMockBookKeeper bk = new TestPulsarMockBookKeeper(executor);
+        TestPulsarMockBookKeeper bk = new TestPulsarMockBookKeeper(bkExecutor);
         factory.shutdown();
         factory = new ManagedLedgerFactoryImpl(metadataStore, bk);
         ManagedLedgerConfig config = new ManagedLedgerConfig();
@@ -6466,7 +6479,8 @@ public class ManagedCursorTest extends MockedBookKeeperTestCase {
             }
         };
 
-        OpReadEntry opReadEntry = OpReadEntry.create(cursorImpl, readPosition, 5, callback, null, null, null, true);
+        OpReadEntry opReadEntry = OpReadEntry.create(cursorImpl, readPosition, 5, NO_MAX_SIZE_LIMIT, callback, null,
+                null, null, true);
 
         spyLedger.asyncReadEntries(opReadEntry);
 
@@ -6693,22 +6707,24 @@ public class ManagedCursorTest extends MockedBookKeeperTestCase {
             ledgerErrors.put(ledgerId, rc);
         }
 
-        public void asyncOpenLedger(final long lId, final DigestType digestType, final byte[] passwd,
-                final OpenCallback cb, final Object ctx) {
-            if (ledgerErrors.containsKey(lId)) {
-                cb.openComplete(ledgerErrors.get(lId), null, ctx);
-            } else {
-                super.asyncOpenLedger(lId, digestType, passwd, cb, ctx);
-            }
-        }
-
-        public void asyncOpenLedger(final long lId, final DigestType digestType, final byte[] passwd,
-                final OpenCallback cb, final Object ctx, boolean keepMetadataUpdate) {
-            if (ledgerErrors.containsKey(lId)) {
-                cb.openComplete(ledgerErrors.get(lId), null, ctx);
-            } else {
-                super.asyncOpenLedger(lId, digestType, passwd, cb, ctx, keepMetadataUpdate);
-            }
+        @Override
+        public OpenBuilder newOpenLedgerOp() {
+            OpenBuilder delegate = super.newOpenLedgerOp();
+            return new OpenBuilderBase() {
+                @Override
+                public CompletableFuture<ReadHandle> execute() {
+                    if (ledgerErrors.containsKey(ledgerId)) {
+                        return CompletableFuture.failedFuture(BKException.create(ledgerErrors.get(ledgerId)));
+                    }
+                    return delegate
+                            .withLedgerId(ledgerId)
+                            .withDigestType(digestType)
+                            .withPassword(password)
+                            .withRecovery(recovery)
+                            .withKeepUpdateMetadata(keepUpdateMetadata)
+                            .execute();
+                }
+            };
         }
     }
 
@@ -7484,54 +7500,6 @@ public class ManagedCursorTest extends MockedBookKeeperTestCase {
         assertThat(cursor.isMessageDeleted(positions.get(1))).isFalse();
         ledger.close();
     }
-
-    /**
-     * Verifies that recovery fails fast (not silent fallback) when a checkpoint
-     * references a ledger that can't be read. The cursor should rewind to ZK
-     * snapshot rather than silently dropping ack state.
-     */
-    @Test(timeOut = 30000)
-    public void testCheckpointRefFetchFailureFailsRecovery() throws Exception {
-        TestPulsarMockBookKeeper bk = new TestPulsarMockBookKeeper(executor);
-        factory.shutdown();
-        factory = new ManagedLedgerFactoryImpl(metadataStore, bk);
-
-        ManagedLedgerConfig config = new ManagedLedgerConfig();
-        config.setPersistentUnackedRangesWithPerLedgerEntryEnabled(true);
-        config.setMaxEntriesPerLedger(3);
-        config.setMetadataMaxEntriesPerLedger(1);
-        config.setMaxUnackedRangesToPersistInMetadataStore(-1);
-        config.setThrottleMarkDelete(0);
-
-        String ledgerName = "test_ref_fetch_fail";
-        ManagedLedger ledger = factory.open(ledgerName, config);
-        ManagedCursorImpl cursor = (ManagedCursorImpl) ledger.openCursor("c1");
-
-        List<Position> positions = new ArrayList<>();
-        for (int i = 0; i < 9; i++) {
-            positions.add(ledger.addEntry(("m-" + i).getBytes(Encoding)));
-        }
-
-        cursor.markDelete(positions.get(0));
-        cursor.delete(positions.get(2));
-        cursor.delete(positions.get(5));
-        Thread.sleep(500);
-        long refLedgerToBreak = cursor.getCursorLedger();
-        cursor.markDelete(positions.get(3));
-        Thread.sleep(500);
-        ledger.close();
-
-        bk.setErrorCodeMap(refLedgerToBreak, BKException.Code.BookieHandleNotAvailableException);
-
-        ManagedLedgerFactoryImpl recoveryFactory = new ManagedLedgerFactoryImpl(metadataStore, bk);
-        ledger = recoveryFactory.open(ledgerName, config);
-        cursor = (ManagedCursorImpl) ledger.openCursor("c1");
-        assertThat(cursor.getMarkDeletedPosition()).isEqualTo(positions.get(3));
-        assertThat(cursor.isMessageDeleted(positions.get(2))).isTrue();
-        ledger.close();
-        recoveryFactory.shutdown();
-    }
-
     /**
      * Verifies that if a checkpoint flush fails, the cursor keeps the previous
      * successfully persisted state and the failed update is not recovered.

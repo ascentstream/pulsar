@@ -345,35 +345,26 @@ The Apache Software License, Version 2.0
     - commons-text-1.15.0.jar
     - commons-compress-1.28.0.jar
  * Netty
-    - netty-buffer-4.1.137.Final.jar
-    - netty-codec-4.1.137.Final.jar
-    - netty-codec-dns-4.1.137.Final.jar
-    - netty-codec-http-4.1.137.Final.jar
-    - netty-codec-socks-4.1.137.Final.jar
-    - netty-codec-haproxy-4.1.137.Final.jar
-    - netty-common-4.1.137.Final.jar
-    - netty-handler-4.1.137.Final.jar
-    - netty-handler-proxy-4.1.137.Final.jar
-    - netty-resolver-4.1.137.Final.jar
-    - netty-resolver-dns-4.1.137.Final.jar
-    - netty-transport-4.1.137.Final.jar
-    - netty-transport-classes-epoll-4.1.137.Final.jar
-    - netty-transport-native-epoll-4.1.137.Final-linux-aarch_64.jar
-    - netty-transport-native-epoll-4.1.137.Final-linux-x86_64.jar
-    - netty-transport-native-unix-common-4.1.137.Final.jar
-    - netty-tcnative-boringssl-static-2.0.81.Final.jar
-    - netty-tcnative-boringssl-static-2.0.81.Final-linux-aarch_64.jar
-    - netty-tcnative-boringssl-static-2.0.81.Final-linux-x86_64.jar
-    - netty-tcnative-boringssl-static-2.0.81.Final-osx-aarch_64.jar
-    - netty-tcnative-boringssl-static-2.0.81.Final-osx-x86_64.jar
-    - netty-tcnative-boringssl-static-2.0.81.Final-windows-x86_64.jar
-    - netty-tcnative-classes-2.0.81.Final.jar
-    - netty-incubator-transport-classes-io_uring-0.0.26.Final.jar
-    - netty-incubator-transport-native-io_uring-0.0.26.Final-linux-aarch_64.jar
-    - netty-incubator-transport-native-io_uring-0.0.26.Final-linux-x86_64.jar
-    - netty-resolver-dns-classes-macos-4.1.137.Final.jar
-    - netty-resolver-dns-native-macos-4.1.137.Final-osx-aarch_64.jar
-    - netty-resolver-dns-native-macos-4.1.137.Final-osx-x86_64.jar
+    - netty-buffer-4.2.18.Final.jar
+    - netty-codec-base-4.2.18.Final.jar
+    - netty-codec-compression-4.2.18.Final.jar
+    - netty-codec-dns-4.2.18.Final.jar
+    - netty-codec-haproxy-4.2.18.Final.jar
+    - netty-codec-http-4.2.18.Final.jar
+    - netty-codec-socks-4.2.18.Final.jar
+    - netty-common-4.2.18.Final.jar
+    - netty-handler-4.2.18.Final.jar
+    - netty-handler-proxy-4.2.18.Final.jar
+    - netty-resolver-4.2.18.Final.jar
+    - netty-resolver-dns-4.2.18.Final.jar
+    - netty-tcnative-boringssl-static-2.0.84.Final.jar
+    - netty-tcnative-classes-2.0.84.Final.jar
+    - netty-transport-4.2.18.Final.jar
+    - netty-transport-classes-epoll-4.2.18.Final.jar
+    - netty-transport-classes-io_uring-4.2.18.Final.jar
+    - netty-transport-native-io_uring-4.2.18.Final-linux-aarch_64.jar
+    - netty-transport-native-io_uring-4.2.18.Final-linux-x86_64.jar
+    - netty-transport-native-unix-common-4.2.18.Final.jar
  * Prometheus client
     - simpleclient-0.16.0.jar
     - simpleclient_log4j2-0.16.0.jar
@@ -392,9 +383,10 @@ The Apache Software License, Version 2.0
      - opentelemetry-context-1.62.0.jar
 
  * BookKeeper
-    - bookkeeper-common-allocator-4.17.4.0.jar
-    - cpu-affinity-4.17.4.0.jar
-    - circe-checksum-4.17.4.0.jar
+    - bookkeeper-common-allocator-4.18.1.jar
+    - circe-checksum-4.18.1.jar
+    - cpu-affinity-4.18.1.jar
+    - native-library-common-4.18.1.jar
   * AirCompressor
      - aircompressor-2.0.3.jar
  * AsyncHttpClient
@@ -432,6 +424,7 @@ BSD 3-clause "New" or "Revised" License
 MIT License
  * SLF4J -- ../licenses/LICENSE-SLF4J.txt
     - slf4j-api-2.0.18.jar
+ * slog -- slog-0.10.0.jar
  * The Checker Framework
     - checker-qual-3.33.0.jar
 

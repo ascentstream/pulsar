@@ -257,7 +257,8 @@ public class SecurityUtility {
                                                                   ScheduledExecutorService executor)
             throws GeneralSecurityException, SSLException, FileNotFoundException, IOException {
         KeyManagerProxy keyManager = new KeyManagerProxy(certFilePath, keyFilePath, refreshDurationSec, executor);
-        SslContextBuilder sslContexBuilder = SslContextBuilder.forClient().sslProvider(sslProvider);
+        SslContextBuilder sslContexBuilder = SslContextBuilder.forClient().sslProvider(sslProvider)
+                .endpointIdentificationAlgorithm(null);
         sslContexBuilder.keyManager(keyManager);
         if (allowInsecureConnection) {
             sslContexBuilder.trustManager(InsecureTrustManagerFactory.INSTANCE);
@@ -308,7 +309,15 @@ public class SecurityUtility {
                                                             PrivateKey privateKey, Set<String> ciphers,
                                                             Set<String> protocols)
             throws GeneralSecurityException, SSLException, FileNotFoundException, IOException {
-        SslContextBuilder builder = SslContextBuilder.forClient().sslProvider(sslProvider);
+        // Netty 4.2's SslContextBuilder.forClient() defaults the endpoint identification algorithm to "HTTPS",
+        // which turns hostname verification on for every engine built from the context. Pulsar manages
+        // verification itself: SecurityUtility.configureSSLHandler applies "HTTPS" on the client engine when
+        // tlsHostnameVerificationEnable is set. Clearing the builder default restores the Netty 4.1 behavior so
+        // that disabling verification is actually honored. This must happen at build time: on the OpenSSL
+        // backend the algorithm is fixed when the context is created and a per-engine SSLParameters override
+        // can only enable verification, never disable it.
+        SslContextBuilder builder = SslContextBuilder.forClient().sslProvider(sslProvider)
+                .endpointIdentificationAlgorithm(null);
         setupTrustCerts(builder, allowInsecureConnection, trustCertsStream);
         setupKeyManager(builder, privateKey, (X509Certificate[]) certificates);
         setupCiphers(builder, ciphers);

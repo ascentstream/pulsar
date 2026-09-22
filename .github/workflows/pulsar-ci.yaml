@@ -184,7 +184,7 @@ jobs:
         with:
           path: |
             ~/.m2/repository/*/*/*
-            !~/.m2/repository/org/apache/pulsar
+            !~/.m2/repository/com/ascentstream
           key: ${{ runner.os }}-m2-dependencies-core-modules-${{ hashFiles('**/pom.xml') }}
           restore-keys: |
             ${{ runner.os }}-m2-dependencies-core-modules-
@@ -215,8 +215,8 @@ jobs:
         run: |
           cd $HOME
           $GITHUB_WORKSPACE/build/pulsar_ci_tool.sh store_tar_to_github_actions_artifacts pulsar-maven-repository-binaries \
-          tar --exclude '.m2/repository/org/apache/pulsar/pulsar-*-distribution' \
-              -I zstd -cf - .m2/repository/org/apache/pulsar
+          tar --exclude '.m2/repository/com/ascentstream/pulsar/pulsar-*-distribution' \
+              -I zstd -cf - .m2/repository/com/ascentstream
           cd $GITHUB_WORKSPACE
           $GITHUB_WORKSPACE/build/pulsar_ci_tool.sh store_tar_to_github_actions_artifacts pulsar-server-distribution \
           tar -I zstd -cf - distribution/server/target/apache-pulsar-*-bin.tar.gz
@@ -307,7 +307,7 @@ jobs:
         with:
           path: |
             ~/.m2/repository/*/*/*
-            !~/.m2/repository/org/apache/pulsar
+            !~/.m2/repository/com/ascentstream
           key: ${{ runner.os }}-m2-dependencies-core-modules-${{ hashFiles('**/pom.xml') }}
           restore-keys: |
             ${{ runner.os }}-m2-dependencies-core-modules-
@@ -428,7 +428,7 @@ jobs:
         with:
           path: |
             ~/.m2/repository/*/*/*
-            !~/.m2/repository/org/apache/pulsar
+            !~/.m2/repository/com/ascentstream
           key: ${{ runner.os }}-m2-dependencies-core-modules-${{ hashFiles('**/pom.xml') }}
           restore-keys: |
             ${{ runner.os }}-m2-dependencies-core-modules-
@@ -517,7 +517,7 @@ jobs:
         with:
           path: |
             ~/.m2/repository/*/*/*
-            !~/.m2/repository/org/apache/pulsar
+            !~/.m2/repository/com/ascentstream
           key: ${{ runner.os }}-m2-dependencies-core-modules-${{ hashFiles('**/pom.xml') }}
           restore-keys: |
             ${{ runner.os }}-m2-dependencies-core-modules-
@@ -593,20 +593,6 @@ jobs:
             group: LOADBALANCE
             no_coverage: true
 
-          - name: Shade on Java 8
-            group: SHADE_RUN
-            upload_name: SHADE_RUN_8
-            runtime_jdk: 8
-            setup: ./build/run_integration_group.sh SHADE_BUILD
-            no_coverage: true
-
-          - name: Shade on Java 11
-            group: SHADE_RUN
-            upload_name: SHADE_RUN_11
-            runtime_jdk: 11
-            setup: ./build/run_integration_group.sh SHADE_BUILD
-            no_coverage: true
-
           - name: Shade on Java 17
             group: SHADE_RUN
             upload_name: SHADE_RUN_17
@@ -661,7 +647,7 @@ jobs:
         with:
           path: |
             ~/.m2/repository/*/*/*
-            !~/.m2/repository/org/apache/pulsar
+            !~/.m2/repository/com/ascentstream
           key: ${{ runner.os }}-m2-dependencies-core-modules-${{ hashFiles('**/pom.xml') }}
           restore-keys: |
             ${{ runner.os }}-m2-dependencies-core-modules-
@@ -795,7 +781,7 @@ jobs:
         with:
           path: |
             ~/.m2/repository/*/*/*
-            !~/.m2/repository/org/apache/pulsar
+            !~/.m2/repository/com/ascentstream
           key: ${{ runner.os }}-m2-dependencies-core-modules-${{ hashFiles('**/pom.xml') }}
           restore-keys: |
             ${{ runner.os }}-m2-dependencies-core-modules-
@@ -912,7 +898,7 @@ jobs:
         with:
           path: |
             ~/.m2/repository/*/*/*
-            !~/.m2/repository/org/apache/pulsar
+            !~/.m2/repository/com/ascentstream
           key: ${{ runner.os }}-m2-dependencies-all-${{ hashFiles('**/pom.xml') }}
           restore-keys: |
             ${{ runner.os }}-m2-dependencies-core-modules-${{ hashFiles('**/pom.xml') }}
@@ -1065,7 +1051,7 @@ jobs:
         with:
           path: |
             ~/.m2/repository/*/*/*
-            !~/.m2/repository/org/apache/pulsar
+            !~/.m2/repository/com/ascentstream
           key: ${{ runner.os }}-m2-dependencies-all-${{ hashFiles('**/pom.xml') }}
           restore-keys: |
             ${{ runner.os }}-m2-dependencies-core-modules-${{ hashFiles('**/pom.xml') }}
@@ -1194,7 +1180,7 @@ jobs:
         with:
           path: |
             ~/.m2/repository/*/*/*
-            !~/.m2/repository/org/apache/pulsar
+            !~/.m2/repository/com/ascentstream
           key: ${{ runner.os }}-m2-dependencies-all-${{ hashFiles('**/pom.xml') }}
           restore-keys: |
             ${{ runner.os }}-m2-dependencies-core-modules-${{ hashFiles('**/pom.xml') }}
@@ -1300,7 +1286,7 @@ jobs:
         with:
           path: |
             ~/.m2/repository/*/*/*
-            !~/.m2/repository/org/apache/pulsar
+            !~/.m2/repository/com/ascentstream
           key: ${{ runner.os }}-m2-dependencies-all-${{ hashFiles('**/pom.xml') }}
           restore-keys: |
             ${{ runner.os }}-m2-dependencies-core-modules-${{ hashFiles('**/pom.xml') }}
@@ -1437,7 +1423,7 @@ jobs:
         with:
           path: |
             ~/.m2/repository/*/*/*
-            !~/.m2/repository/org/apache/pulsar
+            !~/.m2/repository/com/ascentstream
           key: ${{ runner.os }}-m2-dependencies-all-${{ hashFiles('**/pom.xml') }}
           restore-keys: |
             ${{ runner.os }}-m2-dependencies-all-
@@ -1490,7 +1476,7 @@ jobs:
         with:
           path: |
             ~/.m2/repository/*/*/*
-            !~/.m2/repository/org/apache/pulsar
+            !~/.m2/repository/com/ascentstream
           key: ${{ runner.os }}-m2-dependencies-all-${{ hashFiles('**/pom.xml') }}
           restore-keys: |
             ${{ runner.os }}-m2-dependencies-core-modules-${{ hashFiles('**/pom.xml') }}
@@ -1547,7 +1533,7 @@ jobs:
         with:
           path: |
             ~/.m2/repository/*/*/*
-            !~/.m2/repository/org/apache/pulsar
+            !~/.m2/repository/com/ascentstream
           key: ${{ runner.os }}-m2-dependencies-core-modules-${{ hashFiles('**/pom.xml') }}
           restore-keys: |
             ${{ runner.os }}-m2-dependencies-core-modules-

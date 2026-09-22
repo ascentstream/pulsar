@@ -178,7 +178,7 @@ ci_snapshot_pulsar_maven_artifacts() {
     fail "This script can only be run in GitHub Actions"
   fi
   mkdir -p target
-  find $HOME/.m2/repository/org/apache/pulsar -name "*.jar" > /tmp/provided_pulsar_maven_artifacts
+  find $HOME/.m2/repository/com/ascentstream -name "*.jar" > /tmp/provided_pulsar_maven_artifacts
   )
 }
 
@@ -244,7 +244,7 @@ _ci_upload_coverage_files() {
       local artifactId=$(xmlstarlet sel -t -m _:project -v _:artifactId -n $project/pom.xml)
       # find the test scope classpath for the project
       mvn -f $project/pom.xml -DincludeScope=test -Dscan=false dependency:build-classpath  -B | { grep 'Dependencies classpath:' -A1 || true; } | tail -1 \
-                                    | sed 's/:/\n/g' | { grep 'org/apache/pulsar' || true; } \
+                                    | sed 's/:/\n/g' | { grep 'com/ascentstream' || true; } \
                                     | { tee -a $completeClasspathFile || true; } > target/classpath_$artifactId || true
     done
 
@@ -388,7 +388,7 @@ ci_create_test_coverage_report() {
           echo "Resolving classpath for $project..."
           # find the test scope classpath for the project
           mvn -f $project/pom.xml -DincludeScope=test -Dscan=false dependency:build-classpath  -B | { grep 'Dependencies classpath:' -A1 || true; } | tail -1 \
-                                        | sed 's/:/\n/g' | { grep 'org/apache/pulsar' || true; } \
+                                        | sed 's/:/\n/g' | { grep 'com/ascentstream' || true; } \
                                         >> $completeClasspathFile || true
         fi
       else
@@ -420,7 +420,7 @@ ci_create_test_coverage_report() {
 
     local sourcefilesArgs="--sourcefiles $({
       # find the source file folders for the pulsar .jar files that are on the classpath
-      for artifactId in $(cat $completeClasspathFile  | sort | uniq | { grep -v -E "$excludeJarsPattern" || true; } | perl -p -e 's|.*/org/apache/pulsar/([^/]*)/.*|$1|'); do
+      for artifactId in $(cat $completeClasspathFile  | sort | uniq | { grep -v -E "$excludeJarsPattern" || true; } | perl -p -e 's|.*/com/ascentstream/pulsar/([^/]*)/.*|$1|'); do
         local project="$(printf "%s" "$projectToArtifactIdMapping" | { grep $artifactId || true; } | cut -d' ' -f1)"
         if [[ -n "$project" && -d "$project/src/main/java" ]]; then
           echo "$project/src/main/java"

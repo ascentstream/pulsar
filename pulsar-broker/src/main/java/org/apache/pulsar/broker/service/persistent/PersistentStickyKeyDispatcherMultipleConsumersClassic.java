@@ -155,7 +155,7 @@ public class PersistentStickyKeyDispatcherMultipleConsumersClassic
                     if (ex != null) {
                         synchronized (PersistentStickyKeyDispatcherMultipleConsumersClassic.this) {
                             consumerSet.removeAll(consumer);
-                            consumerList.remove(consumer);
+                            removeConsumerFromList(consumer);
                         }
                         throw FutureUtil.wrapToCompletionException(ex);
                     }
@@ -652,7 +652,7 @@ public class PersistentStickyKeyDispatcherMultipleConsumersClassic
             // use the cached sticky key hash if available, otherwise calculate the sticky key hash and cache it
             return entryAndMetadata.getOrUpdateCachedStickyKeyHash(selector::makeStickyKeyHash);
         }
-        return selector.makeStickyKeyHash(peekStickyKey(entry.getDataBuffer()));
+        return selector.makeStickyKeyHash(peekStickyKey(entry));
     }
 
     private static final Logger log =
