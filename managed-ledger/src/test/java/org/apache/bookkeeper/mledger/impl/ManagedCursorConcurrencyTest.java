@@ -21,6 +21,7 @@ package org.apache.bookkeeper.mledger.impl;
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertFalse;
 import static org.testng.Assert.assertNull;
+import static org.testng.Assert.assertTrue;
 import com.google.common.collect.Lists;
 import java.util.ArrayList;
 import java.util.List;
@@ -66,6 +67,108 @@ public class ManagedCursorConcurrencyTest extends MockedBookKeeperTestCase {
             log.error("Failed to delete message at {}", ctx, exception);
         }
     };
+
+    /**
+     * Concurrent cumulative mark-deletes and individual deletes under the per-msgLedger
+     * checkpoint persistence: the persist chain, dirty-ledger bookkeeping and restore-on-failure
+     * must survive interleaving, and a reopen after the storm must land on a consistent state.
+     */
+    @Test
+    public void testConcurrentMarkDeleteAndDeleteWithCheckpointPersistence() throws Exception {
+        ManagedLedgerConfig config = new ManagedLedgerConfig().setMaxEntriesPerLedger(2);
+        config.setPersistentUnackedRangesWithPerLedgerEntryEnabled(true);
+        config.setMaxUnackedRangesToPersistInMetadataStore(-1);
+        config.setThrottleMarkDelete(0);
+        ManagedLedger ledger = factory.open("my_test_ledger_checkpoint_concurrency", config);
+        final ManagedCursorImpl cursor = (ManagedCursorImpl) ledger.openCursor("c1");
+
+        final int numEntries = 500;
+        final List<Position> addedEntries = new ArrayList<>();
+        for (int i = 0; i < numEntries; i++) {
+            addedEntries.add(ledger.addEntry("entry".getBytes()));
+        }
+
+        final CyclicBarrier barrier = new CyclicBarrier(3);
+        final CountDownLatch counter = new CountDownLatch(3);
+        final AtomicBoolean gotException = new AtomicBoolean(false);
+
+        Thread cumulativeDeleter = new Thread(() -> {
+            try {
+                barrier.await();
+                for (int i = 0; i < numEntries; i++) {
+                    try {
+                        cursor.markDelete(addedEntries.get(i));
+                    } catch (ManagedLedgerException e) {
+                        // Two concurrent cumulative ackers racing on overlapping ranges is a
+                        // benign upstream case (flush() treats this cause as non-problem).
+                        if (!"MarkDeletingMarkedPosition".equals(
+                                e.getCause().getClass().getSimpleName())) {
+                            throw e;
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                e.printStackTrace();
+                gotException.set(true);
+            } finally {
+                counter.countDown();
+            }
+        });
+
+        Thread individualDeleter = new Thread(() -> {
+            try {
+                barrier.await();
+                for (int i = 0; i < numEntries; i += 3) {
+                    cursor.delete(addedEntries.get(i));
+                }
+            } catch (Exception e) {
+                e.printStackTrace();
+                gotException.set(true);
+            } finally {
+                counter.countDown();
+            }
+        });
+
+        Thread lateCumulativeDeleter = new Thread(() -> {
+            try {
+                barrier.await();
+                for (int i = numEntries / 2; i < numEntries; i++) {
+                    try {
+                        cursor.markDelete(addedEntries.get(i));
+                    } catch (ManagedLedgerException e) {
+                        if (!"MarkDeletingMarkedPosition".equals(
+                                e.getCause().getClass().getSimpleName())) {
+                            throw e;
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                e.printStackTrace();
+                gotException.set(true);
+            } finally {
+                counter.countDown();
+            }
+        });
+
+        cumulativeDeleter.start();
+        individualDeleter.start();
+        lateCumulativeDeleter.start();
+        counter.await();
+
+        assertFalse(gotException.get());
+        // The trim of fully-consumed data ledgers may bump the md past the tail entry.
+        assertTrue(cursor.getMarkDeletedPosition().compareTo(addedEntries.get(numEntries - 1)) >= 0);
+        ledger.close();
+
+        // Reopen: the concurrently-written checkpoints must recover to the same final state.
+        ledger = factory.open("my_test_ledger_checkpoint_concurrency", config);
+        final ManagedCursorImpl recovered = (ManagedCursorImpl) ledger.openCursor("c1");
+        assertTrue(recovered.getMarkDeletedPosition().compareTo(addedEntries.get(numEntries - 1)) >= 0);
+        for (int i = 0; i < numEntries; i++) {
+            assertTrue(recovered.isMessageDeleted(addedEntries.get(i)));
+        }
+        ledger.close();
+    }
 
     @Test(dataProvider = "useOpenRangeSet")
     public void testMarkDeleteAndRead(boolean useOpenRangeSet) throws Exception {
