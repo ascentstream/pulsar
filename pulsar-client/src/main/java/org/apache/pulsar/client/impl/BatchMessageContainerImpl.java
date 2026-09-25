@@ -340,7 +340,7 @@ class BatchMessageContainerImpl extends AbstractBatchMessageContainer {
             op.setNumMessagesInBatch(1);
             op.setBatchSizeByte(encryptedPayload.readableBytes());
 
-            // handle mgs size check as non-batched in `ProducerImpl.isMessageSizeExceeded`
+            // handle mgs size check as non-batched in `ProducerImpl.getMessageSizeError`
             if (op.getMessageHeaderAndPayloadSize() > getMaxMessageSize()) {
                 // The pair took the payload without retaining it, so cmd.release() also releases the
                 // container's claim: clear the ownership flag first, or discard() would double-release.
