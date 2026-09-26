@@ -43,9 +43,10 @@
 
 # Select the ByteBuf allocator by adding -Dpulsar.allocator.type=<value> to PULSAR_EXTRA_OPTS.
 # Supported values (case-insensitive):
-#   pooled   - Netty PooledByteBufAllocator; prefers direct buffers (default).
+#   pooled   - Netty PooledByteBufAllocator; prefers direct buffers (built-in default).
 #   unpooled - Netty UnpooledByteBufAllocator; prefers heap buffers.
-#   adaptive - Netty AdaptiveByteBufAllocator; auto-tunes pooling and prefers direct buffers.
+#   adaptive - Netty AdaptiveByteBufAllocator; auto-tunes pooling and prefers direct buffers
+#              (set for the default allocator below).
 # Named allocators override each setting independently with pulsar.allocator.<id>.<setting>:
 #   pulsar.allocator.default.type  - allocator used by general Pulsar operations
 #   pulsar.allocator.ml-cache.type - separate allocator used for managed-ledger cache copies (default: adaptive)
@@ -113,6 +114,13 @@ fi
 
 # Extra options to be passed to the jvm
 PULSAR_EXTRA_OPTS="${PULSAR_EXTRA_OPTS:-" -Dpulsar.allocator.exit_on_oom=true -Dio.netty.recycler.maxCapacityPerThread=4096"}"
+
+# Use Netty's adaptive allocator for Pulsar's default allocator, and pin Netty's own default allocator
+# to it. The options are prepended to PULSAR_EXTRA_OPTS so that options configured there override them;
+# since the named setting takes precedence over -Dpulsar.allocator.type, select another allocator for
+# general operations with -Dpulsar.allocator.default.type=pooled in PULSAR_EXTRA_OPTS.
+# The Netty 4.1.137 line in use here supports io.netty.allocator.type=adaptive.
+PULSAR_EXTRA_OPTS="-Dpulsar.allocator.default.type=adaptive -Dio.netty.allocator.type=adaptive ${PULSAR_EXTRA_OPTS}"
 
 # Add extra paths to the bookkeeper classpath
 # PULSAR_EXTRA_CLASSPATH=
