@@ -65,6 +65,7 @@ import org.apache.pulsar.broker.service.persistent.PersistentTopic;
 import org.apache.pulsar.client.admin.PulsarAdminException;
 import org.apache.pulsar.client.api.Consumer;
 import org.apache.pulsar.client.api.Message;
+import org.apache.pulsar.client.api.MessageId;
 import org.apache.pulsar.client.api.Producer;
 import org.apache.pulsar.client.api.PulsarClient;
 import org.apache.pulsar.client.api.Schema;
@@ -546,9 +547,9 @@ public class BrokerBkEnsemblesTests extends BkEnsemblesTestBase {
     protected Closeable injectBKServerDelayForCurrentLedger(String topic, long delayTime, TimeUnit unit,
                                                             int bkIndexOfEnsemble) throws Exception {
         // Make an injection to let the next publishing delay.
-        ManagedLedgerFactoryImpl mlFactory = (ManagedLedgerFactoryImpl) pulsar.getDefaultManagedLedgerFactory();
+        ManagedLedgerFactoryImpl mlFactory = (ManagedLedgerFactoryImpl) pulsar.getManagedLedgerFactory();
         BookieClientImpl bookieClient =
-                (BookieClientImpl) mlFactory.getBookKeeper().get().getBookieClient();
+                (BookieClientImpl) mlFactory.getBookKeeper().get().getClientCtx().getBookieClient();
         PersistentTopic persistentTopic = (PersistentTopic) pulsar.getBrokerService()
                 .getTopic(topic, false).join().get();
         ManagedLedgerImpl ml = (ManagedLedgerImpl) persistentTopic.getManagedLedger();
