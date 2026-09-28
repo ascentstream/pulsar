@@ -82,8 +82,11 @@ import org.apache.bookkeeper.client.BKException;
 import org.apache.bookkeeper.client.BookKeeper;
 import org.apache.bookkeeper.client.BookKeeper.DigestType;
 import org.apache.bookkeeper.client.LedgerEntry;
+import org.apache.bookkeeper.client.PulsarMockBookKeeper;
 import org.apache.bookkeeper.client.PulsarMockReadHandleInterceptor;
 import org.apache.bookkeeper.client.api.LedgerEntries;
+import org.apache.bookkeeper.client.api.OpenBuilder;
+import org.apache.bookkeeper.common.util.OrderedExecutor;
 import org.apache.bookkeeper.client.api.ReadHandle;
 import org.apache.bookkeeper.mledger.AsyncCallbacks;
 import org.apache.bookkeeper.mledger.AsyncCallbacks.AddEntryCallback;
@@ -5448,6 +5451,64 @@ public class ManagedCursorTest extends MockedBookKeeperTestCase {
         verify(spyLedger, never()).getLedgerHandle(firstLedgerId);
 
         ledger.close();
+    }
+
+    @SuppressWarnings("try")
+    class TestPulsarMockBookKeeper extends PulsarMockBookKeeper {
+        Map<Long, Integer> ledgerErrors = new HashMap<>();
+
+        @SuppressWarnings("try")
+        public TestPulsarMockBookKeeper(OrderedExecutor orderedExecutor) throws Exception {
+            super(orderedExecutor);
+        }
+
+        public void setErrorCodeMap(long ledgerId, int rc) {
+            ledgerErrors.put(ledgerId, rc);
+        }
+
+        @Override
+        public OpenBuilder newOpenLedgerOp() {
+            OpenBuilder delegate = super.newOpenLedgerOp();
+            return new OpenBuilder() {
+                long ledgerId = -1;
+                boolean recovery = false;
+                byte[] password = null;
+                org.apache.bookkeeper.client.api.DigestType digestType = null;
+
+                @Override
+                public OpenBuilder withLedgerId(long ledgerId) {
+                    this.ledgerId = ledgerId;
+                    return this;
+                }
+
+                @Override
+                public OpenBuilder withRecovery(boolean recovery) {
+                    this.recovery = recovery;
+                    return this;
+                }
+
+                @Override
+                public OpenBuilder withPassword(byte[] password) {
+                    this.password = password;
+                    return this;
+                }
+
+                @Override
+                public OpenBuilder withDigestType(org.apache.bookkeeper.client.api.DigestType digestType) {
+                    this.digestType = digestType;
+                    return this;
+                }
+
+                @Override
+                public CompletableFuture<ReadHandle> execute() {
+                    if (ledgerErrors.containsKey(ledgerId)) {
+                        return FutureUtil.failedFuture(BKException.create(ledgerErrors.get(ledgerId)));
+                    }
+                    return delegate.withLedgerId(ledgerId).withDigestType(digestType).withPassword(password)
+                            .withRecovery(recovery).execute();
+                }
+            };
+        }
     }
 
     private static final Logger log = LoggerFactory.getLogger(ManagedCursorTest.class);

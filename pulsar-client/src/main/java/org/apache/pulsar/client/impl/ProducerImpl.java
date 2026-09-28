@@ -2650,8 +2650,8 @@ public class ProducerImpl<T> extends ProducerBase<T> implements TimerTask, Conne
                 // anymore, so drop it on top of the op's own release.
                 ReferenceCountUtil.safeRelease(op.cmd);
             }
-            failSendOp(op, t instanceof PulsarClientException clientException
-                    ? clientException : new PulsarClientException(t, op.sequenceId));
+            failSendOp(op, t instanceof PulsarClientException
+                    ? (PulsarClientException) t : new PulsarClientException(t, op.sequenceId));
         }
     }
 
@@ -2674,8 +2674,8 @@ public class ProducerImpl<T> extends ProducerBase<T> implements TimerTask, Conne
         try {
             op.sendComplete(exception);
         } catch (Throwable callbackEx) {
-            log.warn().attr("sequenceId", op.sequenceId).exception(callbackEx)
-                    .log("Got exception while completing the callback for msg");
+            log.warn("[{}] [{}] Got exception while completing the callback for msg, sequenceId {}", topic,
+                    producerName, op.sequenceId, callbackEx);
         } finally {
             releaseOpCmdAndRecycle(op);
         }

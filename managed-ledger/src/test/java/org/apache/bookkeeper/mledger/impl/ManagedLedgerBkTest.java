@@ -791,7 +791,7 @@ public class ManagedLedgerBkTest extends BookKeeperClusterTestCase {
         @Cleanup("shutdown")
         ManagedLedgerFactory factory = new ManagedLedgerFactoryImpl(metadataStore, bkc);
 
-        ManagedLedgerConfig config = defaultConfig().setEnsembleSize(1).setWriteQuorumSize(1)
+        ManagedLedgerConfig config = new ManagedLedgerConfig().setEnsembleSize(1).setWriteQuorumSize(1)
                 .setAckQuorumSize(1);
         // A terminated ledger cannot be written to again: use a name that a retry of this test would not reuse
         ManagedLedgerImpl ledger = (ManagedLedgerImpl) factory.open("my_test_ledger" + UUID.randomUUID(), config);

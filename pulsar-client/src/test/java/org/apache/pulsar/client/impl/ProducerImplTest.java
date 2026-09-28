@@ -65,10 +65,13 @@ import org.apache.pulsar.client.api.MessageCrypto;
 import org.apache.pulsar.client.api.ProducerCryptoFailureAction;
 import org.apache.pulsar.client.api.PulsarClientException;
 import org.apache.pulsar.client.api.Schema;
+import org.apache.pulsar.client.impl.ProducerImpl.OpSendMsg;
+import org.apache.pulsar.client.impl.ProducerImpl.OpSendMsgQueue;
 import org.apache.pulsar.client.impl.conf.ClientConfigurationData;
 import org.apache.pulsar.client.impl.conf.ProducerConfigurationData;
 import org.apache.pulsar.common.api.proto.MessageMetadata;
 import org.apache.pulsar.common.protocol.ByteBufPair;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
 import org.testng.annotations.Test;
 
@@ -426,11 +429,10 @@ public class ProducerImplTest {
     public void testSendPathFailureReleasesPayloadThroughTheStageHelpers() throws Exception {
         ProducerConfigurationData conf = new ProducerConfigurationData();
         conf.setBatchingEnabled(false);
-        conf.setCompressMinMsgBodySize(0);
         PulsarClientImpl client = mockedPulsarClient();
         when(client.getMemoryLimitController()).thenReturn(new MemoryLimitController(1024 * 1024));
         ProducerImpl<byte[]> producer = constructProducer(client, conf);
-        producer.setState(ProducerImpl.State.Ready);
+        producer.setState(HandlerState.State.Ready);
 
         // A failing compression stage must release the message payload and complete the callback: the stage
         // runs after canEnqueueRequest has acquired the send permit and reserved the memory, but before an op
@@ -441,8 +443,8 @@ public class ProducerImplTest {
         MessageImpl<byte[]> first = newMessage("first");
         SendCallback firstCallback = mock(SendCallback.class);
         producer.sendAsync(first, firstCallback);
-        ArgumentCaptor<Throwable> compressionFailure = ArgumentCaptor.forClass(Throwable.class);
-        verify(firstCallback).sendComplete(compressionFailure.capture(), any());
+        ArgumentCaptor<Exception> compressionFailure = ArgumentCaptor.forClass(Exception.class);
+        verify(firstCallback).sendComplete(compressionFailure.capture());
         assertTrue(String.valueOf(compressionFailure.getValue()).contains("mocked compression failure"),
                 "the callback must be failed with the compression failure");
         assertEquals(first.getDataBuffer().refCnt(), 0,
@@ -462,7 +464,7 @@ public class ProducerImplTest {
         MessageImpl<byte[]> second = newMessage("second");
         SendCallback secondCallback = mock(SendCallback.class);
         producer.sendAsync(second, secondCallback);
-        verify(secondCallback).sendComplete(any(), any());
+        verify(secondCallback).sendComplete(any());
         assertEquals(compressed.refCnt(), 0,
                 "the compressed payload must be released by the serialization stage");
     }
@@ -478,11 +480,10 @@ public class ProducerImplTest {
         ProducerConfigurationData conf = new ProducerConfigurationData();
         conf.setBatchingEnabled(false);
         conf.setChunkingEnabled(true);
-        conf.setCompressMinMsgBodySize(0);
         PulsarClientImpl client = mockedPulsarClient();
         when(client.getMemoryLimitController()).thenReturn(new MemoryLimitController(1024 * 1024));
         ProducerImpl<byte[]> producer = constructProducer(client, conf);
-        producer.setState(ProducerImpl.State.Ready);
+        producer.setState(HandlerState.State.Ready);
         // A small max message size forces the 10 KB payload into several chunks.
         ConnectionHandler connectionHandler = mock(ConnectionHandler.class);
         when(connectionHandler.getMaxMessageSize()).thenReturn(1024);
@@ -498,8 +499,8 @@ public class ProducerImplTest {
         SendCallback callback = mock(SendCallback.class);
         producer.sendAsync(message, callback);
 
-        ArgumentCaptor<Throwable> throwableCaptor = ArgumentCaptor.forClass(Throwable.class);
-        verify(callback).sendComplete(throwableCaptor.capture(), any());
+        ArgumentCaptor<Exception> throwableCaptor = ArgumentCaptor.forClass(Exception.class);
+        verify(callback).sendComplete(throwableCaptor.capture());
         assertTrue(throwableCaptor.getValue().getMessage().contains("mocked chunk serialization failure"));
         // The failing chunk's retained slice is released by the send-path helper and the base payload's own
         // claim by the chunk-loop failure handling. With no compression the base is the message payload
@@ -517,11 +518,10 @@ public class ProducerImplTest {
         ProducerConfigurationData conf = new ProducerConfigurationData();
         conf.setBatchingEnabled(false);
         conf.setChunkingEnabled(true);
-        conf.setCompressMinMsgBodySize(0);
         PulsarClientImpl client = mockedPulsarClient();
         when(client.getMemoryLimitController()).thenReturn(new MemoryLimitController(1024 * 1024));
         ProducerImpl<byte[]> producer = constructProducer(client, conf);
-        producer.setState(ProducerImpl.State.Ready);
+        producer.setState(HandlerState.State.Ready);
         ConnectionHandler connectionHandler = mock(ConnectionHandler.class);
         when(connectionHandler.getMaxMessageSize()).thenReturn(1024);
         doReturn(connectionHandler).when(producer).getConnectionHandler();
@@ -539,7 +539,7 @@ public class ProducerImplTest {
 
         SendCallback callback = mock(SendCallback.class);
         producer.sendAsync(newMessage(new byte[10 * 1024]), callback);
-        verify(callback).sendComplete(any(), any());
+        verify(callback).sendComplete(any());
         // The failing chunk's retained slice and the base payload's own claim must both be released.
         assertEquals(compressed.refCnt(), 0, "the compressed base payload must be released on a chunk failure");
     }
@@ -555,14 +555,13 @@ public class ProducerImplTest {
     public void compressionFailureBeforeAnOpExistsReleasesPermitAndMemory() throws Exception {
         ProducerConfigurationData conf = new ProducerConfigurationData();
         conf.setBatchingEnabled(false);
-        conf.setCompressMinMsgBodySize(0);
         // The default of 0 means an unbounded queue with no permit accounting to assert on.
         conf.setMaxPendingMessages(100);
         PulsarClientImpl client = mockedPulsarClient();
         MemoryLimitController memoryLimitController = new MemoryLimitController(1024 * 1024);
         when(client.getMemoryLimitController()).thenReturn(memoryLimitController);
         ProducerImpl<byte[]> producer = constructProducer(client, conf);
-        producer.setState(ProducerImpl.State.Ready);
+        producer.setState(HandlerState.State.Ready);
         doThrow(new RuntimeException("mocked compression failure"))
                 .when(producer).applyCompression(any());
 
@@ -570,8 +569,8 @@ public class ProducerImplTest {
         SendCallback callback = mock(SendCallback.class);
         producer.sendAsync(newMessage(new byte[16]), callback);
 
-        ArgumentCaptor<Throwable> throwableCaptor = ArgumentCaptor.forClass(Throwable.class);
-        verify(callback).sendComplete(throwableCaptor.capture(), any());
+        ArgumentCaptor<Exception> throwableCaptor = ArgumentCaptor.forClass(Exception.class);
+        verify(callback).sendComplete(throwableCaptor.capture());
         assertTrue(String.valueOf(throwableCaptor.getValue()).contains("mocked compression failure"),
                 "the callback must be failed with the compression failure");
         assertEquals(memoryLimitController.currentUsage(), 0,
@@ -593,14 +592,13 @@ public class ProducerImplTest {
         ProducerConfigurationData conf = new ProducerConfigurationData();
         conf.setBatchingEnabled(false);
         conf.setChunkingEnabled(true);
-        conf.setCompressMinMsgBodySize(0);
         // The default of 0 means an unbounded queue: the permits this test asserts on only exist with a bound.
         conf.setMaxPendingMessages(100);
         PulsarClientImpl client = mockedPulsarClient();
         MemoryLimitController memoryLimitController = new MemoryLimitController(1024 * 1024);
         when(client.getMemoryLimitController()).thenReturn(memoryLimitController);
         ProducerImpl<byte[]> producer = constructProducer(client, conf);
-        producer.setState(ProducerImpl.State.Ready);
+        producer.setState(HandlerState.State.Ready);
         // A small max message size forces the 10 KB payload into several chunks.
         ConnectionHandler connectionHandler = mock(ConnectionHandler.class);
         when(connectionHandler.getMaxMessageSize()).thenReturn(1024);
@@ -614,8 +612,8 @@ public class ProducerImplTest {
         SendCallback callback = mock(SendCallback.class);
         producer.sendAsync(newMessage(new byte[10 * 1024]), callback);
 
-        ArgumentCaptor<Throwable> chunkFailure = ArgumentCaptor.forClass(Throwable.class);
-        verify(callback).sendComplete(chunkFailure.capture(), any());
+        ArgumentCaptor<Exception> chunkFailure = ArgumentCaptor.forClass(Exception.class);
+        verify(callback).sendComplete(chunkFailure.capture());
         assertTrue(String.valueOf(chunkFailure.getValue()).contains("mocked chunk serialization failure"),
                 "the chunk-build path must be the one that failed: " + chunkFailure.getValue());
         assertEquals(memoryLimitController.currentUsage(), 0,
@@ -637,12 +635,11 @@ public class ProducerImplTest {
         ProducerConfigurationData conf = new ProducerConfigurationData();
         conf.setBatchingEnabled(false);
         conf.setChunkingEnabled(true);
-        conf.setCompressMinMsgBodySize(0);
         conf.setMaxPendingMessages(100);
         PulsarClientImpl client = mockedPulsarClient();
         when(client.getMemoryLimitController()).thenReturn(new MemoryLimitController(1024 * 1024));
         ProducerImpl<byte[]> producer = constructProducer(client, conf);
-        producer.setState(ProducerImpl.State.Ready);
+        producer.setState(HandlerState.State.Ready);
         // A small max message size forces the 10 KB payload into several chunks.
         ConnectionHandler connectionHandler = mock(ConnectionHandler.class);
         when(connectionHandler.getMaxMessageSize()).thenReturn(1024);
@@ -691,14 +688,13 @@ public class ProducerImplTest {
         ProducerConfigurationData conf = new ProducerConfigurationData();
         conf.setBatchingEnabled(false);
         conf.setChunkingEnabled(true);
-        conf.setCompressMinMsgBodySize(0);
         conf.setMaxPendingMessages(100);
         conf.setBlockIfQueueFull(true);
         PulsarClientImpl client = mockedPulsarClient();
         MemoryLimitController memoryLimitController = new MemoryLimitController(1024 * 1024);
         when(client.getMemoryLimitController()).thenReturn(memoryLimitController);
         ProducerImpl<byte[]> producer = constructProducer(client, conf);
-        producer.setState(ProducerImpl.State.Ready);
+        producer.setState(HandlerState.State.Ready);
         // A small max message size forces the 10 KB payload into several chunks.
         ConnectionHandler connectionHandler = mock(ConnectionHandler.class);
         when(connectionHandler.getMaxMessageSize()).thenReturn(1024);
@@ -733,7 +729,7 @@ public class ProducerImplTest {
         }
 
         assertEquals(ops.size(), 1, "chunk 0 must have been built before the interruption failed chunk 1");
-        verify(callback).sendComplete(any(), any());
+        verify(callback).sendComplete(any());
         assertEquals(memoryLimitController.currentUsage(), 0,
                 "the whole memory reservation must be released, including the already-chunked bytes");
         assertEquals(producer.availableSendPermitsForTesting(), maxPermits - 1,
@@ -757,7 +753,7 @@ public class ProducerImplTest {
         PulsarClientImpl client = mockedPulsarClient();
         when(client.getMemoryLimitController()).thenReturn(new MemoryLimitController(1024 * 1024));
         ProducerImpl<byte[]> producer = constructProducer(client, conf);
-        producer.setState(ProducerImpl.State.Ready);
+        producer.setState(HandlerState.State.Ready);
         // Keep the schema state non-Ready: the real populateMessageSchema would mark it Ready for the
         // matching schema, so the deferred branch would not run.
         doAnswer(invocation -> true).when(producer).populateMessageSchema(any(), any());
@@ -876,6 +872,10 @@ public class ProducerImplTest {
         op.chunkId = 0;
         op.numMessagesInBatch = 1;
         OpSendMsg opSpy = spy(op);
+        // A Mockito spy is a field-copy of the original object: its netty Recycler handle still points at the
+        // original op, so a real recycle() would throw "object does not belong to handle". The release of the
+        // cmd (asserted via refCnt) happens before recycle(), so stubbing it out keeps the test meaningful.
+        Mockito.doNothing().when(opSpy).recycle();
         opSpy.writeEventLoop = writeEventLoop;
         pendingQueue.add(opSpy);
 
@@ -1015,7 +1015,7 @@ public class ProducerImplTest {
         Mockito.when(client.getMemoryLimitController())
                 .thenReturn(Mockito.mock(MemoryLimitController.class));
         ProducerImpl<byte[]> producer = constructProducer(client, conf);
-        producer.setState(ProducerImpl.State.Ready);
+        producer.setState(HandlerState.State.Ready);
 
         // The event loop rejects every task: the deferred release falls back to inline.
         EventLoop eventLoop = Mockito.mock(EventLoop.class);
@@ -1052,7 +1052,7 @@ public class ProducerImplTest {
         assertEquals(pendingQueue.messagesCount(), 0, "the queue's message accounting must follow");
         assertEquals(cmd.refCnt(), 0,
                 "both the op's reference and the orphaned write reference must be released");
-        verify(callback).sendComplete(any(), any());
+        verify(callback).sendComplete(any());
     }
 
     /**
@@ -1069,7 +1069,7 @@ public class ProducerImplTest {
         Mockito.when(client.getMemoryLimitController())
                 .thenReturn(Mockito.mock(MemoryLimitController.class));
         ProducerImpl<byte[]> producer = constructProducer(client, conf);
-        producer.setState(ProducerImpl.State.Ready);
+        producer.setState(HandlerState.State.Ready);
 
         EventLoop eventLoop = Mockito.mock(EventLoop.class);
         Mockito.doThrow(new RejectedExecutionException("mocked event loop shutdown"))
@@ -1091,7 +1091,7 @@ public class ProducerImplTest {
         Mockito.when(msg.getUncompressedSize()).thenReturn(10);
         SendCallback callback = Mockito.mock(SendCallback.class);
         Mockito.doThrow(new RuntimeException("mocked application callback failure"))
-                .when(callback).sendComplete(any(), any());
+                .when(callback).sendComplete(any());
         OpSendMsg op = OpSendMsg.create(
                 msg, cmd, 1L, callback);
         op.totalChunks = 1;
@@ -1104,7 +1104,7 @@ public class ProducerImplTest {
         assertEquals(pendingQueue.size(), 0, "the failed op must be taken back out of the pending queue");
         assertEquals(cmd.refCnt(), 0,
                 "the cleanup must still run after the throwing callback");
-        verify(callback).sendComplete(any(), any());
+        verify(callback).sendComplete(any());
     }
 
     /**

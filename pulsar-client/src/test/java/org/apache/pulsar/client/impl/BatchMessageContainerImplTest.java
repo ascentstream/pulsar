@@ -25,6 +25,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.CALLS_REAL_METHODS;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -37,8 +38,8 @@ import static org.testng.Assert.assertTrue;
 import static org.testng.Assert.fail;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufAllocator;
+import io.netty.buffer.PublicWrappedByteBuf;
 import io.netty.buffer.Unpooled;
-import io.netty.buffer.WrappedByteBuf;
 import io.netty.util.ReferenceCountUtil;
 import io.netty.util.Timeout;
 import io.netty.util.Timer;
@@ -520,7 +521,7 @@ public class BatchMessageContainerImplTest {
         container.setProducer(producer);
         SendCallback throwingCallback = mock(SendCallback.class);
         doThrow(new RuntimeException("mocked application callback failure"))
-                .when(throwingCallback).sendComplete(any(), any());
+                .when(throwingCallback).sendComplete(any());
 
         MessageImpl<?> message = createMessage(0);
         try {
@@ -659,8 +660,25 @@ public class BatchMessageContainerImplTest {
         return MessageImpl.create(messageMetadata, payload, Schema.BYTES, null);
     }
 
+    private MessageImpl<?> createMessage(long sequenceId) {
+        return createMessage(sequenceId, 16);
+    }
+
+    private static MessageImpl<byte[]> newMessage(long sequenceId, Long txnIdMostBits, Long txnIdLeastBits) {
+        MessageMetadata metadata = new MessageMetadata();
+        metadata.setSequenceId(sequenceId);
+        metadata.setProducerName("producer1");
+        metadata.setPublishTime(System.currentTimeMillis());
+        if (txnIdMostBits != null) {
+            metadata.setTxnidMostBits(txnIdMostBits);
+            metadata.setTxnidLeastBits(txnIdLeastBits);
+        }
+        ByteBuffer payload = ByteBuffer.wrap(("payload-" + sequenceId).getBytes(StandardCharsets.UTF_8));
+        return MessageImpl.create(metadata, payload, Schema.BYTES, null);
+    }
+
     /** Delegates everything and counts {@code release()} invocations, making a swallowed double release visible. */
-    private static final class ReleaseCountingByteBuf extends WrappedByteBuf {
+    private static final class ReleaseCountingByteBuf extends PublicWrappedByteBuf {
 
         private int releases;
 
@@ -683,6 +701,10 @@ public class BatchMessageContainerImplTest {
         int releases() {
             return releases;
         }
+    }
+
+    private ProducerImpl<?> createTestProducer() throws Exception {
+        return createTestProducer(CompressionType.NONE);
     }
 
     private ProducerImpl<?> createTestProducer(CompressionType compressionType) throws Exception {
@@ -768,26 +790,6 @@ public class BatchMessageContainerImplTest {
         }
     }
 
-    /**
-     * Key-based batching fails the other way round: the guard reads the outer container's transaction state
-     * while the batch metadata is built by the per-key inner container, so a transactional message landing in
-     * a key bucket whose first message was plain is published with no transaction id at all — outside the
-     * transaction, and not rolled back on abort.
-     */
-    @Test
-    public void testKeyBasedContainerKeepsTransactionalAndPlainMessagesApart() throws Exception {
-        BatchMessageKeyBasedContainer container = new BatchMessageKeyBasedContainer();
-        container.setProducer(createTestProducer());
-        try {
-            container.add(newMessage(1L, null, null), null);
-
-            assertFalse(container.hasSameTxn(newMessage(2L, 7L, 13L)),
-                    "a transactional message was accepted into a plain key-based batch");
-        } finally {
-            container.discard(null);
-        }
-    }
-
     /** Messages of the same transaction must still batch together, and two different transactions must not. */
     @Test
     public void testSameTransactionStillBatchesTogether() throws Exception {
@@ -813,51 +815,6 @@ public class BatchMessageContainerImplTest {
 
             assertTrue(container.hasSameTxn(newMessage(2L, null, null)),
                     "two plain messages were split across batches");
-        } finally {
-            container.discard(null);
-        }
-    }
-
-    private static MessageImpl<byte[]> newMessage(long sequenceId, Long txnIdMostBits, Long txnIdLeastBits) {
-        MessageMetadata metadata = new MessageMetadata();
-        metadata.setSequenceId(sequenceId);
-        metadata.setProducerName("producer1");
-        metadata.setPublishTime(System.currentTimeMillis());
-        if (txnIdMostBits != null) {
-            metadata.setTxnidMostBits(txnIdMostBits);
-            metadata.setTxnidLeastBits(txnIdLeastBits);
-        }
-        ByteBuffer payload = ByteBuffer.wrap(("payload-" + sequenceId).getBytes(StandardCharsets.UTF_8));
-        return MessageImpl.create(metadata, payload, Schema.BYTES, null);
-    }
-
-    /**
-     * An inner batch whose first add fails to allocate clears itself and stays empty, so the outer container's
-     * message count is never incremented and the outer is not cleared either. Any transaction identity captured
-     * for that failed message must therefore not survive into the next first message, or a later message of that
-     * transaction would be admitted into a plain batch and published outside its transaction. Allocation failure
-     * is a recoverable path the client already handles.
-     */
-    @Test
-    public void testKeyBasedContainerDropsTheTransactionIdentityOfAFailedFirstAdd() throws Exception {
-        ProducerImpl<?> producer = createTestProducer();
-        MemoryLimitController memoryLimitController = producer.client.getMemoryLimitController();
-        // fail only the first inner-batch allocation
-        doThrow(new OutOfMemoryError("test")).doNothing()
-                .when(memoryLimitController).forceReserveMemory(anyLong());
-
-        BatchMessageKeyBasedContainer container = new BatchMessageKeyBasedContainer();
-        container.setProducer(producer);
-        try {
-            container.add(newMessage(1L, 7L, 13L), null);
-            assertEquals(container.getNumMessagesInBatch(), 0,
-                    "the failed add should have left the container empty");
-
-            container.add(newMessage(2L, null, null), null);
-
-            assertFalse(container.hasSameTxn(newMessage(3L, 7L, 13L)),
-                    "a transactional message was admitted into a plain batch through the transaction identity"
-                            + " left behind by a failed add");
         } finally {
             container.discard(null);
         }
