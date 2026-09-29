@@ -18,20 +18,6 @@
  */
 package org.apache.pulsar.broker.authorization;
 
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.Mockito.CALLS_REAL_METHODS;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
-import static org.testng.AssertJUnit.assertFalse;
-import static org.testng.AssertJUnit.assertTrue;
-import java.io.IOException;
-import java.util.HashSet;
-import java.util.Optional;
-import java.util.Set;
-import java.util.concurrent.CompletableFuture;
-import org.apache.pulsar.broker.PulsarServerException;
-import org.apache.pulsar.broker.ServiceConfiguration;
 import org.apache.pulsar.broker.authentication.AuthenticationDataForwarded;
 import org.apache.pulsar.broker.authentication.AuthenticationDataSource;
 import org.apache.pulsar.broker.authentication.AuthenticationDataSubscription;
@@ -70,6 +56,8 @@ public class AuthorizationServiceTest {
         authorizationService = new AuthorizationService(conf, null);
     }
 
+<<<<<<< HEAD
+=======
     @Test
     @SuppressWarnings("deprecation")
     public void testContextDelegatesToLegacyInitializer() throws Exception {
@@ -124,7 +112,6 @@ public class AuthorizationServiceTest {
         }
     }
 
-<<<<<<< HEAD
     @Test
     public void testIsSuperUserOrTenantAdminUsesProviderAdminChecks() throws Exception {
         ServiceConfiguration config = new ServiceConfiguration();
@@ -144,8 +131,7 @@ public class AuthorizationServiceTest {
         assertFalse(service.isSuperUserOrTenantAdmin("tenant", "pass.client", null).get());
     }
 
-=======
->>>>>>> e67d32f7cac ([fix][broker] Fix multi-role authorization regressions and optimize nested checks (#26551))
+>>>>>>> 564835cdeb0 ([fix][broker] Check the original principal of proxied HTTP requests with its own authentication data (#26748))
     /**
      * See {@link MockAuthorizationProvider} for the implementation of the mock authorization provider.
      */

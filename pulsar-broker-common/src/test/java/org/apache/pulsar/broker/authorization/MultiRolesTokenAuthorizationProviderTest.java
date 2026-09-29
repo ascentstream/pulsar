@@ -18,14 +18,7 @@
  */
 package org.apache.pulsar.broker.authorization;
 
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.times;
-import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertFalse;
@@ -33,8 +26,6 @@ import static org.testng.Assert.assertTrue;
 import static org.testng.Assert.expectThrows;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.SignatureAlgorithm;
-import java.io.IOException;
-import java.util.Date;
 import java.util.List;
 import java.util.Optional;
 import java.util.Properties;
@@ -48,32 +39,8 @@ import lombok.Cleanup;
 import org.apache.logging.log4j.Level;
 import org.apache.pulsar.broker.PulsarServerException;
 import org.apache.pulsar.broker.ServiceConfiguration;
-import org.apache.pulsar.broker.authentication.AuthenticationDataAnonymous;
-import org.apache.pulsar.broker.authentication.AuthenticationDataCommand;
-import org.apache.pulsar.broker.authentication.AuthenticationDataForwarded;
 import org.apache.pulsar.broker.authentication.AuthenticationDataSource;
 import org.apache.pulsar.broker.authentication.AuthenticationDataSubscription;
-import org.apache.pulsar.broker.authentication.AuthenticationParameters;
-import org.apache.pulsar.broker.authentication.AuthenticationProvider;
-import org.apache.pulsar.broker.authentication.AuthenticationProviderTls;
-import org.apache.pulsar.broker.authentication.AuthenticationProviderToken;
-import org.apache.pulsar.broker.authentication.AuthenticationService;
-import org.apache.pulsar.broker.authentication.TokenAuthenticationProvider;
-import org.apache.pulsar.broker.authentication.utils.AuthTokenUtils;
-import org.apache.pulsar.broker.resources.NamespaceResources;
-import org.apache.pulsar.broker.resources.PulsarResources;
-import org.apache.pulsar.broker.resources.TenantResources;
-import org.apache.pulsar.common.naming.TopicName;
-import org.apache.pulsar.common.policies.data.AuthAction;
-import org.apache.pulsar.common.policies.data.Policies;
-import org.apache.pulsar.common.policies.data.TenantInfoImpl;
-import org.apache.pulsar.common.policies.data.TopicOperation;
-import org.apache.pulsar.common.util.RestException;
-import org.testng.annotations.DataProvider;
-import org.testng.annotations.Test;
-
-public class MultiRolesTokenAuthorizationProviderTest {
-
     private static ServiceConfiguration tokenConfiguration(SecretKey key) {
         ServiceConfiguration conf = new ServiceConfiguration();
         conf.setAuthenticationEnabled(true);
@@ -227,11 +194,7 @@ public class MultiRolesTokenAuthorizationProviderTest {
                                                       boolean allowed) throws Exception {
         ServiceConfiguration config = tokenConfiguration(AuthTokenUtils.createSecretKey(SignatureAlgorithm.HS256));
         TokenAuthenticationProvider authenticationProvider = mock(TokenAuthenticationProvider.class);
-<<<<<<< HEAD
         when(authenticationProvider.authenticateRolesAsync(any(), eq("sub")))
-=======
-        when(authenticationProvider.authenticateRolesAsync(any(), eq("roles")))
->>>>>>> e67d32f7cac ([fix][broker] Fix multi-role authorization regressions and optimize nested checks (#26551))
                 .thenReturn(CompletableFuture.completedFuture(Set.of("reader", "writer")));
         TenantResources tenants = mock(TenantResources.class);
         when(tenants.getTenantAsync("tenant"))
@@ -253,21 +216,12 @@ public class MultiRolesTokenAuthorizationProviderTest {
                     new AuthenticationDataCommand("token"), subscription);
             assertThat(provider.allowTopicOperationAsync(TopicName.get("persistent://tenant/ns/topic"),
                     "reader", operation, data).get()).isEqualTo(allowed);
-<<<<<<< HEAD
             verify(authenticationProvider).authenticateRolesAsync(data, "sub");
             when(authenticationProvider.authenticateRolesAsync(data, "sub"))
                     .thenReturn(CompletableFuture.completedFuture(Set.of()));
             assertThat(provider.allowTopicOperationAsync(TopicName.get("persistent://tenant/ns/topic"),
                     "reader", operation, data).get()).isFalse();
             verify(authenticationProvider, times(2)).authenticateRolesAsync(data, "sub");
-=======
-            verify(authenticationProvider).authenticateRolesAsync(data, "roles");
-            when(authenticationProvider.authenticateRolesAsync(data, "roles"))
-                    .thenReturn(CompletableFuture.completedFuture(Set.of()));
-            assertThat(provider.allowTopicOperationAsync(TopicName.get("persistent://tenant/ns/topic"),
-                    "reader", operation, data).get()).isFalse();
-            verify(authenticationProvider, times(2)).authenticateRolesAsync(data, "roles");
->>>>>>> e67d32f7cac ([fix][broker] Fix multi-role authorization regressions and optimize nested checks (#26551))
         }
     }
 
@@ -317,7 +271,6 @@ public class MultiRolesTokenAuthorizationProviderTest {
         }
     }
 
-<<<<<<< HEAD
     private static AuthenticationDataSource httpAuthData(String token) {
         return new AuthenticationDataSource() {
             @Override
@@ -423,8 +376,6 @@ public class MultiRolesTokenAuthorizationProviderTest {
         assertThat(service.isSuperUserOrTenantAdmin("tenant", "user", httpAuthData(null)).get()).isFalse();
     }
 
-=======
->>>>>>> e67d32f7cac ([fix][broker] Fix multi-role authorization regressions and optimize nested checks (#26551))
     @DataProvider
     public Object[][] validationOutcomes() {
         return new Object[][]{{true}, {false}};
@@ -466,8 +417,8 @@ public class MultiRolesTokenAuthorizationProviderTest {
         String token = Jwts.builder().claim("sub", new String[]{userA, userB}).signWith(secretKey).compact();
 
         MultiRolesTokenAuthorizationProvider provider = new MultiRolesTokenAuthorizationProvider();
-        ServiceConfiguration conf = tokenConfiguration(secretKey);
-        initializeProvider(provider, conf, mock(PulsarResources.class));
+        ServiceConfiguration conf = new ServiceConfiguration();
+        provider.initialize(conf, mock(PulsarResources.class));
 
         AuthenticationDataSource ads = new AuthenticationDataSource() {
             @Override
@@ -507,8 +458,8 @@ public class MultiRolesTokenAuthorizationProviderTest {
         String token = Jwts.builder().claim("sub", new String[]{}).signWith(secretKey).compact();
 
         MultiRolesTokenAuthorizationProvider provider = new MultiRolesTokenAuthorizationProvider();
-        ServiceConfiguration conf = tokenConfiguration(secretKey);
-        initializeProvider(provider, conf, mock(PulsarResources.class));
+        ServiceConfiguration conf = new ServiceConfiguration();
+        provider.initialize(conf, mock(PulsarResources.class));
 
         AuthenticationDataSource ads = new AuthenticationDataSource() {
             @Override
@@ -536,8 +487,8 @@ public class MultiRolesTokenAuthorizationProviderTest {
         String token = Jwts.builder().claim("sub", testRole).signWith(secretKey).compact();
 
         MultiRolesTokenAuthorizationProvider provider = new MultiRolesTokenAuthorizationProvider();
-        ServiceConfiguration conf = tokenConfiguration(secretKey);
-        initializeProvider(provider, conf, mock(PulsarResources.class));
+        ServiceConfiguration conf = new ServiceConfiguration();
+        provider.initialize(conf, mock(PulsarResources.class));
 
         AuthenticationDataSource ads = new AuthenticationDataSource() {
             @Override
@@ -570,9 +521,9 @@ public class MultiRolesTokenAuthorizationProviderTest {
         // broker will use "sub" as the claim by default.
         final String token = Jwts.builder()
                 .claim("whatever", testRole).signWith(secretKey).compact();
-        ServiceConfiguration conf = tokenConfiguration(secretKey);
+        ServiceConfiguration conf = new ServiceConfiguration();
         final MultiRolesTokenAuthorizationProvider provider = new MultiRolesTokenAuthorizationProvider();
-        initializeProvider(provider, conf, mock(PulsarResources.class));
+        provider.initialize(conf, mock(PulsarResources.class));
         final AuthenticationDataSource ads = new AuthenticationDataSource() {
             @Override
             public boolean hasDataFromHttp() {
@@ -599,12 +550,11 @@ public class MultiRolesTokenAuthorizationProviderTest {
 
     @Test
     public void testMultiRolesAuthzWithAnonymousUser() throws Exception {
-        SecretKey secretKey = AuthTokenUtils.createSecretKey(SignatureAlgorithm.HS256);
         @Cleanup
         MultiRolesTokenAuthorizationProvider provider = new MultiRolesTokenAuthorizationProvider();
-        ServiceConfiguration conf = tokenConfiguration(secretKey);
+        ServiceConfiguration conf = new ServiceConfiguration();
 
-        initializeProvider(provider, conf, mock(PulsarResources.class));
+        provider.initialize(conf, mock(PulsarResources.class));
 
         Function<String, CompletableFuture<Boolean>> authorizeFunc = (String role) -> {
             if (role.equals("test-role")) {
@@ -620,12 +570,11 @@ public class MultiRolesTokenAuthorizationProviderTest {
 
     @Test
     public void testMultiRolesNotFailNonJWT() throws Exception {
-        SecretKey secretKey = AuthTokenUtils.createSecretKey(SignatureAlgorithm.HS256);
         String token = "a-non-jwt-token";
 
         MultiRolesTokenAuthorizationProvider provider = new MultiRolesTokenAuthorizationProvider();
-        ServiceConfiguration conf = tokenConfiguration(secretKey);
-        initializeProvider(provider, conf, mock(PulsarResources.class));
+        ServiceConfiguration conf = new ServiceConfiguration();
+        provider.initialize(conf, mock(PulsarResources.class));
 
         AuthenticationDataSource ads = new AuthenticationDataSource() {
             @Override
@@ -656,12 +605,11 @@ public class MultiRolesTokenAuthorizationProviderTest {
         Properties properties = new Properties();
         properties.setProperty("tokenSettingPrefix", "prefix_");
         properties.setProperty("prefix_tokenAuthClaim", customRolesClaims);
-        properties.setProperty("prefix_tokenSecretKey", AuthTokenUtils.encodeKeyBase64(secretKey));
-        ServiceConfiguration conf = tokenConfiguration(secretKey);
+        ServiceConfiguration conf = new ServiceConfiguration();
         conf.setProperties(properties);
 
         MultiRolesTokenAuthorizationProvider provider = new MultiRolesTokenAuthorizationProvider();
-        initializeProvider(provider, conf, mock(PulsarResources.class));
+        provider.initialize(conf, mock(PulsarResources.class));
 
         AuthenticationDataSource ads = new AuthenticationDataSource() {
             @Override
@@ -693,11 +641,11 @@ public class MultiRolesTokenAuthorizationProviderTest {
         String testAdminRole = "admin";
         String token = Jwts.builder().claim("sub", testAdminRole).signWith(secretKey).compact();
 
-        ServiceConfiguration conf = tokenConfiguration(secretKey);
+        ServiceConfiguration conf = new ServiceConfiguration();
         conf.setSuperUserRoles(Set.of(testAdminRole));
 
         MultiRolesTokenAuthorizationProvider provider = new MultiRolesTokenAuthorizationProvider();
-        initializeProvider(provider, conf, mock(PulsarResources.class));
+        provider.initialize(conf, mock(PulsarResources.class));
 
         AuthenticationDataSource ads = new AuthenticationDataSource() {
             @Override
@@ -745,8 +693,8 @@ public class MultiRolesTokenAuthorizationProviderTest {
                 .signWith(secretKey).compact();
 
         MultiRolesTokenAuthorizationProvider provider = new MultiRolesTokenAuthorizationProvider();
-        ServiceConfiguration conf = tokenConfiguration(secretKey);
-        initializeProvider(provider, conf, mock(PulsarResources.class));
+        ServiceConfiguration conf = new ServiceConfiguration();
+        provider.initialize(conf, mock(PulsarResources.class));
 
         AuthenticationDataSource ads = new AuthenticationDataSource() {
             @Override
@@ -799,8 +747,8 @@ public class MultiRolesTokenAuthorizationProviderTest {
                 .signWith(secretKey).compact();
 
         MultiRolesTokenAuthorizationProvider provider = new MultiRolesTokenAuthorizationProvider();
-        ServiceConfiguration conf = tokenConfiguration(secretKey);
-        initializeProvider(provider, conf, mock(PulsarResources.class));
+        ServiceConfiguration conf = new ServiceConfiguration();
+        provider.initialize(conf, mock(PulsarResources.class));
 
         AuthenticationDataSource ads = new AuthenticationDataSource() {
             @Override
@@ -849,7 +797,7 @@ public class MultiRolesTokenAuthorizationProviderTest {
         String token = Jwts.builder().claim("sub", new String[]{"user-a"}).signWith(secretKey).compact();
 
         MultiRolesTokenAuthorizationProvider provider = new MultiRolesTokenAuthorizationProvider();
-        initializeProvider(provider, tokenConfiguration(secretKey), pulsarResources);
+        provider.initialize(new ServiceConfiguration(), pulsarResources);
 
         AuthenticationDataSource ads = new AuthenticationDataSource() {
             @Override
