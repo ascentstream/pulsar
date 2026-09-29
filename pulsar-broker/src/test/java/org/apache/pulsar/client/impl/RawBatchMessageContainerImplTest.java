@@ -34,7 +34,7 @@ import static org.testng.AssertJUnit.assertTrue;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufAllocator;
 import io.netty.buffer.Unpooled;
-import io.netty.buffer.WrappedByteBuf;
+import io.netty.buffer.PublicWrappedByteBuf;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.charset.Charset;
@@ -259,7 +259,7 @@ public class RawBatchMessageContainerImplTest {
     }
 
     /** Delegates everything but fails the final {@code writeBytes}, standing in for a write that throws. */
-    private static final class FailingWriteByteBuf extends WrappedByteBuf {
+    private static final class FailingWriteByteBuf extends PublicWrappedByteBuf {
 
         FailingWriteByteBuf(ByteBuf buffer) {
             super(buffer);
