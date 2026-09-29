@@ -434,10 +434,16 @@ public class ManagedLedgerImpl implements ManagedLedger, CreateCallback {
                                 if (State.Terminated.equals(state)) {
                                     currentLedger = lh;
                                 }
-                                LedgerInfo info = LedgerInfo.newBuilder().setLedgerId(id)
-                                        .setEntries(lh.getLastAddConfirmed() + 1).setSize(lh.getLength())
-                                        .setTimestamp(clock.millis()).build();
-                                ledgers.put(id, info);
+                                ledgers.compute(id, (ledgerId, oldInfo) -> {
+                                    LedgerInfo.Builder builder = LedgerInfo.newBuilder();
+                                    if (oldInfo != null) {
+                                        builder.mergeFrom(oldInfo);
+                                    } else {
+                                        builder.setLedgerId(ledgerId);
+                                    }
+                                    return builder.setEntries(lh.getLastAddConfirmed() + 1)
+                                            .setSize(lh.getLength()).setTimestamp(clock.millis()).build();
+                                });
                                 if (managedLedgerInterceptor != null) {
                                     managedLedgerInterceptor.onManagedLedgerLastLedgerInitialize(name, lh)
                                         .thenRun(() -> initializeBookKeeper(callback))
@@ -1900,9 +1906,15 @@ public class ManagedLedgerImpl implements ManagedLedger, CreateCallback {
             log.debug("[{}] Ledger has been closed id={} entries={}", name, lh.getId(), entriesInLedger);
         }
         if (entriesInLedger > 0) {
-            LedgerInfo info = LedgerInfo.newBuilder().setLedgerId(lh.getId()).setEntries(entriesInLedger)
-                    .setSize(lh.getLength()).setTimestamp(clock.millis()).build();
-            ledgers.put(lh.getId(), info);
+            ledgers.compute(lh.getId(), (ledgerId, oldInfo) -> {
+                LedgerInfo.Builder builder = LedgerInfo.newBuilder();
+                if (oldInfo != null) {
+                    builder.mergeFrom(oldInfo);
+                } else {
+                    builder.setLedgerId(ledgerId);
+                }
+                return builder.setEntries(entriesInLedger).setSize(lh.getLength()).setTimestamp(clock.millis()).build();
+            });
         } else {
             // The last ledger was empty, so we can discard it
             ledgers.remove(lh.getId());
@@ -3680,11 +3692,25 @@ public class ManagedLedgerImpl implements ManagedLedger, CreateCallback {
                         final HashMap<Long, LedgerInfo> newLedgers = new HashMap<>(ledgers);
                         newLedgers.put(ledgerId, newInfo);
                         store.asyncUpdateLedgerIds(name, buildManagedLedgerInfo(newLedgers), ledgersStat,
-                                new MetaStoreCallback<Void>() {
+                                new MetaStoreCallback<>() {
                                     @Override
                                     public void operationComplete(Void result, Stat stat) {
                                         ledgersStat = stat;
-                                        ledgers.put(ledgerId, newInfo);
+                                        ledgers.computeIfPresent(ledgerId, (id, existing) -> {
+                                            LedgerInfo.Builder builder = LedgerInfo.newBuilder();
+                                            builder.mergeFrom(newInfo);
+                                            builder.clearEntries().clearSize().clearTimestamp();
+                                            if (existing.hasEntries()) {
+                                                builder.setEntries(existing.getEntries());
+                                            }
+                                            if (existing.hasSize()) {
+                                                builder.setSize(existing.getSize());
+                                            }
+                                            if (existing.hasTimestamp()) {
+                                                builder.setTimestamp(existing.getTimestamp());
+                                            }
+                                            return builder.build();
+                                        });
                                         unlockingPromise.complete(null);
                                     }
 
