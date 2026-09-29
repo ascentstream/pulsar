@@ -2873,7 +2873,7 @@ public class ProducerImpl<T> extends ProducerBase<T> implements TimerTask, Conne
         MessageImpl loopStartAt = latestMsgAttemptedRegisteredSchema;
         OpSendMsg loopEndDueToSchemaRegisterNeeded = null;
         boolean pausedSendingToPreservePublishOrderOnSchemaRegFailure = false;
-        while (true) { ([fix][client] Prevent duplicate cleanup and leaks on producer send failures (#26641))
+        while (true) {
             // Re-check after every iteration that can invoke application callbacks, including the
             // last one: closing the producer may also drain the queue and invalidate this iterator.
             if (cnx() != cnx || expectedEpoch != connectionHandler.getEpoch()) {

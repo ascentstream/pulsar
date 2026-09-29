@@ -41,14 +41,374 @@ import org.apache.pulsar.broker.PulsarServerException;
 import org.apache.pulsar.broker.ServiceConfiguration;
 import org.apache.pulsar.broker.authentication.AuthenticationDataSource;
 import org.apache.pulsar.broker.authentication.AuthenticationDataSubscription;
-import org.apache.pulsar.broker.authentication.utils.AuthTokenUtils;
-import org.apache.pulsar.broker.resources.PulsarResources;
-import org.apache.pulsar.broker.resources.TenantResources;
-import org.apache.pulsar.common.util.RestException;
-import org.testng.annotations.Test;
+    private static ServiceConfiguration tokenConfiguration(SecretKey key) {
+        ServiceConfiguration conf = new ServiceConfiguration();
+        conf.setAuthenticationEnabled(true);
+        conf.setAuthorizationEnabled(true);
+        conf.setAuthenticationProviders(Set.of(AuthenticationProviderToken.class.getName()));
+        conf.getProperties().setProperty("tokenSecretKey", AuthTokenUtils.encodeKeyBase64(key));
+        return conf;
+    }
 
-public class MultiRolesTokenAuthorizationProviderTest {
+    private static void initializeProvider(MultiRolesTokenAuthorizationProvider provider, ServiceConfiguration conf,
+                                           PulsarResources resources) throws IOException {
+        AuthenticationProviderToken authenticationProvider = new AuthenticationProviderToken();
+        authenticationProvider.initialize(AuthenticationProvider.Context.builder().config(conf).build());
+        provider.initialize(new AuthorizationProvider.InitialContext(conf, resources,
+                authenticationService(authenticationProvider)));
+    }
 
+    private static AuthenticationService authenticationService(AuthenticationProvider provider) {
+        AuthenticationService service = mock(AuthenticationService.class);
+        when(service.getAuthenticationProvider("token")).thenReturn(provider);
+        return service;
+    }
+
+    @DataProvider
+    public Object[][] validationSettings() {
+        return new Object[][]{
+                {""}, {"custom_"}
+        };
+    }
+
+    @Test(dataProvider = "validationSettings")
+    public void testTokenValidation(String prefix) throws Exception {
+        SecretKey key = AuthTokenUtils.createSecretKey(SignatureAlgorithm.HS256);
+        ServiceConfiguration conf = tokenConfiguration(key);
+        conf.setSuperUserRoles(Set.of("admin"));
+        conf.getProperties().setProperty("tokenSettingPrefix", prefix);
+        conf.getProperties().setProperty(prefix + "tokenSecretKey", AuthTokenUtils.encodeKeyBase64(key));
+        @Cleanup
+        MultiRolesTokenAuthorizationProvider provider = new MultiRolesTokenAuthorizationProvider();
+        initializeProvider(provider, conf, mock(PulsarResources.class));
+
+        String valid = Jwts.builder().claim("sub", List.of("user", "admin")).signWith(key).compact();
+        String otherKey = Jwts.builder().claim("sub", List.of("user", "admin"))
+                .signWith(AuthTokenUtils.createSecretKey(SignatureAlgorithm.HS256)).compact();
+        String unsigned = Jwts.builder().claim("sub", List.of("user", "admin")).compact();
+        String expired = Jwts.builder().claim("sub", List.of("user", "admin"))
+                .setExpiration(new Date(0)).signWith(key).compact();
+
+        assertThat(provider.isSuperUser("user", new AuthenticationDataCommand(valid), conf).get()).isTrue();
+        for (String token : List.of(otherKey, unsigned)) {
+            AuthenticationDataSource data = new AuthenticationDataCommand(token);
+            assertThat(provider.isSuperUser("user", data, conf).get()).isFalse();
+            assertThat(provider.authorize("user", data, role -> CompletableFuture.completedFuture(true)).get())
+                    .isFalse();
+        }
+        for (String token : List.of(expired, "invalid.token.value", "not-a-token")) {
+            assertThat(provider.isSuperUser("user", new AuthenticationDataCommand(token), conf).get()).isFalse();
+            assertThat(provider.authorize("user", new AuthenticationDataCommand(token),
+                    role -> CompletableFuture.completedFuture(true)).get()).isFalse();
+        }
+    }
+
+    @Test
+    public void testRequiresSharedAuthenticationProvider() throws Exception {
+        ServiceConfiguration conf = tokenConfiguration(AuthTokenUtils.createSecretKey(SignatureAlgorithm.HS256));
+        @Cleanup
+        MultiRolesTokenAuthorizationProvider provider = new MultiRolesTokenAuthorizationProvider();
+        assertThatThrownBy(() -> provider.initialize(new AuthorizationProvider.InitialContext(
+                conf, mock(PulsarResources.class), null)))
+                .isInstanceOf(IOException.class).hasMessageContaining("initialized token authentication provider");
+    }
+
+    @DataProvider
+    public Object[][] unsupportedProviders() {
+        return new Object[][]{
+                {null}, {mock(AuthenticationProvider.class)}, {mock(AuthenticationProviderTls.class)}
+        };
+    }
+
+    public static class CustomTokenProvider extends AuthenticationProviderToken {
+    }
+
+    @Test
+    public void testCustomTokenProvider() throws Exception {
+        SecretKey key = AuthTokenUtils.createSecretKey(SignatureAlgorithm.HS256);
+        ServiceConfiguration conf = tokenConfiguration(key);
+        conf.setAuthenticationProviders(Set.of(CustomTokenProvider.class.getName()));
+        @Cleanup
+        AuthenticationService service = new AuthenticationService(conf);
+        @Cleanup
+        MultiRolesTokenAuthorizationProvider provider = new MultiRolesTokenAuthorizationProvider();
+        provider.initialize(new AuthorizationProvider.InitialContext(conf, mock(PulsarResources.class), service));
+        String token = Jwts.builder().claim("sub", List.of("user", "other")).signWith(key).compact();
+        assertThat(provider.authorize("user", new AuthenticationDataCommand(token),
+                role -> CompletableFuture.completedFuture("other".equals(role))).get()).isTrue();
+    }
+
+    @Test(dataProvider = "unsupportedProviders")
+    public void testRejectUnsupportedProviders(AuthenticationProvider authenticationProvider) throws IOException {
+        ServiceConfiguration conf = tokenConfiguration(AuthTokenUtils.createSecretKey(SignatureAlgorithm.HS256));
+        @Cleanup
+        MultiRolesTokenAuthorizationProvider provider = new MultiRolesTokenAuthorizationProvider();
+        assertThatThrownBy(() -> provider.initialize(new AuthorizationProvider.InitialContext(
+                conf, null, authenticationService(authenticationProvider))))
+                .isInstanceOf(IOException.class).hasMessageContaining("initialized token authentication provider");
+    }
+
+    @Test
+    public void testRejectDisabledAuthentication() throws IOException {
+        ServiceConfiguration conf = tokenConfiguration(AuthTokenUtils.createSecretKey(SignatureAlgorithm.HS256));
+        @Cleanup
+        MultiRolesTokenAuthorizationProvider provider = new MultiRolesTokenAuthorizationProvider();
+        conf.setAuthenticationEnabled(false);
+        assertThatThrownBy(() -> provider.initialize(new AuthorizationProvider.InitialContext(
+                conf, null, authenticationService(mock(TokenAuthenticationProvider.class)))))
+                .isInstanceOf(IOException.class).hasMessageContaining("authenticationEnabled=true");
+    }
+
+    @DataProvider
+    public Object[][] authenticationModes() {
+        return new Object[][]{{false}, {true}};
+    }
+
+    @Test(dataProvider = "authenticationModes")
+    public void testDisabledAuthorizationWithoutTokenProvider(boolean authenticationEnabled) throws Exception {
+        ServiceConfiguration config = new ServiceConfiguration();
+        config.setAuthenticationEnabled(authenticationEnabled);
+        config.setAuthenticationProviders(Set.of(AuthenticationProviderTls.class.getName()));
+        config.setAuthorizationProvider(MultiRolesTokenAuthorizationProvider.class.getName());
+        PulsarResources resources = mock(PulsarResources.class);
+        try (AuthenticationService authenticationService = new AuthenticationService(config)) {
+            AuthorizationService service = new AuthorizationService(config, resources, authenticationService);
+            assertThat(service.canProduceAsync(TopicName.get("persistent://tenant/ns/topic"), "user", null).get())
+                    .isTrue();
+        }
+    }
+
+    @DataProvider
+    public Object[][] topicChecks() {
+        return new Object[][]{
+                {TopicOperation.TERMINATE, "reader", false},
+                {TopicOperation.PRODUCE, "reader", true},
+                {TopicOperation.LOOKUP, "reader", true},
+                {TopicOperation.CONSUME, "reader", true},
+                {TopicOperation.CONSUME, "other", false}
+        };
+    }
+
+    @Test(dataProvider = "topicChecks")
+    public void testNestedTopicChecksValidateRolesOnce(TopicOperation operation, String subscription,
+                                                      boolean allowed) throws Exception {
+        ServiceConfiguration config = tokenConfiguration(AuthTokenUtils.createSecretKey(SignatureAlgorithm.HS256));
+        TokenAuthenticationProvider authenticationProvider = mock(TokenAuthenticationProvider.class);
+        when(authenticationProvider.authenticateRolesAsync(any(), eq("sub")))
+                .thenReturn(CompletableFuture.completedFuture(Set.of("reader", "writer")));
+        TenantResources tenants = mock(TenantResources.class);
+        when(tenants.getTenantAsync("tenant"))
+                .thenReturn(CompletableFuture.completedFuture(Optional.of(new TenantInfoImpl(Set.of(), Set.of()))));
+        PulsarResources resources = mock(PulsarResources.class);
+        when(resources.getTenantResources()).thenReturn(tenants);
+        NamespaceResources namespaces = mock(NamespaceResources.class);
+        when(resources.getNamespaceResources()).thenReturn(namespaces);
+        Policies policies = new Policies();
+        policies.auth_policies.getNamespaceAuthentication().put("reader", Set.of(AuthAction.consume));
+        policies.auth_policies.getNamespaceAuthentication().put("writer", Set.of(AuthAction.produce));
+        policies.auth_policies.getSubscriptionAuthentication().put("reader", Set.of("reader"));
+        policies.auth_policies.getSubscriptionAuthentication().put("other", Set.of("other"));
+        when(namespaces.getPoliciesAsync(any())).thenReturn(CompletableFuture.completedFuture(Optional.of(policies)));
+        try (MultiRolesTokenAuthorizationProvider provider = new MultiRolesTokenAuthorizationProvider()) {
+            provider.initialize(new AuthorizationProvider.InitialContext(config, resources,
+                    authenticationService(authenticationProvider)));
+            AuthenticationDataSource data = new AuthenticationDataSubscription(
+                    new AuthenticationDataCommand("token"), subscription);
+            assertThat(provider.allowTopicOperationAsync(TopicName.get("persistent://tenant/ns/topic"),
+                    "reader", operation, data).get()).isEqualTo(allowed);
+            verify(authenticationProvider).authenticateRolesAsync(data, "sub");
+            when(authenticationProvider.authenticateRolesAsync(data, "sub"))
+                    .thenReturn(CompletableFuture.completedFuture(Set.of()));
+            assertThat(provider.allowTopicOperationAsync(TopicName.get("persistent://tenant/ns/topic"),
+                    "reader", operation, data).get()).isFalse();
+            verify(authenticationProvider, times(2)).authenticateRolesAsync(data, "sub");
+        }
+    }
+
+    @DataProvider
+    public Object[][] roleOnlyAuthenticationData() {
+        return new Object[][]{
+                {null},
+                {new AuthenticationDataSubscription(null, "subscription")},
+                {AuthenticationDataForwarded.INSTANCE},
+                {new AuthenticationDataSubscription(AuthenticationDataForwarded.INSTANCE, "subscription")},
+                {new AuthenticationDataSubscription(
+                        new AuthenticationDataSubscription(AuthenticationDataForwarded.INSTANCE, "inner"), "outer")},
+                {AuthenticationDataAnonymous.INSTANCE},
+                {new AuthenticationDataSubscription(AuthenticationDataAnonymous.INSTANCE, "subscription")},
+                {new AuthenticationDataSubscription(
+                        new AuthenticationDataSubscription(AuthenticationDataAnonymous.INSTANCE, "inner"), "outer")}
+        };
+    }
+
+    @Test(dataProvider = "roleOnlyAuthenticationData")
+    public void testNestedChecksWithRoleOnlyAuthenticationData(AuthenticationDataSource data) throws Exception {
+        ServiceConfiguration config = tokenConfiguration(AuthTokenUtils.createSecretKey(SignatureAlgorithm.HS256));
+        TokenAuthenticationProvider authenticationProvider = mock(TokenAuthenticationProvider.class);
+        TenantResources tenants = mock(TenantResources.class);
+        when(tenants.getTenantAsync("tenant"))
+                .thenReturn(CompletableFuture.completedFuture(Optional.of(new TenantInfoImpl(Set.of(), Set.of()))));
+        NamespaceResources namespaces = mock(NamespaceResources.class);
+        Policies policies = new Policies();
+        policies.auth_policies.getNamespaceAuthentication().put("reader", Set.of(AuthAction.consume));
+        when(namespaces.getPoliciesAsync(any())).thenReturn(CompletableFuture.completedFuture(Optional.of(policies)));
+        PulsarResources resources = mock(PulsarResources.class);
+        when(resources.getTenantResources()).thenReturn(tenants);
+        when(resources.getNamespaceResources()).thenReturn(namespaces);
+        TopicName topic = TopicName.get("persistent://tenant/ns/topic");
+        try (MultiRolesTokenAuthorizationProvider provider = new MultiRolesTokenAuthorizationProvider()) {
+            provider.initialize(new AuthorizationProvider.InitialContext(config, resources,
+                    authenticationService(authenticationProvider)));
+            assertThat(provider.allowTopicOperationAsync(topic, "reader", TopicOperation.LOOKUP, data).get())
+                    .isTrue();
+            assertThat(provider.allowTopicOperationAsync(topic, "reader", TopicOperation.CONSUME, data).get())
+                    .isTrue();
+            assertThat(provider.allowTopicOperationAsync(topic, "other", TopicOperation.CONSUME, data).get())
+                    .isFalse();
+            assertThat(provider.allowTopicOperationAsync(topic, null, TopicOperation.CONSUME, data).get())
+                    .isFalse();
+            verify(authenticationProvider, never()).authenticateRolesAsync(any(), any());
+        }
+    }
+
+    private static AuthenticationDataSource httpAuthData(String token) {
+        return new AuthenticationDataSource() {
+            @Override
+            public boolean hasDataFromHttp() {
+                return true;
+            }
+
+            @Override
+            public boolean hasDataFromTls() {
+                return true;
+            }
+
+            @Override
+            public String getHttpHeader(String name) {
+                return token != null && "Authorization".equals(name) ? "Bearer " + token : null;
+            }
+        };
+    }
+
+    @Test
+    public void testProxiedHttpRequestUsesOnlyTheOriginalPrincipalToken() throws Exception {
+        SecretKey key = AuthTokenUtils.createSecretKey(SignatureAlgorithm.HS256);
+        ServiceConfiguration conf = tokenConfiguration(key);
+        conf.setProxyRoles(Set.of("proxy"));
+        conf.setSuperUserRoles(Set.of("proxy", "admin"));
+        conf.setAuthorizationProvider(MultiRolesTokenAuthorizationProvider.class.getName());
+        TenantResources tenants = mock(TenantResources.class);
+        when(tenants.getTenantAsync("tenant"))
+                .thenReturn(CompletableFuture.completedFuture(Optional.of(new TenantInfoImpl(Set.of(), Set.of()))));
+        NamespaceResources namespaces = mock(NamespaceResources.class);
+        Policies policies = new Policies();
+        policies.auth_policies.getNamespaceAuthentication().put("consumer", Set.of(AuthAction.consume));
+        when(namespaces.getPoliciesAsync(any())).thenReturn(CompletableFuture.completedFuture(Optional.of(policies)));
+        PulsarResources resources = mock(PulsarResources.class);
+        when(resources.getTenantResources()).thenReturn(tenants);
+        when(resources.getNamespaceResources()).thenReturn(namespaces);
+        AuthenticationProviderToken authenticationProvider = new AuthenticationProviderToken();
+        authenticationProvider.initialize(AuthenticationProvider.Context.builder().config(conf).build());
+        AuthorizationService service = new AuthorizationService(conf, resources,
+                authenticationService(authenticationProvider));
+
+        String clientToken = Jwts.builder().claim("sub", List.of("user", "consumer"))
+                .signWith(key).compact();
+        String clientAdminToken = Jwts.builder().claim("sub", List.of("user", "admin"))
+                .signWith(key).compact();
+        String proxyToken = Jwts.builder().claim("sub", List.of("proxy", "consumer", "admin"))
+                .signWith(key).compact();
+        String otherToken = Jwts.builder().claim("sub", List.of("other", "consumer", "admin"))
+                .signWith(key).compact();
+        TopicName topic = TopicName.get("persistent://tenant/ns/topic");
+
+        // a proxy authenticated without a token forwards the token of the original principal
+        assertThat(service.allowTopicOperationAsync(topic, TopicOperation.LOOKUP, "user", "proxy",
+                httpAuthData(clientToken)).get()).isTrue();
+        assertThat(service.isSuperUser(AuthenticationParameters.builder().clientRole("proxy")
+                .originalPrincipal("user").clientAuthenticationDataSource(httpAuthData(clientAdminToken))
+                .build()).get()).isTrue();
+        // a token of another principal doesn't add roles to the original principal
+        for (String token : List.of(proxyToken, otherToken)) {
+            assertThat(service.allowTopicOperationAsync(topic, TopicOperation.LOOKUP, "user", "proxy",
+                    httpAuthData(token)).get()).isFalse();
+            assertThat(service.isSuperUser(AuthenticationParameters.builder().clientRole("proxy")
+                    .originalPrincipal("user").clientAuthenticationDataSource(httpAuthData(token))
+                    .build()).get()).isFalse();
+            assertThat(service.allowTopicOperationAsync(topic, TopicOperation.LOOKUP, "consumer", "proxy",
+                    httpAuthData(token)).get()).isTrue();
+        }
+        // a token of the original principal that doesn't validate adds no roles
+        String invalidToken = Jwts.builder().claim("sub", List.of("user", "consumer", "admin"))
+                .signWith(AuthTokenUtils.createSecretKey(SignatureAlgorithm.HS256)).compact();
+        assertThat(service.allowTopicOperationAsync(topic, TopicOperation.LOOKUP, "user", "proxy",
+                httpAuthData(invalidToken)).get()).isFalse();
+        assertThat(service.isSuperUser(AuthenticationParameters.builder().clientRole("proxy")
+                .originalPrincipal("user").clientAuthenticationDataSource(httpAuthData(invalidToken))
+                .build()).get()).isFalse();
+        assertThat(service.allowTopicOperationAsync(topic, TopicOperation.LOOKUP, "consumer", "proxy",
+                httpAuthData(invalidToken)).get()).isTrue();
+        // without a token, the original principal is checked with its own role
+        assertThat(service.allowTopicOperationAsync(topic, TopicOperation.LOOKUP, "user", "proxy",
+                httpAuthData(null)).get()).isFalse();
+        assertThat(service.allowTopicOperationAsync(topic, TopicOperation.LOOKUP, "consumer", "proxy",
+                httpAuthData(null)).get()).isTrue();
+    }
+
+    @Test
+    public void testTenantAdminRoleWithoutTokenIsRecognized() throws Exception {
+        SecretKey key = AuthTokenUtils.createSecretKey(SignatureAlgorithm.HS256);
+        ServiceConfiguration conf = tokenConfiguration(key);
+        conf.setSuperUserRoles(Set.of("admin"));
+        conf.setAuthorizationProvider(MultiRolesTokenAuthorizationProvider.class.getName());
+        TenantResources tenants = mock(TenantResources.class);
+        when(tenants.getTenantAsync("tenant")).thenReturn(CompletableFuture.completedFuture(
+                Optional.of(new TenantInfoImpl(Set.of("tls-proxy"), Set.of()))));
+        PulsarResources resources = mock(PulsarResources.class);
+        when(resources.getTenantResources()).thenReturn(tenants);
+        AuthenticationProviderToken authenticationProvider = new AuthenticationProviderToken();
+        authenticationProvider.initialize(AuthenticationProvider.Context.builder().config(conf).build());
+        AuthorizationService service = new AuthorizationService(conf, resources,
+                authenticationService(authenticationProvider));
+
+        // for example a proxy authenticated with TLS whose request carries no token
+        assertThat(service.isSuperUserOrTenantAdmin("tenant", "tls-proxy", httpAuthData(null)).get()).isTrue();
+        assertThat(service.isSuperUserOrTenantAdmin("tenant", "user", httpAuthData(null)).get()).isFalse();
+    }
+
+    @DataProvider
+    public Object[][] validationOutcomes() {
+        return new Object[][]{{true}, {false}};
+    }
+
+    @Test(dataProvider = "validationOutcomes")
+    public void testSharedProviderValidationIsAsync(boolean succeeds) throws Exception {
+        ServiceConfiguration conf = tokenConfiguration(AuthTokenUtils.createSecretKey(SignatureAlgorithm.HS256));
+        conf.setSuperUserRoles(Set.of("admin"));
+        TokenAuthenticationProvider authenticationProvider = mock(TokenAuthenticationProvider.class);
+        CompletableFuture<Set<String>> validation = new CompletableFuture<>();
+        when(authenticationProvider.authenticateRolesAsync(any(), eq("sub"))).thenReturn(validation);
+        @Cleanup
+        MultiRolesTokenAuthorizationProvider provider = new MultiRolesTokenAuthorizationProvider();
+        provider.initialize(new AuthorizationProvider.InitialContext(conf, mock(PulsarResources.class),
+                authenticationService(authenticationProvider)));
+        String token = Jwts.builder().claim("sub", List.of("user", "admin")).compact();
+        CompletableFuture<Boolean> authorized = provider.authorize("user", new AuthenticationDataCommand(token),
+                role -> CompletableFuture.completedFuture(false));
+        assertThat(authorized).isNotDone();
+        if (succeeds) {
+            validation.complete(Set.of("user", "admin"));
+        } else {
+            validation.completeExceptionally(new IllegalArgumentException("Token validation failed"));
+        }
+        assertThat(authorized.get()).isEqualTo(succeeds);
+        verify(authenticationProvider).authenticateRolesAsync(any(), eq("sub"));
+        provider.close();
+        verify(authenticationProvider, never()).initialize(any(AuthenticationProvider.Context.class));
+        verify(authenticationProvider, never()).close();
+    }
+
+    @SuppressWarnings("deprecation")
     @Test
     public void testMultiRolesAuthz() throws Exception {
         SecretKey secretKey = AuthTokenUtils.createSecretKey(SignatureAlgorithm.HS256);

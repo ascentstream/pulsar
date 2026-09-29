@@ -68,10 +68,10 @@ public class MultiRolesTokenAuthorizationProvider extends PulsarAuthorizationPro
     private final JwtParser parser;
     private String roleClaim;
 
-    public MultiRolesTokenAuthorizationProvider() {
-        this.roleClaim = Claims.SUBJECT;
-        this.parser = Jwts.parserBuilder().build();
-    }
+    private static final String HTTP_AUTHORIZATION_HEADER = "Authorization";
+
+    private String roleClaim = DEFAULT_ROLE_CLAIM;
+    private TokenAuthenticationProvider authenticationProvider;
 
     @Override
     public void initialize(ServiceConfiguration conf, PulsarResources pulsarResources) throws IOException {
@@ -156,14 +156,29 @@ public class MultiRolesTokenAuthorizationProvider extends PulsarAuthorizationPro
                 && ((AuthenticationDataSubscription) authData).getAuthData() == null)) {
             return Collections.singleton(role);
         }
-
-        String token = null;
-
-        if (authData.hasDataFromCommand()) {
-            // Authenticate Pulsar binary connection
-            token = authData.getCommandData();
-            if (StringUtils.isBlank(token)) {
-                return Collections.emptySet();
+        if (roleData instanceof RoleAuthenticationData resolved) {
+            return CompletableFuture.completedFuture(Collections.singleton(resolved.role));
+        }
+        if (roleData instanceof AuthenticationDataForwarded forwarded && forwarded.getProxiedRequestData() != null
+                && role != null) {
+            return getProxiedRequestRolesAsync(role, forwarded.getProxiedRequestData());
+        }
+        if (roleData == null || roleData instanceof AuthenticationDataAnonymous
+                || roleData instanceof AuthenticationDataForwarded) {
+            return CompletableFuture.completedFuture(
+                    role == null ? Collections.emptySet() : Collections.singleton(role));
+        }
+        try {
+            return authenticationProvider.authenticateRolesAsync(authData, roleClaim)
+                    .exceptionally(error -> {
+                        if (log.isDebugEnabled()) {
+                            log.debug("Unable to extract additional roles from JWT token", error);
+                        }
+                        return Collections.emptySet();
+                    });
+        } catch (RuntimeException e) {
+            if (log.isDebugEnabled()) {
+                log.debug("Unable to extract additional roles from JWT token", e);
             }
         } else if (authData.hasDataFromHttp()) {
             // The format here should be compliant to RFC-6750
@@ -210,6 +225,33 @@ public class MultiRolesTokenAuthorizationProvider extends PulsarAuthorizationPro
         }
 
         return Collections.emptySet();
+    }
+
+    /**
+     * A token in a proxied request applies to the original principal only when it authenticates as that principal.
+     */
+    private CompletableFuture<Set<String>> getProxiedRequestRolesAsync(String role, AuthenticationDataSource data) {
+        Set<String> roleOnly = Collections.singleton(role);
+        try {
+            if (!data.hasDataFromHttp() || data.getHttpHeader(HTTP_AUTHORIZATION_HEADER) == null) {
+                return CompletableFuture.completedFuture(roleOnly);
+            }
+            return authenticationProvider.authenticateAsync(data)
+                    .thenCompose(tokenRole -> role.equals(tokenRole)
+                            ? authenticationProvider.authenticateRolesAsync(data, roleClaim)
+                            : CompletableFuture.completedFuture(roleOnly))
+                    .exceptionally(error -> {
+                        if (log.isDebugEnabled()) {
+                            log.debug("No token of the original principal in the proxied request", error);
+                        }
+                        return roleOnly;
+                    });
+        } catch (RuntimeException e) {
+            if (log.isDebugEnabled()) {
+                log.debug("No token of the original principal in the proxied request", e);
+            }
+            return CompletableFuture.completedFuture(roleOnly);
+        }
     }
 
     public CompletableFuture<Boolean> authorize(String role, AuthenticationDataSource authenticationData,
