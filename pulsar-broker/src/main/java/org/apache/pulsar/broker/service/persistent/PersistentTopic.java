@@ -561,13 +561,7 @@ public class PersistentTopic extends AbstractTopic implements Topic, AddEntryCal
                 }, getPoliciesNotifyThread())
                 .thenCompose(ignore -> loadingContext == null ? initTopicPolicy()
                         : loadingContext.trace(TopicLoadingStage.TOPIC_POLICIES, initTopicPolicy()))
-                .thenCompose(ignore -> removeOrphanReplicationCursors())
-                .exceptionally(ex -> {
-                    log.warn("[{}] Error loading topic policies during initialization. Ignoring the failure. "
-                                    + "isEncryptionRequired will be set to false. Cause: {}", topic, ex.getMessage()); ([improve][broker] Add reason label for topic_load_failed_total (#26264))
-                    isEncryptionRequired = false;
-                    return null;
-                }));
+                .thenCompose(ignore -> removeOrphanReplicationCursors())); ([fix][broker] Preserve topic initialization failures (#26775))
     }
 
     private void initializeDispatchRateLimiterIfNeeded() {
