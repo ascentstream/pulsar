@@ -19,6 +19,7 @@
 package org.apache.bookkeeper.mledger.impl;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
+import static org.apache.bookkeeper.mledger.util.ManagedLedgerTestUtil.rawEntryConfig;
 import static org.apache.bookkeeper.mledger.util.ManagedLedgerUtils.NO_MAX_SIZE_LIMIT;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -2205,6 +2206,71 @@ public class ManagedLedgerTest extends MockedBookKeeperTestCase {
         ledger.waitForPendingCacheEvictions();
         assertEquals(entryCache.getSize(), 0);
         assertEquals(cacheManager.getSize(), entryCache.getSize());
+    }
+
+    @Test
+    public void testContinueCachingAddedEntriesWithoutActiveCursors() throws Exception {
+        ManagedLedgerConfig config = rawEntryConfig();
+        initManagedLedgerConfig(config);
+        config.setCacheEvictionByExpectedReadCount(true);
+        config.setContinueCachingAddedEntriesAfterLastActiveCursorLeavesMillis(TimeUnit.SECONDS.toMillis(5));
+        ManagedLedgerImpl ledger = (ManagedLedgerImpl) factory.open(
+                "my_test_ledger_for_testContinueCachingAddedEntriesWithoutActiveCursors", config);
+        ledger.entryCache.clear();
+
+        ledger.addEntry("entry-1".getBytes());
+
+        assertThat(ledger.entryCache.getSize()).isEqualTo(7);
+    }
+
+    @Test
+    public void testNoCachingOfAddedEntriesWithoutActiveCursorsWhenContinueCachingDisabled() throws Exception {
+        ManagedLedgerConfig config = rawEntryConfig();
+        initManagedLedgerConfig(config);
+        config.setCacheEvictionByExpectedReadCount(true);
+        config.setContinueCachingAddedEntriesAfterLastActiveCursorLeavesMillis(0);
+        ManagedLedgerImpl ledger = (ManagedLedgerImpl) factory.open(
+                "my_test_ledger_for_testNoCachingOfAddedEntriesWithoutActiveCursorsWhenContinueCachingDisabled",
+                config);
+        ledger.entryCache.clear();
+
+        ledger.addEntry("entry-1".getBytes());
+
+        assertThat(ledger.entryCache.getSize()).isZero();
+    }
+
+    @Test
+    public void testContinueCachingAddedEntriesStartsWhenLastActiveCursorLeaves() throws Exception {
+        long continueCachingMillis = TimeUnit.SECONDS.toMillis(5);
+        ManagedLedgerConfig config = rawEntryConfig();
+        initManagedLedgerConfig(config);
+        config.setCacheEvictionByExpectedReadCount(true);
+        config.setContinueCachingAddedEntriesAfterLastActiveCursorLeavesMillis(continueCachingMillis);
+        ManagedLedgerImpl ledger = (ManagedLedgerImpl) factory.open(
+                "my_test_ledger_for_testContinueCachingAddedEntriesStartsWhenLastActiveCursorLeaves", config);
+        ManagedCursor c1 = ledger.openCursor("c1");
+        ManagedCursor c2 = ledger.openCursor("c2");
+
+        // one active cursor leaving while another one remains doesn't affect caching
+        c2.setInactive();
+        assertThat(ledger.getActiveCursors().isEmpty()).isFalse();
+        assertThat(ledger.shouldCacheAddedEntry()).isTrue();
+
+        // the last active cursor leaving starts the window
+        c1.setInactive();
+        assertThat(ledger.getActiveCursors().isEmpty()).isTrue();
+        assertThat(ledger.shouldCacheAddedEntry()).isTrue();
+
+        // added entries stop being cached once the window has passed
+        Awaitility.await().atMost(continueCachingMillis * 2, TimeUnit.MILLISECONDS)
+                .until(() -> !ledger.shouldCacheAddedEntry());
+
+        // an active cursor leaving again starts a new window
+        c1.setActive();
+        assertThat(ledger.shouldCacheAddedEntry()).isTrue();
+        c1.setInactive();
+        assertThat(ledger.getActiveCursors().isEmpty()).isTrue();
+        assertThat(ledger.shouldCacheAddedEntry()).isTrue();
     }
 
     @Test
