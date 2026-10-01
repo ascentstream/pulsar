@@ -158,15 +158,14 @@ public class ReplicatedSubscriptionsController implements AutoCloseable, Topic.P
     }
 
     @VisibleForTesting
-    ReplicatedSubscriptionsController(PersistentTopic topic, String localCluster,
-                                      ScheduledExecutorService executor) {
+    ReplicatedSubscriptionsController(PersistentTopic topic, String localCluster, ScheduledExecutorService executor) {
         this.topic = topic;
         this.localCluster = localCluster;
         var pulsar = topic.getBrokerService().pulsar();
+        stats = pulsar.getOpenTelemetryReplicatedSubscriptionStats();
         timer = executor.scheduleAtFixedRate(catchingAndLoggingThrowables(this::startNewSnapshot), 0,
                 pulsar.getConfiguration().getReplicatedSubscriptionsSnapshotFrequencyMillis(),
                 TimeUnit.MILLISECONDS);
-        stats = pulsar.getOpenTelemetryReplicatedSubscriptionStats();
     }
 
     public void receivedReplicatedSubscriptionMarker(Position position, int markerType, ByteBuf payload) {

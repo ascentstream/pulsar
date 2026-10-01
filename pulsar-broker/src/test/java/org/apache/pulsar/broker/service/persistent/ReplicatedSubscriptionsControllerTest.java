@@ -123,10 +123,92 @@ public class ReplicatedSubscriptionsControllerTest {
         when(pulsar.getOpenTelemetryReplicatedSubscriptionStats())
                 .thenReturn(mock(OpenTelemetryReplicatedSubscriptionStats.class));
         when(executor.scheduleAtFixedRate(any(Runnable.class), anyLong(), anyLong(), any(TimeUnit.class)))
-                .thenReturn(mock(ScheduledFuture.class));
-        when(topic.getName()).thenReturn("persistent://public/default/t1");
-        when(topic.getBrokerService()).thenReturn(brokerService);
-        return topic;
+                .thenReturn(timer);
+
+        TestPersistentTopic topic =
+                new TestPersistentTopic("persistent://public/default/t1", brokerService, ledger, messageDeduplication);
+        topic.setReplicationClusters(List.of("local", "remote"));
+        PersistentSubscription subscription = mock(PersistentSubscription.class);
+        when(subscription.isReplicated()).thenReturn(true);
+
+        Assert.assertEquals(topic.getLastMaxReadPositionMovedForwardTimestamp(), 0L,
+                "Topics without a controller should not maintain the snapshot timestamp");
+
+        topic.getSubscriptions().put("sub", subscription);
+        topic.checkReplicatedSubscriptionControllerState();
+        try {
+            Assert.assertTrue(topic.getReplicatedSubscriptionController().isPresent());
+            Assert.assertEquals(topic.getLastMaxReadPositionMovedForwardTimestamp(), 0L,
+                    "Enabling the controller on an empty topic must not trigger a snapshot");
+
+            topic.getSubscriptions().clear();
+            topic.checkReplicatedSubscriptionControllerState();
+            when(ledger.getNumberOfEntries()).thenReturn(1L);
+            topic.getMaxReadPositionCallBack().maxReadPositionMovedForward(
+                    PositionFactory.create(1, 1), PositionFactory.create(1, 2));
+            Assert.assertEquals(topic.getLastMaxReadPositionMovedForwardTimestamp(), 0L,
+                    "Publishing before controller activation must leave the timestamp disabled");
+
+            topic.getSubscriptions().put("sub", subscription);
+            topic.checkReplicatedSubscriptionControllerState();
+            long enabledTimestamp = topic.getLastMaxReadPositionMovedForwardTimestamp();
+            Assert.assertTrue(enabledTimestamp > 0,
+                    "Controller creation must seed the timestamp for data published before activation");
+
+            waitUntilNextMillisecond(enabledTimestamp);
+            topic.getMaxReadPositionCallBack().maxReadPositionMovedForward(
+                    PositionFactory.create(1, 1), PositionFactory.create(1, 2));
+            long updatedTimestamp = topic.getLastMaxReadPositionMovedForwardTimestamp();
+            Assert.assertTrue(updatedTimestamp > enabledTimestamp);
+
+            topic.getSubscriptions().clear();
+            topic.checkReplicatedSubscriptionControllerState();
+            Assert.assertTrue(topic.getReplicatedSubscriptionController().isEmpty());
+
+            waitUntilNextMillisecond(updatedTimestamp);
+            topic.getMaxReadPositionCallBack().maxReadPositionMovedForward(
+                    PositionFactory.create(1, 2), PositionFactory.create(1, 3));
+            Assert.assertEquals(topic.getLastMaxReadPositionMovedForwardTimestamp(), updatedTimestamp,
+                    "Timestamp should remain unchanged while the controller is disabled");
+
+            waitUntilNextMillisecond(updatedTimestamp);
+            when(ledger.getNumberOfEntries()).thenReturn(0L);
+            when(executor.scheduleAtFixedRate(any(Runnable.class), anyLong(), anyLong(), any(TimeUnit.class)))
+                    .thenAnswer(invocation -> {
+                        // Publish after the initial seed check but before the controller reference is visible.
+                        long constructionTimestamp = topic.getLastMaxReadPositionMovedForwardTimestamp();
+                        when(ledger.getNumberOfEntries()).thenReturn(1L);
+                        topic.getMaxReadPositionCallBack().maxReadPositionMovedForward(
+                                PositionFactory.create(1, 3), PositionFactory.create(1, 4));
+                        Assert.assertEquals(topic.getLastMaxReadPositionMovedForwardTimestamp(), constructionTimestamp,
+                                "Publishes racing with construction still see the controller as disabled");
+                        return timer;
+                    });
+            topic.getSubscriptions().put("sub", subscription);
+            topic.checkReplicatedSubscriptionControllerState();
+            Assert.assertTrue(topic.getReplicatedSubscriptionController().isPresent());
+            Assert.assertTrue(topic.getLastMaxReadPositionMovedForwardTimestamp() > updatedTimestamp,
+                    "Re-enabling the controller must cover entries added during its construction");
+        } finally {
+            topic.getReplicatedSubscriptionController().ifPresent(ReplicatedSubscriptionsController::close);
+        }
+    }
+
+    private static void waitUntilNextMillisecond(long timestamp) {
+        while (Clock.systemUTC().millis() <= timestamp) {
+            Thread.onSpinWait();
+        }
+    }
+
+    private static final class TestPersistentTopic extends PersistentTopic {
+        TestPersistentTopic(String topic, BrokerService brokerService, ManagedLedger ledger,
+                            MessageDeduplication messageDeduplication) {
+            super(topic, brokerService, ledger, messageDeduplication);
+        }
+
+        void setReplicationClusters(List<String> clusters) {
+            topicPolicies.getReplicationClusters().updateBrokerValue(clusters);
+        }
     }
 
     @Test
