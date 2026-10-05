@@ -351,7 +351,13 @@ public final class EntryImpl extends AbstractCASReferenceCounted
             try {
                 MessageMetadata msgMetadata = new MessageMetadata();
                 Commands.parseMessageMetadata(data.duplicate(), msgMetadata);
-                this.messageMetadata = msgMetadata;
+                // Copies of this entry share the instance across threads. Decode its lazily decoded fields now, so
+                // that readers don't decode them concurrently: a lazily decoded field is cached in a plain field, and
+                // LightProto creates an ASCII string without a constructor, so another thread could see the cached
+                // string before its contents. The volatile write below publishes the decoded fields.
+                // The fork's LightProto-generated MessageMetadata has no materialize(); copyFrom() reads every
+                // field of the source, so a copy of the freshly parsed instance is fully materialized.
+                this.messageMetadata = new MessageMetadata().copyFrom(msgMetadata);
             } catch (Throwable t) {
                 // The entry bytes are immutable; another cache reader cannot make a failed parse succeed.
                 messageMetadataInitializationFailed = true;
