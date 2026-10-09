@@ -91,6 +91,13 @@ fi
 # Extra options to be passed to the jvm
 BOOKIE_EXTRA_OPTS="${BOOKIE_EXTRA_OPTS:-"-Dio.netty.leakDetection.level=disabled ${PULSAR_EXTRA_OPTS:-"-Dio.netty.recycler.maxCapacityPerThread=4096"}"}"
 
+# Use Netty's adaptive allocator for Pulsar's default allocator, and pin Netty's own default allocator
+# to it. The options are prepended to BOOKIE_EXTRA_OPTS so that options configured there override them;
+# since the named setting takes precedence over -Dpulsar.allocator.type, select another allocator for
+# general operations with -Dpulsar.allocator.default.type=pooled in BOOKIE_EXTRA_OPTS.
+# The Netty 4.1.137 line in use here supports io.netty.allocator.type=adaptive.
+BOOKIE_EXTRA_OPTS="-Dpulsar.allocator.default.type=adaptive -Dio.netty.allocator.type=adaptive ${BOOKIE_EXTRA_OPTS}"
+
 # Add extra paths to the bookkeeper classpath
 # BOOKIE_EXTRA_CLASSPATH=
 

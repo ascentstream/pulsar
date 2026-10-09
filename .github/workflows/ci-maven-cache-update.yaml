@@ -97,7 +97,7 @@ jobs:
         with:
           path: |
             ~/.m2/repository/*/*/*
-            !~/.m2/repository/org/apache/pulsar
+            !~/.m2/repository/com/ascentstream
           key: ${{ runner.os }}-${{ matrix.cache_name }}-${{ hashFiles('**/pom.xml') }}
           # there is no restore-keys here so that the cache size doesn't keep
           # on growing from old entries which wouldn't never expire if the old

@@ -18,20 +18,18 @@
  */
 package org.apache.bookkeeper.mledger.impl.cache;
 
-import java.util.List;
+import org.apache.bookkeeper.mledger.Entry;
+import org.apache.bookkeeper.mledger.impl.ManagedLedgerImpl;
 
 /**
- * Cache eviction policy abstraction interface.
- *
+ * Function that computes the length of an entry.
+ * The reason for adding this interface is to allow testing caching scenarios with large entry sizes
+ * without having to test with actual real entries that match the larger size.
+ * This simplifies the testing of the cache when it's necessary to simulate a scenario where the cache size
+ * becomes a limiting factor in cache efficiency.
  */
-public interface EntryCacheEvictionPolicy {
-    /**
-     * Perform the cache eviction of at least sizeToFree bytes on the supplied list of caches.
-     *
-     * @param caches
-     *            the list of caches to consider
-     * @param sizeToFree
-     *            the minimum size in bytes to be freed
-     */
-    void doEviction(List<EntryCache> caches, long sizeToFree);
+@FunctionalInterface
+public interface EntryLengthFunction {
+    EntryLengthFunction DEFAULT = (ml, entry) -> entry.getLength();
+    int getEntryLength(ManagedLedgerImpl ml, Entry entry);
 }

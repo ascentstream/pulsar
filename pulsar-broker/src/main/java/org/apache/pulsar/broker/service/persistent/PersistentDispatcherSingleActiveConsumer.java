@@ -198,7 +198,7 @@ public class PersistentDispatcherSingleActiveConsumer extends AbstractDispatcher
             Iterator<Entry> iterator = entries.iterator();
             while (iterator.hasNext()) {
                 Entry entry = iterator.next();
-                byte[] key = peekStickyKey(entry.getDataBuffer());
+                byte[] key = peekStickyKey(entry);
                 Consumer consumer = stickyKeyConsumerSelector.select(key);
                 // Skip the entry if it's not for current active consumer.
                 if (consumer == null || currentConsumer != consumer) {
@@ -239,14 +239,16 @@ public class PersistentDispatcherSingleActiveConsumer extends AbstractDispatcher
     protected void dispatchEntriesToConsumer(Consumer currentConsumer, List<Entry> entries,
                                              EntryBatchSizes batchSizes, EntryBatchIndexesAcks batchIndexesAcks,
                                              SendMessageInfo sendMessageInfo, long epoch) {
+        // sendMessageInfo is a thread-local instance that the next dispatch on this thread can overwrite before
+        // the write listener below runs on the connection's event loop, so capture the counts here.
+        final int totalMessages = sendMessageInfo.getTotalMessages();
+        final long totalBytes = sendMessageInfo.getTotalBytes();
         currentConsumer
-            .sendMessages(entries, batchSizes, batchIndexesAcks, sendMessageInfo.getTotalMessages(),
-                    sendMessageInfo.getTotalBytes(), sendMessageInfo.getTotalChunkedMessages(),
-                    redeliveryTracker, epoch)
+            .sendMessages(entries, batchSizes, batchIndexesAcks, totalMessages, totalBytes,
+                    sendMessageInfo.getTotalChunkedMessages(), redeliveryTracker, epoch)
             .addListener(future -> {
                 if (future.isSuccess()) {
-                    acquirePermitsForDeliveredMessages(topic, cursor, entries.size(),
-                            sendMessageInfo.getTotalMessages(), sendMessageInfo.getTotalBytes());
+                    acquirePermitsForDeliveredMessages(topic, cursor, entries.size(), totalMessages, totalBytes);
 
                     // Schedule a new read batch operation only after the previous batch has been written to the socket.
                     executor.execute(() -> readMoreEntries(getActiveConsumer()));

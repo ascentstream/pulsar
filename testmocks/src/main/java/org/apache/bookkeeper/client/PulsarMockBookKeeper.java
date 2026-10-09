@@ -21,6 +21,7 @@ package org.apache.bookkeeper.client;
 import static com.google.common.base.Preconditions.checkArgument;
 import com.google.common.collect.Lists;
 import io.netty.util.concurrent.DefaultThreadFactory;
+import io.netty.util.concurrent.FastThreadLocal;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -46,6 +47,7 @@ import org.apache.bookkeeper.client.AsyncCallback.CreateCallback;
 import org.apache.bookkeeper.client.AsyncCallback.DeleteCallback;
 import org.apache.bookkeeper.client.AsyncCallback.OpenCallback;
 import org.apache.bookkeeper.client.api.DeleteBuilder;
+import org.apache.bookkeeper.client.api.LedgerEntries;
 import org.apache.bookkeeper.client.api.OpenBuilder;
 import org.apache.bookkeeper.client.api.ReadHandle;
 import org.apache.bookkeeper.client.impl.OpenBuilderBase;
@@ -108,6 +110,8 @@ public class PulsarMockBookKeeper extends BookKeeper {
         this.orderedExecutor = orderedExecutor;
         this.executor = orderedExecutor.chooseThread();
         scheduler = Executors.newScheduledThreadPool(1, new DefaultThreadFactory("mock-bk-scheduler"));
+        // The mock supports batch reads, which the managed ledger only uses with a v2 wire protocol client
+        getConf().setUseV2WireProtocol(true);
     }
 
     @Override
@@ -320,7 +324,6 @@ public class PulsarMockBookKeeper extends BookKeeper {
         }
         for (PulsarMockLedgerHandle ledger : ledgers.values()) {
             ledger.entries.clear();
-            ledger.totalLengthCounter.set(0);
         }
         scheduler.shutdown();
         ledgers.clear();
@@ -371,9 +374,7 @@ public class PulsarMockBookKeeper extends BookKeeper {
         failures.add(delayFuture);
     }
 
-    /**
-     * @param rc see also {@link org.apache.bookkeeper.client.BKException.Code}.
-     */
+
     public void failNow(int rc) {
         failAfter(0, rc);
     }
@@ -538,6 +539,30 @@ public class PulsarMockBookKeeper extends BookKeeper {
 
     public void setDefaultReadEntriesDelayMillis(long defaultReadEntriesDelayMillis) {
         this.defaultReadEntriesDelayMillis = defaultReadEntriesDelayMillis;
+    }
+
+    private final FastThreadLocal<PulsarMockBookKeeperReadEvent> readEventThreadLocal = new FastThreadLocal<>() {
+        @Override
+        protected PulsarMockBookKeeperReadEvent initialValue() throws Exception {
+            return new PulsarMockBookKeeperReadEvent();
+        }
+    };
+
+    /**
+     * A PulsarMockReadHandleInterceptor implementation that creates custom Java Flight Recorder events
+     * for each Pulsar MockBookKeeper read.
+     * This is useful when profiling a test with JFR recording or with Async Profiler and its jfrsync option.
+     */
+    @Getter
+    PulsarMockReadHandleInterceptor jfrReadHandleInterceptor =
+            (long ledgerId, long firstEntry, long lastEntry, LedgerEntries entries) -> {
+                PulsarMockBookKeeperReadEvent event = readEventThreadLocal.get();
+                event.maybeApplyAndCommit(ledgerId, firstEntry, lastEntry);
+                return CompletableFuture.completedFuture(entries);
+            };
+
+    public void useJfrReadHandleInterceptor() {
+        setReadHandleInterceptor(jfrReadHandleInterceptor);
     }
 
     private static final Logger log = LoggerFactory.getLogger(PulsarMockBookKeeper.class);

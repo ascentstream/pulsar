@@ -23,6 +23,7 @@ import static org.apache.pulsar.broker.service.persistent.PersistentTopic.MESSAG
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Range;
+import io.netty.channel.EventLoopGroup;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -34,6 +35,7 @@ import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -72,7 +74,6 @@ import org.apache.pulsar.broker.transaction.exception.buffer.TransactionBufferEx
 import org.apache.pulsar.common.api.proto.CommandSubscribe.SubType;
 import org.apache.pulsar.common.api.proto.MessageMetadata;
 import org.apache.pulsar.common.policies.data.stats.TopicMetricBean;
-import org.apache.pulsar.common.protocol.Commands;
 import org.apache.pulsar.common.util.Backoff;
 import org.apache.pulsar.common.util.Codec;
 import org.apache.pulsar.common.util.FutureUtil;
@@ -210,7 +211,7 @@ public class PersistentDispatcherMultipleConsumers extends AbstractPersistentDis
             log.warn("[{}] Attempting to add a consumer that already registered {}", name, consumer);
         }
 
-        consumerList.add(consumer);
+        addConsumerToList(consumer);
         if (consumerList.size() > 1
                 && consumer.getPriorityLevel() < consumerList.get(consumerList.size() - 2).getPriorityLevel()) {
             consumerList.sort(Comparator.comparingInt(Consumer::getPriorityLevel));
@@ -227,10 +228,12 @@ public class PersistentDispatcherMultipleConsumers extends AbstractPersistentDis
 
     @Override
     public synchronized void removeConsumer(Consumer consumer) throws BrokerServiceException {
-        // decrement unack-message count for removed consumer
-        addUnAckedMessages(-consumer.getUnackedMessages());
         if (consumerSet.removeAll(consumer) == 1) {
-            consumerList.remove(consumer);
+            // decrement unack-message count for removed consumer. Only the removal that actually
+            // unregisters the consumer may debit it, otherwise removing an already-removed consumer
+            // debits the same messages again and drives the subscription counter negative.
+            addUnAckedMessages(-consumer.getUnackedMessages());
+            removeConsumerFromList(consumer);
             log.info("Removed consumer {} with pending {} acks", consumer, consumer.getPendingAcks().size());
             if (consumerList.isEmpty()) {
                 clearComponentsAfterRemovedAllConsumers();
@@ -245,10 +248,13 @@ public class PersistentDispatcherMultipleConsumers extends AbstractPersistentDis
                         notifyAddedToReplay.setTrue();
                     }
                 });
-                totalAvailablePermits -= consumer.getAvailablePermits();
+                // Restore the invariant that the dispatcher total equals the sum of the removal balances of the
+                // remaining consumers. Exclude Flow permits that have not updated the dispatcher total yet.
+                int availablePermits = consumer.getAvailablePermitsForDispatcherRemoval();
+                totalAvailablePermits -= availablePermits;
                 if (log.isDebugEnabled()) {
                     log.debug("[{}] Decreased totalAvailablePermits by {} in PersistentDispatcherMultipleConsumers. "
-                                    + "New dispatcher permit count is {}", name, consumer.getAvailablePermits(),
+                                    + "New dispatcher permit count is {}", name, availablePermits,
                             totalAvailablePermits);
                 }
                 if (notifyAddedToReplay.booleanValue()) {
@@ -262,7 +268,10 @@ public class PersistentDispatcherMultipleConsumers extends AbstractPersistentDis
              * are not mismatch with {@link #consumerSet}. See more detail: https://github.com/apache/pulsar/pull/22270.
              */
             log.error("[{}] Trying to remove a non-connected consumer: {}", name, consumer);
-            consumerList.removeIf(c -> consumer.equals(c));
+            // The debit belongs to the removal that unregisters the consumer; do not repeat it here.
+            // The add-consumer failure path can also unregister via internalRemoveConsumer, but that
+            // consumer has not received any messages and therefore has nothing to debit.
+            removeConsumersFromList(c -> consumer.equals(c));
             if (consumerList.isEmpty()) {
                 clearComponentsAfterRemovedAllConsumers();
             }
@@ -271,7 +280,7 @@ public class PersistentDispatcherMultipleConsumers extends AbstractPersistentDis
 
     protected synchronized void internalRemoveConsumer(Consumer consumer) {
         consumerSet.removeAll(consumer);
-        consumerList.remove(consumer);
+        removeConsumerFromList(consumer);
     }
 
     protected synchronized void clearComponentsAfterRemovedAllConsumers() {
@@ -288,13 +297,22 @@ public class PersistentDispatcherMultipleConsumers extends AbstractPersistentDis
 
     @Override
     public void consumerFlow(Consumer consumer, int additionalNumberOfMessages) {
-        topic.getBrokerService().executor().execute(() -> {
-            internalConsumerFlow(consumer, additionalNumberOfMessages);
-        });
+        EventLoopGroup flowExecutor = topic.getBrokerService().executor();
+        try {
+            flowExecutor.execute(() -> internalConsumerFlow(consumer, additionalNumberOfMessages));
+        } catch (RejectedExecutionException e) {
+            // Leave the permits pending so removal excludes this unapplied Flow during broker shutdown.
+            if (log.isDebugEnabled()) {
+                log.debug("[{}] Unable to schedule flow control update for consumer {}, executorShutdown={}",
+                        name, consumer, flowExecutor.isShuttingDown(), e);
+            }
+        }
     }
 
     private synchronized void internalConsumerFlow(Consumer consumer, int additionalNumberOfMessages) {
-        if (!consumerSet.contains(consumer)) {
+        // The queued Flow task is no longer pending, even if the consumer was removed while the task was waiting.
+        consumer.completePendingDispatcherFlow(additionalNumberOfMessages);
+        if (!containsConsumerInstance(consumer)) {
             if (log.isDebugEnabled()) {
                 log.debug("[{}] Ignoring flow control from disconnected consumer {}", name, consumer);
             }
@@ -800,10 +818,11 @@ public class PersistentDispatcherMultipleConsumers extends AbstractPersistentDis
             if (entry instanceof EntryAndMetadata) {
                 metadata = ((EntryAndMetadata) entry).getMetadata();
             } else {
-                metadata = Commands.peekAndCopyMessageMetadata(entry.getDataBuffer(), subscription.toString(), -1);
                 // cache the metadata in the entry with EntryAndMetadata for later use to avoid re-parsing the metadata
                 // and to carry the metadata and calculated stickyKeyHash with the entry
-                entries.set(i, EntryAndMetadata.create(entry, metadata));
+                EntryAndMetadata entryAndMetadata = EntryAndMetadata.create(entry);
+                metadata = entryAndMetadata.getMetadata();
+                entries.set(i, entryAndMetadata);
             }
             if (metadata != null) {
                 remainingMessages += metadata.getNumMessagesInBatch();
@@ -867,6 +886,8 @@ public class PersistentDispatcherMultipleConsumers extends AbstractPersistentDis
                     entriesForThisConsumer, batchSizes, sendMessageInfo, batchIndexesAcks, cursor,
                     readType == ReadType.Replay, c);
             totalEntriesProcessed += entriesForThisConsumer.size();
+            // read before sendMessages: it hands batchIndexesAcks to the consumer's event loop, which recycles it
+            int totalAckedIndexCount = batchIndexesAcks.getTotalAckedIndexCount();
 
             c.sendMessages(entriesForThisConsumer, batchSizes, batchIndexesAcks, sendMessageInfo.getTotalMessages(),
                     sendMessageInfo.getTotalBytes(), sendMessageInfo.getTotalChunkedMessages(), redeliveryTracker);
@@ -875,12 +896,11 @@ public class PersistentDispatcherMultipleConsumers extends AbstractPersistentDis
             remainingMessages -= msgSent;
             start += maxEntriesInThisBatch;
             entriesToDispatch -= maxEntriesInThisBatch;
-            TOTAL_AVAILABLE_PERMITS_UPDATER.addAndGet(this,
-                    -(msgSent - batchIndexesAcks.getTotalAckedIndexCount()));
+            TOTAL_AVAILABLE_PERMITS_UPDATER.addAndGet(this, -(msgSent - totalAckedIndexCount));
             if (log.isDebugEnabled()) {
                 log.debug("[{}] Added -({} minus {}) permits to TOTAL_AVAILABLE_PERMITS_UPDATER in "
                                 + "PersistentDispatcherMultipleConsumers",
-                        name, msgSent, batchIndexesAcks.getTotalAckedIndexCount());
+                        name, msgSent, totalAckedIndexCount);
             }
             totalMessagesSent += sendMessageInfo.getTotalMessages();
             totalBytesSent += sendMessageInfo.getTotalBytes();
@@ -976,6 +996,8 @@ public class PersistentDispatcherMultipleConsumers extends AbstractPersistentDis
             totalEntries += filterEntriesForConsumer(entryAndMetadataList, batchSizes, sendMessageInfo,
                     batchIndexesAcks, cursor, readType == ReadType.Replay, consumer);
             totalEntriesProcessed += entryAndMetadataList.size();
+            // read before sendMessages: it hands batchIndexesAcks to the consumer's event loop, which recycles it
+            final int totalAckedIndexCount = batchIndexesAcks.getTotalAckedIndexCount();
             consumer.sendMessages(entryAndMetadataList, batchSizes, batchIndexesAcks,
                     sendMessageInfo.getTotalMessages(), sendMessageInfo.getTotalBytes(),
                     sendMessageInfo.getTotalChunkedMessages(), getRedeliveryTracker()
@@ -986,7 +1008,7 @@ public class PersistentDispatcherMultipleConsumers extends AbstractPersistentDis
             });
 
             TOTAL_AVAILABLE_PERMITS_UPDATER.getAndAdd(this,
-                    -(sendMessageInfo.getTotalMessages() - batchIndexesAcks.getTotalAckedIndexCount()));
+                    -(sendMessageInfo.getTotalMessages() - totalAckedIndexCount));
             totalMessagesSent += sendMessageInfo.getTotalMessages();
             totalBytesSent += sendMessageInfo.getTotalBytes();
         }

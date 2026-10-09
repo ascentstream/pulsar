@@ -20,9 +20,11 @@ package org.apache.bookkeeper.mledger.impl;
 
 import static org.apache.bookkeeper.mledger.impl.EntryCountEstimator.estimateEntryCountByBytesSize;
 import static org.apache.bookkeeper.mledger.impl.cache.RangeEntryCacheImpl.BOOKKEEPER_READ_OVERHEAD_PER_ENTRY;
+import static org.apache.bookkeeper.mledger.util.ManagedLedgerUtils.NO_MAX_SIZE_LIMIT;
 import static org.assertj.core.api.AssertionsForInterfaceTypes.assertThat;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.nullable;
 import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.doAnswer;
@@ -157,9 +159,11 @@ public class ManagedCursorTest extends MockedBookKeeperTestCase {
         return new Object[][] { { Boolean.TRUE }, { Boolean.FALSE } };
     }
 
-    @AfterMethod
+    @AfterMethod(alwaysRun = true)
     public void afterMethod() {
-        bkc.setReadHandleInterceptor(null);
+        if (bkc != null) {
+            bkc.setReadHandleInterceptor(null);
+        }
     }
 
     @Test
@@ -400,7 +404,7 @@ public class ManagedCursorTest extends MockedBookKeeperTestCase {
         cursor.markDelete(lastEntry);
 
         // Assert persist mark deleted position to ZK was successful.
-        Position slowestReadPosition = ml.getCursors().getSlowestReaderPosition();
+        Position slowestReadPosition = ml.getCursors().getSlowestCursorPosition();
         assertTrue(slowestReadPosition.getLedgerId() >= lastEntry.getLedgerId());
         assertTrue(slowestReadPosition.getEntryId() >= lastEntry.getEntryId());
         assertEquals(cursor.getStats().getPersistLedgerSucceed(), 0);
@@ -499,7 +503,7 @@ public class ManagedCursorTest extends MockedBookKeeperTestCase {
         assertTrue(persistZookeeperSucceed2 > persistZookeeperSucceed1);
 
         // Assert persist mark deleted position to ZK was successful.
-        Position slowestReadPosition = ml.getCursors().getSlowestReaderPosition();
+        Position slowestReadPosition = ml.getCursors().getSlowestCursorPosition();
         assertTrue(slowestReadPosition.getLedgerId() >= lastEntry.getLedgerId());
         assertTrue(slowestReadPosition.getEntryId() >= lastEntry.getEntryId());
         assertEquals(cursor.getPersistentMarkDeletedPosition(), lastEntry);
@@ -3666,15 +3670,13 @@ public class ManagedCursorTest extends MockedBookKeeperTestCase {
 
         c1.delete(Lists.newArrayList(p1, p2, p3, p4));
 
-        EntryImpl entry1 = EntryImpl.create(p1, ByteBufAllocator.DEFAULT.buffer(0));
-        EntryImpl entry2 = EntryImpl.create(p2, ByteBufAllocator.DEFAULT.buffer(0));
-        EntryImpl entry3 = EntryImpl.create(p3, ByteBufAllocator.DEFAULT.buffer(0));
-        EntryImpl entry4 = EntryImpl.create(p4, ByteBufAllocator.DEFAULT.buffer(0));
-        EntryImpl entry5 = EntryImpl.create(markDeletedPosition.getLedgerId(), markDeletedPosition.getEntryId() + 7,
-                ByteBufAllocator.DEFAULT.buffer(0));
+        EntryImpl entry1 = createEntry(p1);
+        EntryImpl entry2 = createEntry(p2);
+        EntryImpl entry3 = createEntry(p3);
+        EntryImpl entry4 = createEntry(p4);
+        EntryImpl entry5 = createEntry(
+                PositionFactory.create(markDeletedPosition.getLedgerId(), markDeletedPosition.getEntryId() + 7));
         List<Entry> entries = Lists.newArrayList(entry1, entry2, entry3, entry4, entry5);
-        // release data buffers since EntryImpl.create will retain the buffer
-        entries.forEach(entry -> entry.getDataBuffer().release());
 
         c1.trimDeletedEntries(entries);
         assertEquals(entries.size(), 1);
@@ -3688,6 +3690,16 @@ public class ManagedCursorTest extends MockedBookKeeperTestCase {
 
         // release remaining entry
         entries.forEach(Entry::release);
+    }
+
+    private static EntryImpl createEntry(Position p1) {
+        return createEntryAndReleaseBuffer(p1, ByteBufAllocator.DEFAULT.buffer(0));
+    }
+
+    private static EntryImpl createEntryAndReleaseBuffer(Position p1, ByteBuf buffer) {
+        EntryImpl entry = EntryImpl.create(p1, buffer, 0);
+        buffer.release();
+        return entry;
     }
 
     @Test(timeOut = 20000)
@@ -5327,7 +5339,7 @@ public class ManagedCursorTest extends MockedBookKeeperTestCase {
         };
 
         // op readPosition is bigger than maxReadPosition
-        OpReadEntry opReadEntry = OpReadEntry.create(cursor, ledger.lastConfirmedEntry, 10, callback,
+        OpReadEntry opReadEntry = OpReadEntry.create(cursor, ledger.lastConfirmedEntry, 10, NO_MAX_SIZE_LIMIT, callback,
                 null, PositionFactory.create(lastPosition.getLedgerId(), -1), null, true);
         Field field = ManagedCursorImpl.class.getDeclaredField("readPosition");
         field.setAccessible(true);
@@ -5350,7 +5362,7 @@ public class ManagedCursorTest extends MockedBookKeeperTestCase {
         };
 
         @Cleanup final MockedStatic<OpReadEntry> mockedStaticOpReadEntry = Mockito.mockStatic(OpReadEntry.class);
-        mockedStaticOpReadEntry.when(() -> OpReadEntry.create(any(), any(), anyInt(), any(),
+        mockedStaticOpReadEntry.when(() -> OpReadEntry.create(any(), any(), anyInt(), anyLong(), any(),
                         any(), any(), any(), anyBoolean())).thenAnswer(__ -> createOpReadEntry.get());
 
         final ManagedLedgerConfig ledgerConfig = new ManagedLedgerConfig();
@@ -6466,7 +6478,8 @@ public class ManagedCursorTest extends MockedBookKeeperTestCase {
             }
         };
 
-        OpReadEntry opReadEntry = OpReadEntry.create(cursorImpl, readPosition, 5, callback, null, null, null, true);
+        OpReadEntry opReadEntry = OpReadEntry.create(cursorImpl, readPosition, 5, NO_MAX_SIZE_LIMIT, callback, null,
+                null, null, true);
 
         spyLedger.asyncReadEntries(opReadEntry);
 

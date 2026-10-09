@@ -41,6 +41,29 @@
 # Configuration file of settings used in global zookeeper server
 # PULSAR_GLOBAL_ZK_CONF=
 
+# Select the ByteBuf allocator by adding -Dpulsar.allocator.type=<value> to PULSAR_EXTRA_OPTS.
+# Supported values (case-insensitive):
+#   pooled   - Netty PooledByteBufAllocator; prefers direct buffers (built-in default).
+#   unpooled - Netty UnpooledByteBufAllocator; prefers heap buffers.
+#   adaptive - Netty AdaptiveByteBufAllocator; auto-tunes pooling and prefers direct buffers
+#              (set for the default allocator below).
+# Named allocators override each setting independently with pulsar.allocator.<id>.<setting>:
+#   pulsar.allocator.default.type  - allocator used by general Pulsar operations
+#   pulsar.allocator.ml-cache.type - separate allocator used for managed-ledger cache copies (default: adaptive)
+# Supported settings: type, exit_on_oom (false), out_of_memory_policy (FallbackToHeap or ThrowException).
+# Named settings fall back to the unqualified pulsar.allocator.<setting>, then the built-in default.
+# Explicit global type and legacy pooled settings also apply to ml-cache unless overridden by name.
+# Batch reads copy entries into this cache even when managedLedgerCacheCopyEntries=false. Adaptive
+# reuses small size-class slots to limit fragmentation; retained chunks and size rounding still cost memory.
+# To retain the previous cache allocator: -Dpulsar.allocator.ml-cache.type=pooled
+# Settings are read when an allocator is first created. default overrides do not apply to other IDs.
+# Leak detection is global: use -Dio.netty.leakDetection.level=disabled|simple|advanced|paranoid.
+# pulsar.allocator.leak_detection and per-allocator leak_detection settings are not supported.
+# -Dpulsar.allocator.pooled=true is deprecated; use -Dpulsar.allocator.type=pooled instead.
+# pulsar.allocator.type takes precedence over the legacy pulsar.allocator.pooled property.
+# If pulsar.allocator.type is unset, pulsar.allocator.pooled=true (or unset) selects pooled;
+# other values of pulsar.allocator.pooled select unpooled.
+
 # Extra options to be passed to the jvm
 PULSAR_MEM=${PULSAR_MEM:-"-Xms2g -Xmx2g -XX:MaxDirectMemorySize=4g"}
 
@@ -91,6 +114,13 @@ fi
 
 # Extra options to be passed to the jvm
 PULSAR_EXTRA_OPTS="${PULSAR_EXTRA_OPTS:-" -Dpulsar.allocator.exit_on_oom=true -Dio.netty.recycler.maxCapacityPerThread=4096"}"
+
+# Use Netty's adaptive allocator for Pulsar's default allocator, and pin Netty's own default allocator
+# to it. The options are prepended to PULSAR_EXTRA_OPTS so that options configured there override them;
+# since the named setting takes precedence over -Dpulsar.allocator.type, select another allocator for
+# general operations with -Dpulsar.allocator.default.type=pooled in PULSAR_EXTRA_OPTS.
+# The Netty 4.1.137 line in use here supports io.netty.allocator.type=adaptive.
+PULSAR_EXTRA_OPTS="-Dpulsar.allocator.default.type=adaptive -Dio.netty.allocator.type=adaptive ${PULSAR_EXTRA_OPTS}"
 
 # Add extra paths to the bookkeeper classpath
 # PULSAR_EXTRA_CLASSPATH=

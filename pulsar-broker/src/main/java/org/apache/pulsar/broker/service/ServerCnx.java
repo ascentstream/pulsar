@@ -2454,7 +2454,10 @@ public class ServerCnx extends PulsarHandler implements TransportCnx {
 
             CompletableFuture<Integer> batchSizeFuture = entryFuture.thenApply(entry -> {
                 try {
-                    MessageMetadata metadata = Commands.parseMessageMetadata(entry.getDataBuffer());
+                    MessageMetadata metadata = entry.getMessageMetadata();
+                    if (metadata == null) {
+                        metadata = Commands.parseMessageMetadata(entry.getDataBuffer());
+                    }
                     int batchSize = metadata.getNumMessagesInBatch();
                     return metadata.hasNumMessagesInBatch() ? batchSize : -1;
                 } finally {
