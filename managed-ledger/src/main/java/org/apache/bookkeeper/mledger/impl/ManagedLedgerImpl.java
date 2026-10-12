@@ -5243,7 +5243,7 @@ public class ManagedLedgerImpl implements ManagedLedger, CreateCallback {
                                     .flatMap(Collection::stream)
                                     .collect(Collectors.toSet());
                                 if (bookies != null) {
-                                    info.underReplicated = !bookies.contains(ensemble);
+                                    info.underReplicated = !bookies.containsAll(ensemble);
                                 }
                             }
                         }
