@@ -407,6 +407,7 @@ public class PersistentDispatcherMultipleConsumers extends AbstractPersistentDis
                 }
                 havePendingReplayRead = true;
                 updateMinReplayedPosition();
+                onReadStarted(ReadType.Replay);
                 Set<? extends Position> deletedMessages = topic.isDelayedDeliveryEnabled()
                         ? asyncReplayEntriesInOrder(messagesToReplayNow)
                         : asyncReplayEntries(messagesToReplayNow);
@@ -417,6 +418,7 @@ public class PersistentDispatcherMultipleConsumers extends AbstractPersistentDis
                 // next entries as readCompletedEntries-callback was never called
                 if ((messagesToReplayNow.size() - deletedMessages.size()) == 0) {
                     havePendingReplayRead = false;
+                    onReadEnded(ReadType.Replay);
                     readMoreEntriesAsync();
                 }
             } else if (BLOCKED_DISPATCHER_ON_UNACKMSG_UPDATER.get(this) == TRUE) {
@@ -442,6 +444,7 @@ public class PersistentDispatcherMultipleConsumers extends AbstractPersistentDis
                 }
                 havePendingRead = true;
                 updateMinReplayedPosition();
+                onReadStarted(ReadType.Normal);
 
                 messagesToRead = Math.min(messagesToRead, getMaxEntriesReadLimit());
                 cursor.asyncReadEntriesWithSkipOrWait(messagesToRead, bytesToRead, this, ReadType.Normal,
@@ -510,6 +513,24 @@ public class PersistentDispatcherMultipleConsumers extends AbstractPersistentDis
 
     private void updateMinReplayedPosition() {
         minReplayedPosition = getFirstPositionInReplay().orElse(null);
+    }
+
+    /**
+     * Called under the dispatcher's monitor when a normal or a replay read starts. A normal read and a replay read
+     * can be in flight at the same time. With the default direct dispatch, a read of a type doesn't start before the
+     * previous read of the same type was dispatched; with {@code dispatcherDispatchMessagesInSubscriptionThread}, it
+     * can start while the previous one's dispatch is still queued, see {@link #onDispatchQueued(ReadType)}. A read
+     * ends with the dispatch of its entries, in {@link #trySendMessagesToConsumers(ReadType, List)}, or with
+     * {@link #onReadEnded(ReadType)}.
+     */
+    protected void onReadStarted(ReadType readType) {
+    }
+
+    /**
+     * Called under the dispatcher's monitor when a completed read's dispatch is queued on the subscription's thread,
+     * with {@code dispatcherDispatchMessagesInSubscriptionThread}.
+     */
+    protected void onDispatchQueued(ReadType readType) {
     }
 
     /**
@@ -683,9 +704,10 @@ public class PersistentDispatcherMultipleConsumers extends AbstractPersistentDis
     }
 
     @Override
-    protected void cancelPendingRead() {
+    protected synchronized void cancelPendingRead() {
         if (havePendingRead && cursor.cancelPendingReadRequest()) {
             havePendingRead = false;
+            onReadEnded(ReadType.Normal);
         }
     }
 
@@ -735,7 +757,9 @@ public class PersistentDispatcherMultipleConsumers extends AbstractPersistentDis
             // are discarded too: the redelivery queue was cleared, and the rewind reads them again. The next read
             // rewinds the cursor once no read is pending.
             entries.forEach(Entry::release);
-            onReadEnded(readType);
+            onReadEnded(ReadType.Normal);
+            cursor.rewind();
+            shouldRewindBeforeReadingOrReplaying = false;
             readMoreEntriesAsync();
             return;
         }
@@ -754,6 +778,7 @@ public class PersistentDispatcherMultipleConsumers extends AbstractPersistentDis
             // setting sendInProgress here, because sendMessagesToConsumers will be executed
             // in a separate thread, and we want to prevent more reads
             acquireSendInProgress();
+            onDispatchQueued(readType);
             dispatchMessagesThread.execute(() -> {
                 handleSendingMessagesAndReadingMore(readType, entries, false, totalBytesSize);
             });
@@ -1070,6 +1095,11 @@ public class PersistentDispatcherMultipleConsumers extends AbstractPersistentDis
                 log.debug("[{}] Error reading entries at {} : {}, Read Type {} - Retrying to read in {} seconds", name,
                         cursor.getReadPosition(), exception.getMessage(), readType, waitTimeMillis / 1000.0);
             }
+        }
+
+        if (shouldRewindBeforeReadingOrReplaying) {
+            shouldRewindBeforeReadingOrReplaying = false;
+            cursor.rewind();
         }
 
         onReadEnded(readType);
