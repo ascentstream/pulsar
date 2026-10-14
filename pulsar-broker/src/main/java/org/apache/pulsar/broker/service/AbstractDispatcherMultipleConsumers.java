@@ -46,6 +46,13 @@ public abstract class AbstractDispatcherMultipleConsumers extends AbstractBaseDi
         super(subscription, serviceConfig);
     }
 
+    /**
+     * Removes only the exact consumer instance from {@link #consumerList}, which would otherwise match a replacement
+     * consumer that reuses the same protocol identity via {@link Consumer#equals(Object)}.
+     */
+    protected final synchronized void removeConsumerInstanceFromList(Consumer consumer) {
+        consumerList.removeIf(c -> c == consumer);
+    }
     public boolean isConsumerConnected() {
         return !consumerList.isEmpty();
     }
@@ -58,6 +65,37 @@ public abstract class AbstractDispatcherMultipleConsumers extends AbstractBaseDi
         return consumerList.size() == 1 && consumerSet.contains(consumer);
     }
 
+    /**
+     * Checks whether the exact Consumer instance is still connected.
+     *
+     * <p>This differs from {@link ObjectSet#contains(Object)}, which uses {@link Consumer#equals(Object)} and can
+     * match a replacement Consumer that reuses the same protocol identity.
+     * The caller must hold the dispatcher monitor while checking membership and acting on the result.
+     */
+    protected final boolean containsConsumerInstance(Consumer consumer) {
+        // consumerList is kept in sync with consumerSet under the dispatcher monitor; scan it by
+        // identity because ObjectSet#contains uses equals and can match a replacement consumer
+        // that reuses the same protocol identity.
+        for (int i = 0; i < consumerList.size(); i++) {
+            if (consumerList.get(i) == consumer) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Removes only the exact registered instance. The caller must hold the dispatcher monitor.
+     */
+    protected final boolean removeConsumerInstance(Consumer consumer) {
+        if (!containsConsumerInstance(consumer)) {
+            return false;
+        }
+        consumerSet.removeAll(consumer);
+        return true;
+    }
+
+ ([fix][broker] Prevent stale consumer removal from removing replacements (#26652))
     public boolean isClosed() {
         return isClosed == TRUE;
     }
