@@ -348,7 +348,7 @@
           <plugin>
             <groupId>io.github.nodece</groupId>
             <artifactId>sonatype-central-publish-maven-plugin</artifactId>
-            <version>0.0.7</version>
+            <version>0.0.8</version>
             <extensions>true</extensions>
             <configuration>
               <skip>false</skip>
