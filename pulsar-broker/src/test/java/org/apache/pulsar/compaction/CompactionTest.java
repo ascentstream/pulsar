@@ -93,6 +93,7 @@ import org.apache.pulsar.client.api.Producer;
 import org.apache.pulsar.client.api.ProducerBuilder;
 import org.apache.pulsar.client.api.PulsarClient;
 import org.apache.pulsar.client.api.PulsarClientException;
+import org.apache.pulsar.client.api.RawReader;
 import org.apache.pulsar.client.api.Reader;
 import org.apache.pulsar.client.api.Schema;
 import org.apache.pulsar.client.api.SubscriptionInitialPosition;
@@ -123,6 +124,13 @@ public class CompactionTest extends MockedPulsarServiceBaseTest {
     protected ScheduledExecutorService compactionScheduler;
     protected BookKeeper bk;
     private TwoPhaseCompactor compactor;
+
+    @Override
+    protected void doInitConf() throws Exception {
+        super.doInitConf();
+        conf.setDispatcherMaxReadBatchSize(1);
+        conf.setForceDeleteNamespaceAllowed(true);
+    }
 
     @BeforeMethod
     @Override
@@ -2366,10 +2374,59 @@ public class CompactionTest extends MockedPulsarServiceBaseTest {
         Thread.sleep(3000);
         delayReadSignal.countDown();
 
-        // Verify: topic deletion is successfully executed.
-        Awaitility.await().atMost(15, TimeUnit.SECONDS).untilAsserted(() -> {
-            assertTrue(deleteTopicFuture.isDone());
-        });
+        // Verify: topic deletion is successfully executed. Asserting success (not just completion) covers the
+        // case where fencing the topic terminates the in-flight compaction exceptionally: the failed compaction
+        // must not fail the deletion (issue #24148).
+        deleteTopicFuture.get(15, TimeUnit.SECONDS);
+    }
+
+    @Test
+    public void testForcedDeleteSucceedsAfterFailedCompaction() throws Exception {
+        String topicName = newUniqueName("persistent://my-tenant/my-ns/delete-after-failed-compaction");
+        admin.topics().createNonPartitionedTopic(topicName);
+        try (Producer<String> producer = pulsarClient.newProducer(Schema.STRING).topic(topicName).create()) {
+            for (int i = 0; i < 10; i++) {
+                producer.newMessage().key("key" + (i % 2)).value("value-" + i).send();
+            }
+        }
+
+        // Fail the compaction after the phase-two seek
+        TwoPhaseCompactor.injectionPhaseTwoSeek =
+                (reader, id) -> CompletableFuture.failedFuture(new RuntimeException("injected compaction failure"));
+        PersistentTopic persistentTopic =
+                (PersistentTopic) pulsar.getBrokerService().getTopic(topicName, false).join().get();
+        persistentTopic.triggerCompaction();
+        Awaitility.await().untilAsserted(() ->
+                assertEquals(persistentTopic.compactionStatus().status, LongRunningProcessStatus.Status.ERROR));
+        TwoPhaseCompactor.injectionPhaseTwoSeek = RawReader::seekAsync;
+
+        // The failed compaction must not block the deletion of the compaction cursor
+        admin.topics().delete(topicName, true);
+    }
+
+    @Test
+    public void testForcedNamespaceDeleteWithInflightCompaction() throws Exception {
+        String namespace = "my-tenant/my-ns-inflight-compaction";
+        admin.namespaces().createNamespace(namespace, Set.of(configClusterName));
+        final String topicName = newUniqueName("persistent://" + namespace + "/inflight-compaction");
+        admin.topics().createNonPartitionedTopic(topicName);
+        try (Producer<String> producer = pulsarClient.newProducer(Schema.STRING).topic(topicName).create()) {
+            // dispatcherMaxReadBatchSize=1 makes the compactor read these one at a time, keeping the compaction
+            // in-flight for several seconds while the namespace is deleted
+            for (int i = 0; i < 2000; i++) {
+                producer.newMessage().key(String.valueOf(i)).value(String.valueOf(i)).send();
+            }
+        }
+        PersistentTopic persistentTopic =
+                (PersistentTopic) pulsar.getBrokerService().getTopic(topicName, false).join().get();
+        persistentTopic.triggerCompaction();
+        Awaitility.await().untilAsserted(() ->
+                assertEquals(persistentTopic.getSubscriptions().get(COMPACTION_SUBSCRIPTION).getConsumers().size(),
+                        1));
+
+        // Forced namespace deletion must succeed while the compaction is in-flight: fencing the topic terminates
+        // the compaction exceptionally, which must not fail the deletion of the compaction cursor (issue #24148)
+        deleteNamespaceWithRetry(namespace, true, admin);
     }
 
     @Test
