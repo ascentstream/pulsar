@@ -1204,6 +1204,15 @@ public class Consumer {
             }
         }
 
+        if (totalRedeliveryMessages == 0) {
+            // A rejected transactional ACK can leave a zero count with unacked batch indexes.
+            // Preserve replay without releasing backpressure or deferred permits.
+            if (!pendingPositions.isEmpty()) {
+                subscription.redeliverUnacknowledgedMessages(this, pendingPositions);
+            }
+            return;
+        }
+
         addAndGetUnAckedMsgs(this, -totalRedeliveryMessages);
         blockedConsumerOnUnackedMsgs = false;
 
