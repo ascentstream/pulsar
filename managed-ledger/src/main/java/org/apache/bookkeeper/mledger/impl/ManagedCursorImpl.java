@@ -340,8 +340,13 @@ public class ManagedCursorImpl implements ManagedCursor {
     private volatile long lastLedgerSwitchTimestamp;
     private final Clock clock;
 
-    // The last active time (Unix time, milliseconds) of the cursor
+    private static final AtomicLongFieldUpdater<ManagedCursorImpl> LAST_ACTIVE_UPDATER =
+            AtomicLongFieldUpdater.newUpdater(ManagedCursorImpl.class, "lastActive");
+    // The last active time (Unix time, milliseconds) of the cursor, negated while the cursor is idle (see markIdle())
     private volatile long lastActive;
+    // Whether the cursor was idle when it was last persisted: once it is used again, it has to be persisted again, or
+    // it would be recovered as idle since before it was used
+    private volatile boolean idlePersisted;
 
     public enum State {
         Uninitialized(false), // Cursor is being initialized
@@ -668,6 +673,13 @@ public class ManagedCursorImpl implements ManagedCursor {
                         }
                     }
 
+<<<<<<< HEAD
+=======
+                    Map<String, Long> recoveredProperties =
+                            recoverProperties(info.getPropertiesCount(), info::getProperties);
+
+                    recoverLastActive(info.getIdleSince());
+>>>>>>> 968489549d4 ([fix][broker] The configuration subscriptionExpirationTimeMinutes does not work if the topic was reloaded frequently (#25244))
                     recoveredCursor(recoveredPosition, recoveredProperties, recoveredCursorProperties, null);
                     recoverCallback.operationComplete();
                 } else {
@@ -738,7 +750,30 @@ public class ManagedCursorImpl implements ManagedCursor {
 
                 LedgerEntry entry = seq.nextElement();
                 mbean.addReadCursorLedgerSize(entry.getLength());
+<<<<<<< HEAD
                 recoverWithCheckpointFormat(info, lh, ledgerId, entry.getEntry(), callback);
+=======
+                PositionInfo positionInfo;
+                try {
+                    positionInfo = PositionInfo.parseFrom(entry.getEntry());
+                } catch (InvalidProtocolBufferException e) {
+                    callback.operationFailed(new ManagedLedgerException(e));
+                    return;
+                }
+
+                Map<String, Long> recoveredProperties =
+                        recoverProperties(positionInfo.getPropertiesCount(), positionInfo::getProperties);
+
+                Position position = PositionFactory.create(positionInfo.getLedgerId(), positionInfo.getEntryId());
+                recoverIndividualDeletedMessages(positionInfo);
+                if (getConfig().isDeletionAtBatchIndexLevelEnabled()
+                    && positionInfo.getBatchedEntryDeletionIndexInfoCount() > 0) {
+                    recoverBatchDeletedIndexes(positionInfo.getBatchedEntryDeletionIndexInfoList());
+                }
+                recoverLastActive(positionInfo.getIdleSince());
+                recoveredCursor(position, recoveredProperties, cursorProperties, lh);
+                callback.operationComplete();
+>>>>>>> 968489549d4 ([fix][broker] The configuration subscriptionExpirationTimeMinutes does not work if the topic was reloaded frequently (#25244))
             }, null);
         };
         try {
@@ -3116,12 +3151,38 @@ public class ManagedCursorImpl implements ManagedCursor {
 
     @Override
     public long getLastActive() {
-        return lastActive;
+        return Math.abs(lastActive);
     }
 
     @Override
     public void updateLastActive() {
-        lastActive = System.currentTimeMillis();
+        long previous = LAST_ACTIVE_UPDATER.getAndSet(this, System.currentTimeMillis());
+        if (previous < 0 && idlePersisted) {
+            // Let the next flush persist that the cursor is not idle anymore
+            isDirty = true;
+        }
+    }
+
+    @Override
+    public void markIdle() {
+        long now = System.currentTimeMillis();
+        // An idle cursor stays idle since the same time
+        LAST_ACTIVE_UPDATER.updateAndGet(this, current -> current < 0 ? current : -now);
+    }
+
+    // A cursor that was not idle when it was persisted (or that was persisted by an older version) is idle since its
+    // recovery, until its consumers, if any, come back
+    private void recoverLastActive(long idleSince) {
+        lastActive = idleSince > 0 ? -idleSince : -System.currentTimeMillis();
+        idlePersisted = idleSince > 0;
+    }
+
+    private void updateIdlePersisted(long persistedLastActive) {
+        idlePersisted = persistedLastActive < 0;
+        if (idlePersisted && lastActive > 0) {
+            // The cursor was used again while it was persisted as idle
+            isDirty = true;
+        }
     }
 
     @Override
@@ -3305,6 +3366,7 @@ public class ManagedCursorImpl implements ManagedCursor {
         }
 
         final Stat lastCursorLedgerStat = cursorLedgerStat;
+        final long lastActiveToPersist = lastActive;
 
         // When closing we store the last mark-delete position in the z-node itself, so we won't need the cursor ledger,
         // hence we write it as -1. The cursor ledger is deleted once the z-node write is confirmed.
@@ -3312,7 +3374,10 @@ public class ManagedCursorImpl implements ManagedCursor {
                 .setCursorsLedgerId(cursorsLedgerId) //
                 .setMarkDeleteLedgerId(position.getLedgerId()) //
                 .setMarkDeleteEntryId(position.getEntryId()) //
-                .setLastActive(lastActive); //
+                .setLastActive(Math.abs(lastActiveToPersist)); //
+        if (lastActiveToPersist < 0) {
+            info.setIdleSince(-lastActiveToPersist);
+        }
 
         if (pendingCheckpointHintLedgerId >= 0) {
             info.setLastCmCursorLedgerId(pendingCheckpointHintLedgerId);
@@ -3338,6 +3403,7 @@ public class ManagedCursorImpl implements ManagedCursor {
                     @Override
                     public void operationComplete(Void result, Stat stat) {
                         updateCursorLedgerStat(cursorInfo, stat);
+                        updateIdlePersisted(lastActiveToPersist);
                         callback.operationComplete(result, stat);
                     }
 
@@ -3963,11 +4029,17 @@ public class ManagedCursorImpl implements ManagedCursor {
         }
 
         Position position = mdEntry.newPosition;
+        long lastActiveToPersist = lastActive;
         Builder piBuilder = PositionInfo.newBuilder().setLedgerId(position.getLedgerId())
                 .setEntryId(position.getEntryId())
                 .addAllProperties(buildPropertiesMap(mdEntry.properties));
+<<<<<<< HEAD
         if (!mdEntry.propagatePersistFailure) {
             piBuilder.addAllBatchedEntryDeletionIndexInfo(buildBatchEntryDeletionIndexInfoList());
+=======
+        if (lastActiveToPersist < 0) {
+            piBuilder.setIdleSince(-lastActiveToPersist);
+>>>>>>> 968489549d4 ([fix][broker] The configuration subscriptionExpirationTimeMinutes does not work if the topic was reloaded frequently (#25244))
         }
 
         Map<Long, long[]> internalRanges = null;
@@ -4037,12 +4109,17 @@ public class ManagedCursorImpl implements ManagedCursor {
 
                 mbean.persistToLedger(true);
                 mbean.addWriteCursorLedgerSize(data.length);
+<<<<<<< HEAD
                 persistCallback.operationComplete();
                 // The appended PositionInfo is a self-contained legacy snapshot and is now the
                 // last entry: any per-msgLedger checkpoint ledgers tracked from a recovery are
                 // obsolete (legacy recovery only reads this entry). Fired after the callback,
                 // matching the rollover/reset GC convention.
                 deleteObsoleteCursorLedgersAfterLegacyPersist();
+=======
+                updateIdlePersisted(lastActiveToPersist);
+                callback.operationComplete();
+>>>>>>> 968489549d4 ([fix][broker] The configuration subscriptionExpirationTimeMinutes does not work if the topic was reloaded frequently (#25244))
             } else {
                 if (!ignoreClosedStateAfterFailure && state.isClosed()) {
                     // After closed the cursor, the in-progress persistence task will get a
@@ -4763,6 +4840,11 @@ public class ManagedCursorImpl implements ManagedCursor {
     public void updateReadStats(int readEntriesCount, long readEntriesSize) {
         this.entriesReadCount += readEntriesCount;
         this.entriesReadSize += readEntriesSize;
+    }
+
+    @VisibleForTesting
+    boolean isDirty() {
+        return isDirty;
     }
 
     void flush() {
