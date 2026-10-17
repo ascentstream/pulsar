@@ -84,6 +84,9 @@ message PositionInfo {
     // Store which index in the batch message has been deleted
     repeated BatchedEntryDeletionIndexInfo batchedEntryDeletionIndexInfo = 5;
     repeated LongListMap individualDeletedMessageRanges = 6;
+
+    // If the cursor was idle (e.g. its subscription had no consumers), the time since then (Unix time, milliseconds)
+    optional int64 idleSince = 7;
 }
 
 message NestedPositionInfo {
@@ -131,7 +134,7 @@ message ManagedCursorInfo {
     // the current cursor position
     repeated LongProperty properties = 5;
 
-    // deprecated, do not persist this field anymore
+    // deprecated: no longer read, but still written (as a positive time) for the older versions that read it
     optional int64 lastActive = 6 [deprecated = true];
 
     // Store which index in the batch message has been deleted
@@ -143,6 +146,9 @@ message ManagedCursorInfo {
 
     optional int64 lastCmCursorLedgerId = 9;
     optional int64 lastCmEntryId = 10;
+
+    // If the cursor was idle (e.g. its subscription had no consumers), the time since then (Unix time, milliseconds)
+    optional int64 idleSince = 11;
 }
 
 message CursorLogEntry {
@@ -182,7 +188,7 @@ message AckStateRef {
 message CursorCheckpointChunk {
     optional int32 partIndex = 1;
     optional int32 partCount = 2;
-    optional bytes checkpointBytes = 3;
+    optional bytes checkpointBytes = 3; ([fix][broker] The configuration subscriptionExpirationTimeMinutes does not work if the topic was reloaded frequently (#25244))
 }
 
 enum CompressionType {
