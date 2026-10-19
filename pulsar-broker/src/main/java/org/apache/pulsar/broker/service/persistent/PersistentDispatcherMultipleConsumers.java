@@ -361,6 +361,16 @@ public class PersistentDispatcherMultipleConsumers extends AbstractPersistentDis
             }
             return;
         }
+        if (shouldRewindBeforeReadingOrReplaying) {
+            if (havePendingRead || havePendingReplayRead) {
+                // All consumers disconnected while this read was pending: its entries are discarded when it ends,
+                // and the cursor is rewound only then, so that it can't dispatch what the rewind reads again
+                log.debug("Skipping read until the read pending before all consumers disconnected ends");
+                return;
+            }
+            cursor.rewind();
+            shouldRewindBeforeReadingOrReplaying = false;
+        }
         if (shouldPauseDeliveryForDelayTracker()) {
             if (log.isDebugEnabled()) {
                 log.debug("[{}] [{}] Skipping read for the topic, Due to pause delivery for delay tracker.",
@@ -743,12 +753,12 @@ public class PersistentDispatcherMultipleConsumers extends AbstractPersistentDis
 
         readFailureBackoff.reduceToHalf();
 
-        if (shouldRewindBeforeReadingOrReplaying && readType == ReadType.Normal) {
-            // All consumers got disconnected before the completion of the read operation
+        if (shouldRewindBeforeReadingOrReplaying) {
+            // All consumers got disconnected before the completion of the read operation. A replay read's entries
+            // are discarded too: the redelivery queue was cleared, and the rewind reads them again. The next read
+            // rewinds the cursor once no read is pending.
             entries.forEach(Entry::release);
-            onReadEnded(ReadType.Normal);
-            cursor.rewind();
-            shouldRewindBeforeReadingOrReplaying = false;
+            onReadEnded(readType);
             readMoreEntriesAsync();
             return;
         }
@@ -1086,11 +1096,6 @@ public class PersistentDispatcherMultipleConsumers extends AbstractPersistentDis
                 log.debug("[{}] Error reading entries at {} : {}, Read Type {} - Retrying to read in {} seconds", name,
                         cursor.getReadPosition(), exception.getMessage(), readType, waitTimeMillis / 1000.0);
             }
-        }
-
-        if (shouldRewindBeforeReadingOrReplaying) {
-            shouldRewindBeforeReadingOrReplaying = false;
-            cursor.rewind();
         }
 
         onReadEnded(readType);
