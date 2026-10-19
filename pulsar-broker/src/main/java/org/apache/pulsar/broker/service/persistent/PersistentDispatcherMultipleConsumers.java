@@ -346,6 +346,16 @@ public class PersistentDispatcherMultipleConsumers extends AbstractPersistentDis
             }
             return;
         }
+        if (shouldRewindBeforeReadingOrReplaying) {
+            if (havePendingRead || havePendingReplayRead) {
+                // All consumers disconnected while this read was pending: its entries are discarded when it ends,
+                // and the cursor is rewound only then, so that it can't dispatch what the rewind reads again
+                log.debug("Skipping read until the read pending before all consumers disconnected ends");
+                return;
+            }
+            cursor.rewind();
+            shouldRewindBeforeReadingOrReplaying = false;
+        }
         if (shouldPauseDeliveryForDelayTracker()) {
             if (log.isDebugEnabled()) {
                 log.debug("[{}] [{}] Skipping read for the topic, Due to pause delivery for delay tracker.",
@@ -486,6 +496,13 @@ public class PersistentDispatcherMultipleConsumers extends AbstractPersistentDis
 
     private void updateMinReplayedPosition() {
         minReplayedPosition = getFirstPositionInReplay().orElse(null);
+    }
+
+    /**
+     * Called under the dispatcher's monitor when a read ends without its entries being dispatched: it failed, was
+     * cancelled, read only deleted entries, or completed after every consumer disconnected.
+     */
+    protected void onReadEnded(ReadType readType) {
     }
 
     private boolean shouldPauseOnAckStatePersist(ReadType readType) {
@@ -699,11 +716,12 @@ public class PersistentDispatcherMultipleConsumers extends AbstractPersistentDis
 
         readFailureBackoff.reduceToHalf();
 
-        if (shouldRewindBeforeReadingOrReplaying && readType == ReadType.Normal) {
-            // All consumers got disconnected before the completion of the read operation
+        if (shouldRewindBeforeReadingOrReplaying) {
+            // All consumers got disconnected before the completion of the read operation. A replay read's entries
+            // are discarded too: the redelivery queue was cleared, and the rewind reads them again. The next read
+            // rewinds the cursor once no read is pending.
             entries.forEach(Entry::release);
-            cursor.rewind();
-            shouldRewindBeforeReadingOrReplaying = false;
+            onReadEnded(readType); ([fix][broker] Don't dispatch a replay read that was pending when all consumers of a Shared subscription disconnected (#27007))
             readMoreEntriesAsync();
             return;
         }
@@ -1040,11 +1058,7 @@ public class PersistentDispatcherMultipleConsumers extends AbstractPersistentDis
             }
         }
 
-        if (shouldRewindBeforeReadingOrReplaying) {
-            shouldRewindBeforeReadingOrReplaying = false;
-            cursor.rewind();
-        }
-
+        onReadEnded(readType); ([fix][broker] Don't dispatch a replay read that was pending when all consumers of a Shared subscription disconnected (#27007))
         if (readType == ReadType.Normal) {
             havePendingRead = false;
         } else {
