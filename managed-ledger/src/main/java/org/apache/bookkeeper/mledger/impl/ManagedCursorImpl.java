@@ -673,13 +673,7 @@ public class ManagedCursorImpl implements ManagedCursor {
                         }
                     }
 
-<<<<<<< HEAD
-=======
-                    Map<String, Long> recoveredProperties =
-                            recoverProperties(info.getPropertiesCount(), info::getProperties);
-
-                    recoverLastActive(info.getIdleSince());
->>>>>>> 968489549d4 ([fix][broker] The configuration subscriptionExpirationTimeMinutes does not work if the topic was reloaded frequently (#25244))
+                    recoverLastActive(info.getIdleSince()); ([fix][broker] The configuration subscriptionExpirationTimeMinutes does not work if the topic was reloaded frequently (#25244))
                     recoveredCursor(recoveredPosition, recoveredProperties, recoveredCursorProperties, null);
                     recoverCallback.operationComplete();
                 } else {
@@ -750,30 +744,7 @@ public class ManagedCursorImpl implements ManagedCursor {
 
                 LedgerEntry entry = seq.nextElement();
                 mbean.addReadCursorLedgerSize(entry.getLength());
-<<<<<<< HEAD
-                recoverWithCheckpointFormat(info, lh, ledgerId, entry.getEntry(), callback);
-=======
-                PositionInfo positionInfo;
-                try {
-                    positionInfo = PositionInfo.parseFrom(entry.getEntry());
-                } catch (InvalidProtocolBufferException e) {
-                    callback.operationFailed(new ManagedLedgerException(e));
-                    return;
-                }
-
-                Map<String, Long> recoveredProperties =
-                        recoverProperties(positionInfo.getPropertiesCount(), positionInfo::getProperties);
-
-                Position position = PositionFactory.create(positionInfo.getLedgerId(), positionInfo.getEntryId());
-                recoverIndividualDeletedMessages(positionInfo);
-                if (getConfig().isDeletionAtBatchIndexLevelEnabled()
-                    && positionInfo.getBatchedEntryDeletionIndexInfoCount() > 0) {
-                    recoverBatchDeletedIndexes(positionInfo.getBatchedEntryDeletionIndexInfoList());
-                }
-                recoverLastActive(positionInfo.getIdleSince());
-                recoveredCursor(position, recoveredProperties, cursorProperties, lh);
-                callback.operationComplete();
->>>>>>> 968489549d4 ([fix][broker] The configuration subscriptionExpirationTimeMinutes does not work if the topic was reloaded frequently (#25244))
+                recoverWithCheckpointFormat(info, lh, ledgerId, entry.getEntry(), callback); ([fix][broker] The configuration subscriptionExpirationTimeMinutes does not work if the topic was reloaded frequently (#25244))
             }, null);
         };
         try {
@@ -1006,6 +977,7 @@ public class ManagedCursorImpl implements ManagedCursor {
                 && positionInfo.getBatchedEntryDeletionIndexInfoCount() > 0) {
             recoverBatchDeletedIndexes(positionInfo.getBatchedEntryDeletionIndexInfoList());
         }
+        recoverLastActive(positionInfo.getIdleSince());
         recoveredCursor(position, recoveredProperties, cursorProperties, lh);
         callback.operationComplete();
     }
@@ -4033,13 +4005,11 @@ public class ManagedCursorImpl implements ManagedCursor {
         Builder piBuilder = PositionInfo.newBuilder().setLedgerId(position.getLedgerId())
                 .setEntryId(position.getEntryId())
                 .addAllProperties(buildPropertiesMap(mdEntry.properties));
-<<<<<<< HEAD
         if (!mdEntry.propagatePersistFailure) {
             piBuilder.addAllBatchedEntryDeletionIndexInfo(buildBatchEntryDeletionIndexInfoList());
-=======
+        }
         if (lastActiveToPersist < 0) {
-            piBuilder.setIdleSince(-lastActiveToPersist);
->>>>>>> 968489549d4 ([fix][broker] The configuration subscriptionExpirationTimeMinutes does not work if the topic was reloaded frequently (#25244))
+            piBuilder.setIdleSince(-lastActiveToPersist); ([fix][broker] The configuration subscriptionExpirationTimeMinutes does not work if the topic was reloaded frequently (#25244))
         }
 
         Map<Long, long[]> internalRanges = null;
@@ -4109,17 +4079,13 @@ public class ManagedCursorImpl implements ManagedCursor {
 
                 mbean.persistToLedger(true);
                 mbean.addWriteCursorLedgerSize(data.length);
-<<<<<<< HEAD
+                updateIdlePersisted(lastActiveToPersist);
                 persistCallback.operationComplete();
                 // The appended PositionInfo is a self-contained legacy snapshot and is now the
                 // last entry: any per-msgLedger checkpoint ledgers tracked from a recovery are
                 // obsolete (legacy recovery only reads this entry). Fired after the callback,
                 // matching the rollover/reset GC convention.
-                deleteObsoleteCursorLedgersAfterLegacyPersist();
-=======
-                updateIdlePersisted(lastActiveToPersist);
-                callback.operationComplete();
->>>>>>> 968489549d4 ([fix][broker] The configuration subscriptionExpirationTimeMinutes does not work if the topic was reloaded frequently (#25244))
+                deleteObsoleteCursorLedgersAfterLegacyPersist(); ([fix][broker] The configuration subscriptionExpirationTimeMinutes does not work if the topic was reloaded frequently (#25244))
             } else {
                 if (!ignoreClosedStateAfterFailure && state.isClosed()) {
                     // After closed the cursor, the in-progress persistence task will get a
