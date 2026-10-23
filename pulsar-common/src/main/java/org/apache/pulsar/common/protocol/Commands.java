@@ -1970,6 +1970,9 @@ public class Commands {
             ByteBuf payload, ByteBuf batchBuffer) {
         singleMessageMetadata.setPayloadSize(payload.readableBytes());
 
+        // reserve the space up front: writeTo() copies the strings of a parsed metadata without growing the buffer
+        batchBuffer.ensureWritable(Integer.BYTES + singleMessageMetadata.getSerializedSize() + payload.readableBytes());
+
         // serialize meta-data size, meta-data and payload for single message in batch
         batchBuffer.writeInt(singleMessageMetadata.getSerializedSize());
         singleMessageMetadata.writeTo(batchBuffer);
