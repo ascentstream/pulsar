@@ -327,10 +327,17 @@ public class PersistentDispatcherMultipleConsumers extends AbstractDispatcherMul
                 }
 
                 havePendingReplayRead = true;
-                minReplayedPosition = messagesToReplayNow.first();
-                Set<? extends Position> deletedMessages = topic.isDelayedDeliveryEnabled()
-                        ? asyncReplayEntriesInOrder(messagesToReplayFiltered)
-                        : asyncReplayEntries(messagesToReplayFiltered);
+                Set<? extends Position> deletedMessages;
+                try {
+                    minReplayedPosition = messagesToReplayNow.first();
+                    deletedMessages = topic.isDelayedDeliveryEnabled()
+                            ? asyncReplayEntriesInOrder(messagesToReplayFiltered)
+                            : asyncReplayEntries(messagesToReplayFiltered);
+                } catch (Throwable failure) {
+                    // Nothing else would ever clear the flag after this failure (issue #26454).
+                    handleReadSchedulingFailure(failure, ReadType.Replay);
+                    return;
+                }
                 // clear already acked positions from replay bucket
 
                 deletedMessages.forEach(position -> redeliveryMessages.remove(((PositionImpl) position).getLedgerId(),
@@ -352,27 +359,32 @@ public class PersistentDispatcherMultipleConsumers extends AbstractDispatcherMul
                             consumerList.size());
                 }
                 havePendingRead = true;
-                NavigableSet<PositionImpl> toReplay = getMessagesToReplayNow(1);
-                if (!toReplay.isEmpty()) {
-                    minReplayedPosition = toReplay.first();
-                    redeliveryMessages.add(minReplayedPosition.getLedgerId(), minReplayedPosition.getEntryId());
-                } else {
-                    minReplayedPosition = null;
-                }
-
-                // Filter out and skip read delayed messages exist in DelayedDeliveryTracker
-                if (delayedDeliveryTracker.isPresent()) {
-                    Predicate<PositionImpl> skipCondition = null;
-                    final DelayedDeliveryTracker deliveryTracker = delayedDeliveryTracker.get();
-                    if (deliveryTracker instanceof BucketDelayedDeliveryTracker) {
-                        skipCondition = position -> ((BucketDelayedDeliveryTracker) deliveryTracker)
-                                .containsMessage(position.getLedgerId(), position.getEntryId());
+                try {
+                    NavigableSet<PositionImpl> toReplay = getMessagesToReplayNow(1);
+                    if (!toReplay.isEmpty()) {
+                        minReplayedPosition = toReplay.first();
+                        redeliveryMessages.add(minReplayedPosition.getLedgerId(), minReplayedPosition.getEntryId());
+                    } else {
+                        minReplayedPosition = null;
                     }
-                    cursor.asyncReadEntriesWithSkipOrWait(messagesToRead, bytesToRead, this, ReadType.Normal,
-                            topic.getMaxReadPosition(), skipCondition);
-                } else {
-                    cursor.asyncReadEntriesOrWait(messagesToRead, bytesToRead, this, ReadType.Normal,
-                            topic.getMaxReadPosition());
+
+                    // Filter out and skip read delayed messages exist in DelayedDeliveryTracker
+                    if (delayedDeliveryTracker.isPresent()) {
+                        Predicate<PositionImpl> skipCondition = null;
+                        final DelayedDeliveryTracker deliveryTracker = delayedDeliveryTracker.get();
+                        if (deliveryTracker instanceof BucketDelayedDeliveryTracker) {
+                            skipCondition = position -> ((BucketDelayedDeliveryTracker) deliveryTracker)
+                                    .containsMessage(position.getLedgerId(), position.getEntryId());
+                        }
+                        cursor.asyncReadEntriesWithSkipOrWait(messagesToRead, bytesToRead, this, ReadType.Normal,
+                                topic.getMaxReadPosition(), skipCondition);
+                    } else {
+                        cursor.asyncReadEntriesOrWait(messagesToRead, bytesToRead, this, ReadType.Normal,
+                                topic.getMaxReadPosition());
+                    }
+                } catch (Throwable failure) {
+                    // Nothing else would ever clear the flag after this failure (issue #26454).
+                    handleReadSchedulingFailure(failure, ReadType.Normal);
                 }
             } else {
                 if (log.isDebugEnabled()) {
@@ -391,6 +403,31 @@ public class PersistentDispatcherMultipleConsumers extends AbstractDispatcherMul
                 log.debug("[{}] Consumer buffer is full, pause reading", name);
             }
         }
+    }
+
+    /**
+     * Handles a failure that happens between setting the pending read flag and the submission of the
+     * read returning, including errors such as {@link OutOfMemoryError} which are not handled
+     * anywhere else on this path. Without this recovery no completion would ever clear the flag and
+     * the dispatcher would stop reading until the topic is unloaded (issue #26454).
+     *
+     * <p>The recovery is best-effort: the failure may also come from inside the managed cursor after
+     * it already took over the read, in which case cursor-side state, such as the pending read
+     * operations counter, can still be left behind.
+     */
+    private void handleReadSchedulingFailure(Throwable failure, ReadType readType) {
+        if (readType == ReadType.Normal) {
+            havePendingRead = false;
+            // The failure may have happened after the read was already registered inside the
+            // managed cursor to wait for new entries: cancel it so the cleared flag cannot leave
+            // the cursor waiting.
+            cursor.cancelPendingReadRequest();
+        } else {
+            havePendingReplayRead = false;
+        }
+        log.error("[{}] Failed to schedule read of messages, readType: {}", name, readType, failure);
+        scheduleReadEntriesWithDelay(new ManagedLedgerException(failure), readType,
+                readFailureBackoff.next());
     }
 
     @Override
@@ -880,8 +917,16 @@ public class PersistentDispatcherMultipleConsumers extends AbstractDispatcherMul
 
     @Override
     public synchronized void readEntriesFailed(ManagedLedgerException exception, Object ctx) {
-
         ReadType readType = (ReadType) ctx;
+        // Clear the pending read flag before anything that might throw, as readEntriesComplete does:
+        // if this callback dies midway, nothing would ever clear the flag again and the dispatcher
+        // would stall until the topic is unloaded (issue #26454).
+        if (readType == ReadType.Normal) {
+            havePendingRead = false;
+        } else {
+            havePendingReplayRead = false;
+        }
+
         long waitTimeMillis = readFailureBackoff.next();
 
         // Do not keep reading more entries if the cursor is already closed.
@@ -919,14 +964,10 @@ public class PersistentDispatcherMultipleConsumers extends AbstractDispatcherMul
             cursor.rewind();
         }
 
-        if (readType == ReadType.Normal) {
-            havePendingRead = false;
-        } else {
-            havePendingReplayRead = false;
-            if (exception instanceof ManagedLedgerException.InvalidReplayPositionException) {
-                PositionImpl markDeletePosition = (PositionImpl) cursor.getMarkDeletedPosition();
-                redeliveryMessages.removeAllUpTo(markDeletePosition.getLedgerId(), markDeletePosition.getEntryId());
-            }
+        if (readType == ReadType.Replay
+                && exception instanceof ManagedLedgerException.InvalidReplayPositionException) {
+            PositionImpl markDeletePosition = (PositionImpl) cursor.getMarkDeletedPosition();
+            redeliveryMessages.removeAllUpTo(markDeletePosition.getLedgerId(), markDeletePosition.getEntryId());
         }
 
         readBatchSize = serviceConfig.getDispatcherMinReadBatchSize();
