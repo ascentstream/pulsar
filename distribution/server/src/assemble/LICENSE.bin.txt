@@ -266,7 +266,7 @@ The Apache Software License, Version 2.0
  * Proto Google Common Protos -- com.google.api.grpc-proto-google-common-protos-2.64.1.jar
  * Bitbucket -- org.bitbucket.b_c-jose4j-0.9.6.jar
  * Gson
-    - com.google.code.gson-gson-2.15.0.jar
+    - com.google.code.gson-gson-2.13.2.jar
     - io.gsonfire-gson-fire-1.8.5.jar
  * Guava
     - com.google.guava-guava-33.7.2-jre.jar
@@ -435,15 +435,15 @@ The Apache Software License, Version 2.0
  * Google Error Prone Annotations - com.google.errorprone-error_prone_annotations-2.45.0.jar
  * Apache Thrift - org.apache.thrift-libthrift-0.23.0.jar
  * OkHttp3
-     - com.squareup.okhttp3-logging-interceptor-5.5.1.jar
-     - com.squareup.okhttp3-okhttp-5.5.1.jar
-     - com.squareup.okhttp3-okhttp-jvm-5.5.1.jar
+     - com.squareup.okhttp3-logging-interceptor-5.3.2.jar
+     - com.squareup.okhttp3-okhttp-5.3.2.jar
+     - com.squareup.okhttp3-okhttp-jvm-5.3.2.jar
  * Okio
-     - com.squareup.okio-okio-3.18.2.jar
-     - com.squareup.okio-okio-jvm-3.18.2.jar
+     - com.squareup.okio-okio-3.17.0.jar
+     - com.squareup.okio-okio-jvm-3.17.0.jar
  * Javassist -- org.javassist-javassist-3.25.0-GA.jar
  * Kotlin Standard Lib
-     - org.jetbrains.kotlin-kotlin-stdlib-2.4.21.jar
+     - org.jetbrains.kotlin-kotlin-stdlib-2.2.21.jar
      - org.jetbrains-annotations-13.0.jar
  * gRPC
     - io.grpc-grpc-all-1.75.0.jar
@@ -476,7 +476,7 @@ The Apache Software License, Version 2.0
     - net.jodah-typetools-0.5.0.jar
     - dev.failsafe-failsafe-3.3.2.jar
   * Byte Buddy
-    - net.bytebuddy-byte-buddy-1.18.16.jar
+    - net.bytebuddy-byte-buddy-1.17.7.jar
   * zt-zip
     - org.zeroturnaround-zt-zip-1.17.jar
   * Apache Avro
@@ -512,13 +512,13 @@ The Apache Software License, Version 2.0
   * Vertx
     - io.vertx-vertx-auth-common-4.5.28.jar
     - io.vertx-vertx-bridge-common-4.5.28.jar
-    - io.vertx-vertx-core-4.5.35.jar
+    - io.vertx-vertx-core-4.5.28.jar
     - io.vertx-vertx-web-4.5.28.jar
     - io.vertx-vertx-web-common-4.5.28.jar
   * Apache ZooKeeper
     - org.apache.zookeeper-zookeeper-jute-3.9.5.jar
   * Snappy Java
-    - org.xerial.snappy-snappy-java-1.1.10.12.jar
+    - org.xerial.snappy-snappy-java-1.1.10.9.jar
   * Google HTTP Client
     - com.google.http-client-google-http-client-gson-1.41.0.jar
     - com.google.http-client-google-http-client-1.41.0.jar
@@ -566,7 +566,7 @@ BSD 3-clause "New" or "Revised" License
     - com.google.auth-google-auth-library-oauth2-http-1.24.1.jar -- ../licenses/LICENSE-google-auth-library.txt
  * LevelDB -- (included in org.rocksdb.*.jar) -- ../licenses/LICENSE-LevelDB.txt
  * JSR305 -- com.google.code.findbugs-jsr305-3.0.2.jar -- ../licenses/LICENSE-JSR305.txt
- * JLine3 -- org.jline-jline-4.4.8-jdk11.jar -- ../licenses/LICENSE-JLine.txt
+ * JLine3 -- org.jline-jline-4.3.1.jar -- ../licenses/LICENSE-JLine.txt
  * OW2 ASM
    - org.ow2.asm-asm-9.10.1.jar -- ../licenses/LICENSE-ASM.txt
    - org.ow2.asm-asm-commons-9.10.1.jar -- ../licenses/LICENSE-ASM.txt
