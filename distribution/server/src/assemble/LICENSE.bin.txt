@@ -512,7 +512,7 @@ The Apache Software License, Version 2.0
   * Vertx
     - io.vertx-vertx-auth-common-4.5.28.jar
     - io.vertx-vertx-bridge-common-4.5.28.jar
-    - io.vertx-vertx-core-4.5.28.jar
+    - io.vertx-vertx-core-4.5.35.jar
     - io.vertx-vertx-web-4.5.28.jar
     - io.vertx-vertx-web-common-4.5.28.jar
   * Apache ZooKeeper
