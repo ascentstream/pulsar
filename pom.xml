@@ -274,8 +274,8 @@ flexible messaging model and an intuitive client API.</description>
     <asynchttpclient.version>2.15.0</asynchttpclient.version>
     <commons-lang3.version>3.19.0</commons-lang3.version>
     <commons-io.version>2.22.0</commons-io.version>
-    <commons-codec.version>1.22.0</commons-codec.version>
-    <commons-logging.version>1.3.6</commons-logging.version>
+    <commons-codec.version>1.23.0</commons-codec.version>
+    <commons-logging.version>1.4.0</commons-logging.version> ([fix][sec] Upgrade commons-codec to 1.23.0 (#27190))
     <jakarta.ws.rs-api.version>2.1.6</jakarta.ws.rs-api.version>
     <hdrHistogram.version>2.1.9</hdrHistogram.version>
     <javax.servlet-api>3.1.0</javax.servlet-api>
