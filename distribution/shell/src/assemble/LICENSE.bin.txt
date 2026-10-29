@@ -392,9 +392,9 @@ The Apache Software License, Version 2.0
      - opentelemetry-context-1.62.0.jar
 
  * BookKeeper
-    - bookkeeper-common-allocator-4.17.4.0.jar
-    - cpu-affinity-4.17.4.0.jar
-    - circe-checksum-4.17.4.0.jar
+    - bookkeeper-common-allocator-4.17.4.1.jar
+    - cpu-affinity-4.17.4.1.jar
+    - circe-checksum-4.17.4.1.jar
   * AirCompressor
      - aircompressor-2.0.3.jar
  * AsyncHttpClient
