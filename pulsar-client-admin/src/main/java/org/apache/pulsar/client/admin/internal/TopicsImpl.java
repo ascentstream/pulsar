@@ -1167,6 +1167,44 @@ public class TopicsImpl extends BaseResource implements Topics {
     }
 
     @Override
+    public List<Long> trimConsumedLedgersBefore(String topic, long ledgerId) throws PulsarAdminException {
+        return sync(() -> trimConsumedLedgersBeforeAsync(topic, ledgerId));
+    }
+
+    @Override
+    public CompletableFuture<List<Long>> trimConsumedLedgersBeforeAsync(String topic, long ledgerId) {
+        TopicName tn = validateTopic(topic);
+        WebTarget path = topicPath(tn, "trimConsumedLedgersBefore", String.valueOf(ledgerId));
+        final CompletableFuture<List<Long>> future = new CompletableFuture<>();
+        try {
+            request(path).async().post(Entity.entity("", MediaType.APPLICATION_JSON),
+                    new InvocationCallback<Response>() {
+                        @Override
+                        public void completed(Response response) {
+                            int status = response.getStatus();
+                            if (status != Response.Status.OK.getStatusCode()) {
+                                future.completeExceptionally(getApiException(response));
+                            } else {
+                                try {
+                                    future.complete(response.readEntity(new GenericType<List<Long>>() {}));
+                                } catch (Exception e) {
+                                    future.completeExceptionally(getApiException(e));
+                                }
+                            }
+                        }
+
+                        @Override
+                        public void failed(Throwable throwable) {
+                            future.completeExceptionally(getApiException(throwable.getCause()));
+                        }
+                    });
+        } catch (PulsarAdminException cae) {
+            future.completeExceptionally(cae);
+        }
+        return future;
+    }
+
+    @Override
     public LongRunningProcessStatus compactionStatus(String topic)
             throws PulsarAdminException {
         return sync(() -> compactionStatusAsync(topic));

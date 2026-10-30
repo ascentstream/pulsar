@@ -375,11 +375,8 @@ public class ManagedLedgerFactoryImpl implements ManagedLedgerFactory {
                             new EnsemblePlacementPolicyConfig(config.getBookKeeperEnsemblePlacementPolicyClassName(),
                                     config.getBookKeeperEnsemblePlacementPolicyProperties()))
                     .thenAccept(bk -> {
-                        final ManagedLedgerImpl newledger = config.getShadowSource() == null
-                                ? new ManagedLedgerImpl(this, bk, store, config, scheduledExecutor, name,
-                                mlOwnershipChecker)
-                                : new ShadowManagedLedgerImpl(this, bk, store, config, scheduledExecutor, name,
-                                mlOwnershipChecker);
+                        final ManagedLedgerImpl newledger = createManagedLedgerInstance(bk, store, config,
+                                scheduledExecutor, name, mlOwnershipChecker);
                         PendingInitializeManagedLedger pendingLedger = new PendingInitializeManagedLedger(newledger);
                         pendingInitializeLedgers.put(name, pendingLedger);
                         newledger.initialize(new ManagedLedgerInitializeLedgerCallback() {
@@ -1042,6 +1039,26 @@ public class ManagedLedgerFactoryImpl implements ManagedLedgerFactory {
 
     public CompletableFuture<BookKeeper> getBookKeeper() {
         return bookkeeperFactory.get();
+    }
+
+    /**
+     * Factory method to create a ManagedLedgerImpl instance. This method can be overridden
+     * by subclasses to provide custom ManagedLedgerImpl implementations.
+     *
+     * @param bk the BookKeeper client
+     * @param store the metadata store
+     * @param config the managed ledger configuration
+     * @param scheduledExecutor the scheduler for executing tasks
+     * @param name the managed ledger name
+     * @param mlOwnershipChecker supplier to check ownership
+     * @return a new ManagedLedgerImpl instance
+     */
+    protected ManagedLedgerImpl createManagedLedgerInstance(BookKeeper bk, MetaStore store,
+            ManagedLedgerConfig config, OrderedScheduler scheduledExecutor,
+            String name, Supplier<CompletableFuture<Boolean>> mlOwnershipChecker) {
+        return config.getShadowSource() == null
+                ? new ManagedLedgerImpl(this, bk, store, config, scheduledExecutor, name, mlOwnershipChecker)
+                : new ShadowManagedLedgerImpl(this, bk, store, config, scheduledExecutor, name, mlOwnershipChecker);
     }
 
     /**
