@@ -18,6 +18,7 @@
  */
 package org.apache.pulsar.compaction;
 
+import com.google.common.annotations.VisibleForTesting;
 import io.netty.buffer.ByteBuf;
 import java.io.IOException;
 import java.time.Duration;
@@ -28,6 +29,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
+import java.util.function.BiFunction;
 import org.apache.bookkeeper.client.BKException;
 import org.apache.bookkeeper.client.BookKeeper;
 import org.apache.bookkeeper.client.LedgerHandle;
@@ -61,6 +63,11 @@ public class TwoPhaseCompactor extends Compactor {
     private static final Logger log = LoggerFactory.getLogger(TwoPhaseCompactor.class);
     private static final int MAX_OUTSTANDING = 500;
     protected static final String COMPACTED_TOPIC_LEDGER_PROPERTY = "CompactedTopicLedger";
+    // Injection point for tests to intercept the phase-two seek (mirrors the seam upstream keeps in
+    // AbstractTwoPhaseCompactor, which does not exist on this branch).
+    @VisibleForTesting
+    static BiFunction<RawReader, MessageId, CompletableFuture<Void>> injectionPhaseTwoSeek =
+            RawReader::seekAsync;
     private final Duration phaseOneLoopReadTimeout;
     private final boolean topicCompactionRetainNullKey;
 
@@ -222,7 +229,7 @@ public class TwoPhaseCompactor extends Compactor {
             MessageId lastReadId, Map<String, MessageId> latestForKey, BookKeeper bk, LedgerHandle ledger) {
         CompletableFuture<Long> promise = new CompletableFuture<>();
 
-        reader.seekAsync(from).thenCompose((v) -> {
+        injectionPhaseTwoSeek.apply(reader, from).thenCompose((v) -> {
             Semaphore outstanding = new Semaphore(MAX_OUTSTANDING);
             CompletableFuture<Void> loopPromise = new CompletableFuture<>();
             phaseTwoLoop(reader, to, latestForKey, ledger, outstanding, loopPromise, MessageId.earliest);
