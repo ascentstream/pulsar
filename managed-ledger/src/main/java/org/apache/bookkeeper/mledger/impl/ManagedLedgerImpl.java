@@ -2039,7 +2039,22 @@ public class ManagedLedgerImpl implements ManagedLedger, CreateCallback {
         }
     }
 
+    /**
+     * Reads the entries of the passed operation. Never fails synchronously: the cursor has already counted the
+     * operation as a pending read and relies on a completion callback to undo that, so a failure to submit the
+     * read - including an error such as {@link OutOfMemoryError} thrown while building or dispatching it, before
+     * anything was submitted to the bookkeeper - is reported through {@code readEntriesFailed}.
+     */
     void asyncReadEntries(OpReadEntry opReadEntry) {
+        try {
+            asyncReadEntriesInternal(opReadEntry);
+        } catch (Throwable t) {
+            log.error("[{}] Failed to submit read at position {}", name, opReadEntry.readPosition, t);
+            opReadEntry.readEntriesFailed(ManagedLedgerException.getManagedLedgerException(t), opReadEntry.ctx);
+        }
+    }
+
+    private void asyncReadEntriesInternal(OpReadEntry opReadEntry) {
         final State state = STATE_UPDATER.get(this);
         if (state.isFenced() || state == State.Closed) {
             opReadEntry.readEntriesFailed(new ManagedLedgerFencedException(), opReadEntry.ctx);

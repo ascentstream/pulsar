@@ -130,49 +130,59 @@ class OpReadEntry implements ReadEntriesCallback {
     }
 
     private void internalReadEntriesFailed(ManagedLedgerException exception, Object ctx) {
-        cursor.readOperationCompleted();
-
         if (!entries.isEmpty()) {
             // There were already some entries that were read before, we can return them
+            cursor.readOperationCompleted();
             complete(ctx);
-        } else if (!cursor.isClosed() && cursor.getConfig().isAutoSkipNonRecoverableData()
+            return;
+        }
+        if (!cursor.isClosed() && cursor.getConfig().isAutoSkipNonRecoverableData()
                 && exception instanceof NonRecoverableLedgerException) {
             log.warn("[{}][{}] read failed from ledger at position:{} : {}", cursor.ledger.getName(), cursor.getName(),
                     readPosition, exception.getMessage());
-            final ManagedLedgerImpl ledger = (ManagedLedgerImpl) cursor.getManagedLedger();
-            Position nexReadPosition;
-            Long lostLedger = null;
-            if (exception instanceof ManagedLedgerException.LedgerNotExistException) {
-                // try to find and move to next valid ledger
-                nexReadPosition = cursor.getNextLedgerPosition(readPosition.getLedgerId());
-                lostLedger = readPosition.ledgerId;
-            } else {
-                // Skip this read operation
-                nexReadPosition = ledger.getValidPositionAfterSkippedEntries(readPosition, count);
-            }
-            // fail callback if it couldn't find next valid ledger
-            if (nexReadPosition == null) {
-                fail(exception, ctx);
-                return;
-            }
-            updateReadPosition(nexReadPosition);
-            if (lostLedger != null) {
-                cursor.getManagedLedger().skipNonRecoverableLedger(lostLedger);
-            }
-            checkReadCompletion();
-        } else {
-            if (!(exception instanceof TooManyRequestsException)) {
-                log.warn("[{}][{}] read failed from ledger at position:{}", cursor.ledger.getName(),
-                        cursor.getName(), readPosition, exception);
-            } else {
-                if (log.isDebugEnabled()) {
-                    log.debug("[{}][{}] read throttled failed from ledger at position:{}", cursor.ledger.getName(),
-                            cursor.getName(), readPosition);
+            try {
+                final ManagedLedgerImpl ledger = (ManagedLedgerImpl) cursor.getManagedLedger();
+                Position nexReadPosition;
+                Long lostLedger = null;
+                if (exception instanceof ManagedLedgerException.LedgerNotExistException) {
+                    // try to find and move to next valid ledger
+                    nexReadPosition = cursor.getNextLedgerPosition(readPosition.getLedgerId());
+                    lostLedger = readPosition.getLedgerId();
+                } else {
+                    // Skip this read operation
+                    nexReadPosition = ledger.getValidPositionAfterSkippedEntries(readPosition, count);
                 }
+                // fail callback if it couldn't find next valid ledger
+                if (nexReadPosition == null) {
+                    cursor.readOperationCompleted();
+                    fail(exception, ctx);
+                    return;
+                }
+                updateReadPosition(nexReadPosition);
+                if (lostLedger != null) {
+                    cursor.getManagedLedger().skipNonRecoverableLedger(lostLedger);
+                }
+                // The read continues on the next ledger and keeps the pending-read count: its terminal
+                // completion decrements it once, and the catch below does if the continuation fails.
+                checkReadCompletion();
+            } catch (Throwable t) {
+                cursor.readOperationCompleted();
+                fail(ManagedLedgerException.getManagedLedgerException(t), ctx);
             }
-
-            fail(exception, ctx);
+            return;
         }
+        if (!(exception instanceof TooManyRequestsException)) {
+            log.warn("[{}][{}] read failed from ledger at position:{}", cursor.ledger.getName(),
+                    cursor.getName(), readPosition, exception);
+        } else {
+            if (log.isDebugEnabled()) {
+                log.debug("[{}][{}] read throttled failed from ledger at position:{}", cursor.ledger.getName(),
+                        cursor.getName(), readPosition);
+            }
+        }
+
+        cursor.readOperationCompleted();
+        fail(exception, ctx);
     }
 
     void updateReadPosition(Position newReadPosition) {
@@ -185,7 +195,8 @@ class OpReadEntry implements ReadEntriesCallback {
         if (entries.size() < count && cursor.hasMoreEntries()
                 && maxPosition.compareTo(readPosition) > 0) {
 
-            // We still have more entries to read from the next ledger, schedule a new async operation
+            // The read continues on the next ledger: asyncReadEntries never fails synchronously, and
+            // the pending-read count is decremented at the continuation's terminal point.
             cursor.ledger.getExecutor().execute(() -> {
                 readPosition = cursor.ledger.startReadOperationOnLedger(nextReadPosition);
                 cursor.ledger.asyncReadEntries(OpReadEntry.this);
