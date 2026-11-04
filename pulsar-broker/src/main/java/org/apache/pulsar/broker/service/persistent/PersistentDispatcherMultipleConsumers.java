@@ -343,9 +343,9 @@ public class PersistentDispatcherMultipleConsumers extends AbstractDispatcherMul
                 deletedMessages.forEach(position -> redeliveryMessages.remove(((PositionImpl) position).getLedgerId(),
                         ((PositionImpl) position).getEntryId()));
                 // if all the entries are acked-entries and cleared up from redeliveryMessages, try to read
-                // next entries as readCompletedEntries-callback was never called
+                // next entries: the completion of an empty replay goes through the callback path, and the
+                // next read is scheduled here as well, without a delay
                 if ((messagesToReplayFiltered.size() - deletedMessages.size()) == 0) {
-                    havePendingReplayRead = false;
                     readMoreEntriesAsync();
                 }
             } else if (BLOCKED_DISPATCHER_ON_UNACKMSG_UPDATER.get(this) == TRUE) {
