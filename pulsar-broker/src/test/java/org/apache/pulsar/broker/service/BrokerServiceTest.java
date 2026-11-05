@@ -150,8 +150,9 @@ public class BrokerServiceTest extends BrokerTestBase {
 
     @Test
     public void testTopicLoadTimeoutReason() {
-        TopicLoadingContext context = new TopicLoadingContext(TopicName.get("persistent://public/default/test"), true,
-                new CompletableFuture<>());
+        TopicLoadingContext context = TopicLoadingContext.builder()
+                .topicName(TopicName.get("persistent://public/default/test")).createIfMissing(true)
+                .topicFuture(new CompletableFuture<>()).build();
         assertEquals(context.getTopicLoadTimeoutReason(), TopicLoadFailureReason.TIMEOUT);
 
         assertTimeoutReason(context, TopicLoadingStage.NAMESPACE_POLICIES,

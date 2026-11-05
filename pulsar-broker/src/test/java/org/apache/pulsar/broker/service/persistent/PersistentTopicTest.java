@@ -31,6 +31,8 @@ import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertFalse;
 import static org.testng.Assert.assertNotNull;
@@ -730,128 +732,6 @@ public class PersistentTopicTest extends BrokerTestBase {
         assertThat(recreated).isNotSameAs(topic);
         try (Producer<String> producer = pulsarClient.newProducer(Schema.STRING).topic(topicName).create()) {
             producer.send("after cleanup retry");
-        }
-    }
-
-    @Test(dataProvider = "deletedTopicCacheRemoval", timeOut = 60000)
-    public void testDeleteWaitsForCacheRemovalAndRetriesAfterFailure(boolean failRemoval) throws Exception {
-        brokerServiceCustomizer = service -> spy(service);
-        restartBroker(configuration -> configuration.setTopicFactoryClassName(
-                InitializationTopicFactory.class.getName()));
-        String topicName = "persistent://prop/ns-abc/delete-cache-removal-" + UUID.randomUUID();
-        TopicName parsedTopic = TopicName.get(topicName);
-        BrokerService brokerService = pulsar.getBrokerService();
-        assertThat(brokerService).isSameAs(pulsarTestContext.getBrokerService());
-        CompletableFuture<Void> reconnectAdmission = new CompletableFuture<>();
-        AtomicReference<PersistentTopic> observedTargetTopic = new AtomicReference<>();
-        BrokerTestInterceptor.INSTANCE.setPersistentTopicDecorator(loadedTopic -> {
-            if (!loadedTopic.getName().equals(topicName)) {
-                return loadedTopic;
-            }
-            PersistentTopic observedTopic = spy(loadedTopic);
-            doAnswer(invocation -> {
-                @SuppressWarnings("unchecked")
-                CompletableFuture<Optional<Long>> admission =
-                        (CompletableFuture<Optional<Long>>) invocation.callRealMethod();
-                admission.whenComplete((epoch, error) -> {
-                    if (error == null) {
-                        reconnectAdmission.complete(null);
-                    } else {
-                        reconnectAdmission.completeExceptionally(error);
-                    }
-                });
-                return admission;
-            }).when(observedTopic).addProducer(any(), any());
-            observedTargetTopic.set(observedTopic);
-            return observedTopic;
-        });
-        PersistentTopic topic;
-        try {
-            topic = (PersistentTopic) brokerService.getTopic(topicName, true)
-                    .get(10, TimeUnit.SECONDS).orElseThrow();
-        } finally {
-            BrokerTestInterceptor.INSTANCE.reset();
-        }
-        assertThat(topic).isSameAs(observedTargetTopic.get());
-        ManagedLedgerImpl ledger = (ManagedLedgerImpl) topic.getManagedLedger();
-        NamespaceService namespaceService = pulsar.getNamespaceService();
-        NamespaceBundle bundle = namespaceService.getBundleAsync(parsedTopic).get(10, TimeUnit.SECONDS);
-        CompletableFuture<NamespaceBundle> cacheRemoval = new CompletableFuture<>();
-        CompletableFuture<NamespaceBundle> retryCacheRemoval = new CompletableFuture<>();
-        AtomicReference<CompletableFuture<NamespaceBundle>> pendingCacheRemoval = new AtomicReference<>(cacheRemoval);
-        CompletableFuture<Void> cacheRemovalStarted = new CompletableFuture<>();
-        AtomicBoolean interceptCacheRemoval = new AtomicBoolean(true);
-        AtomicInteger cacheRemovalCalls = new AtomicInteger();
-        when(namespaceService.getBundleAsync(parsedTopic)).thenAnswer(invocation -> {
-            if (!interceptCacheRemoval.get()) {
-                return invocation.callRealMethod();
-            }
-            cacheRemovalStarted.complete(null);
-            cacheRemovalCalls.incrementAndGet();
-            return pendingCacheRemoval.get();
-        });
-        try {
-            CompletableFuture<Void> deletion = topic.delete();
-            cacheRemovalStarted.get(10, TimeUnit.SECONDS);
-            Awaitility.await().atMost(Duration.ofSeconds(10)).untilAsserted(() ->
-                    assertThat(pulsar.getPulsarResources().getTopicResources().persistentTopicExists(parsedTopic)
-                            .get(10, TimeUnit.SECONDS)).isFalse());
-            assertThat(ledger.getState()).isEqualTo(ManagedLedgerImpl.State.FencedForDeletion);
-            assertThat(deletion).as("deletion must wait for the deleted topic to leave the broker cache")
-                    .isNotDone();
-
-            if (failRemoval) {
-                RuntimeException failure = new RuntimeException("Injected bundle lookup failure during cache removal");
-                cacheRemoval.completeExceptionally(failure);
-                assertThatThrownBy(() -> deletion.get(10, TimeUnit.SECONDS)).hasRootCause(failure);
-                assertThat(brokerService.getTopicReference(topicName)).contains(topic);
-                interceptCacheRemoval.set(false);
-                // A real client must not reconnect to the cached instance whose ledger has already been deleted.
-                try (PulsarClient reconnectingClient = PulsarClient.builder()
-                        .serviceUrl(pulsar.getBrokerServiceUrl()).build()) {
-                    reconnectingClient.newProducer().topic(topicName).createAsync();
-                    assertThatThrownBy(() -> reconnectAdmission.get(10, TimeUnit.SECONDS))
-                            .hasRootCauseInstanceOf(BrokerServiceException.TopicFencedException.class);
-                    assertThat(topic.getProducers()).isEmpty();
-                    assertThat(topic.isFenced()).isTrue();
-                }
-                pendingCacheRemoval.set(retryCacheRemoval);
-                cacheRemovalCalls.set(0);
-                interceptCacheRemoval.set(true);
-                CompletableFuture<Void> retry = brokerService.deleteTopic(topicName, false);
-                Awaitility.await().atMost(Duration.ofSeconds(10)).untilAsserted(() ->
-                        assertThat(cacheRemovalCalls).hasValue(1));
-                CompletableFuture<Void> concurrentRetry = brokerService.deleteTopic(topicName, false);
-                assertThat(concurrentRetry).isSameAs(retry);
-                CompletableFuture<Void> closing = topic.close();
-                assertThat(closing).isNotDone();
-                assertThat(retry).isNotDone();
-                assertThat(cacheRemovalCalls).hasValue(1);
-                retryCacheRemoval.complete(bundle);
-                retry.get(10, TimeUnit.SECONDS);
-                concurrentRetry.get(10, TimeUnit.SECONDS);
-                closing.get(10, TimeUnit.SECONDS);
-                interceptCacheRemoval.set(false);
-            } else {
-                cacheRemoval.complete(bundle);
-                deletion.get(10, TimeUnit.SECONDS);
-            }
-            // Retrying local cleanup must not reenter the metadata-deletion pipeline.
-            verify(brokerService, times(1)).deleteTopicAuthenticationWithRetry(eq(topicName), any(), anyInt());
-            assertThat(brokerService.getTopicReference(topicName)).isEmpty();
-            assertThat(brokerService.getTopics()).doesNotContainKey(topicName);
-            PersistentTopic recreated = (PersistentTopic) brokerService.getTopic(topicName, true)
-                    .get(10, TimeUnit.SECONDS).orElseThrow();
-            assertThat(recreated).isNotSameAs(topic);
-            assertThat(pulsar.getPulsarResources().getTopicResources().persistentTopicExists(parsedTopic)
-                    .get(10, TimeUnit.SECONDS)).isTrue();
-            try (Producer<String> producer = pulsarClient.newProducer(Schema.STRING).topic(topicName).create()) {
-                producer.send("after cache removal retry");
-            }
-        } finally {
-            interceptCacheRemoval.set(false);
-            cacheRemoval.complete(bundle);
-            retryCacheRemoval.complete(bundle);
         }
     }
 

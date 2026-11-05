@@ -431,7 +431,7 @@ public class ReceivedReplicatedSubscriptionUpdateResetTest {
                 lastAcknowledgement.set(result);
                 return result;
             }).when(subscription).acknowledgeMessageAsync(any(), eq(AckType.Cumulative), any());
-            controller = new ReplicatedSubscriptionsController(topic, "local", executor);
+            controller = new ReplicatedSubscriptionsController(topic, "local");
         }
 
         private void receive(int entry) {

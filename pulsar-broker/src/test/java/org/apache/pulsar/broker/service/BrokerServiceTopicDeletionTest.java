@@ -352,8 +352,9 @@ public class BrokerServiceTopicDeletionTest {
                 if (replaceBeforeFailure) {
                     replacement = new CompletableFuture<>();
                     realBroker.getTopics().put(name, replacement);
-                    realBroker.loadOrCreatePersistentTopic(new TopicLoadingContext(TopicName.get(name), true,
-                            replacement, mock(PulsarStats.class))).get(10, TimeUnit.SECONDS);
+                    realBroker.loadOrCreatePersistentTopic(TopicLoadingContext.builder()
+                            .topicName(TopicName.get(name)).createIfMissing(true).topicFuture(replacement)
+                            .build()).get(10, TimeUnit.SECONDS);
                 }
                 ServiceUnitNotReadyException failure = new ServiceUnitNotReadyException("Ownership was lost in queue");
                 fixture.failOwnershipAndAwaitCleanup(ownership, failure);
@@ -485,7 +486,7 @@ public class BrokerServiceTopicDeletionTest {
         CompletableFuture<Void> concurrentDelete = broker.deleteTopic(name, true);
         assertThat(concurrentDelete).isNotDone();
         CompletableFuture<Integer> unloading = broker.unloadServiceUnit(mock(NamespaceBundle.class),
-                false, false, 60, TimeUnit.SECONDS, Map.of(name, reservation));
+                false, false, 60, TimeUnit.SECONDS);
         assertThat(unloading).as("bundle ownership must wait for the pending metadata deletion").isNotDone();
 
         deleting.complete(null);

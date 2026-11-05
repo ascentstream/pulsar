@@ -198,7 +198,7 @@ public class GeoPersistentReplicatorTest {
             when(topic.getName()).thenReturn("persistent://public/default/t1");
             when(topic.getBrokerService()).thenReturn(brokerService);
             when(topic.getReplicatorPrefix()).thenReturn("pulsar.repl");
-            when(topic.getReplicatorDispatchRate()).thenReturn(null);
+            when(topic.getReplicatorDispatchRate(any())).thenReturn(null);
             return topic;
         }
 

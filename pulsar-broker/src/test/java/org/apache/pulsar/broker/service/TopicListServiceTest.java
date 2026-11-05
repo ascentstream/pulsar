@@ -29,8 +29,10 @@ import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.timeout;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -52,8 +54,11 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.stream.IntStream;
@@ -63,6 +68,7 @@ import org.apache.pulsar.broker.PulsarServerException;
 import org.apache.pulsar.broker.PulsarService;
 import org.apache.pulsar.broker.namespace.NamespaceService;
 import org.apache.pulsar.broker.resources.PulsarResources;
+import org.apache.pulsar.broker.resources.TopicListener;
 import org.apache.pulsar.broker.resources.TopicResources;
 import org.apache.pulsar.broker.topiclistlimit.TopicListSizeResultCache;
 import org.apache.pulsar.common.api.proto.CommandGetTopicsOfNamespace;
@@ -75,6 +81,7 @@ import org.apache.pulsar.common.semaphore.AsyncDualMemoryLimiterImpl;
 import org.apache.pulsar.common.semaphore.AsyncSemaphore;
 import org.apache.pulsar.common.topics.TopicList;
 import org.apache.pulsar.common.topics.TopicsPattern;
+import org.apache.pulsar.common.util.FutureUtil;
 import org.apache.pulsar.metadata.api.Notification;
 import org.apache.pulsar.metadata.api.NotificationType;
 import org.apache.pulsar.metadata.api.extended.MetadataStoreExtended;
@@ -105,6 +112,8 @@ public class TopicListServiceTest {
     private ScheduledExecutorService scheduledExecutorService;
     private PulsarService pulsar;
     private NamespaceService namespaceService;
+    private TopicListSizeResultCache.ResultHolder resultHolder;
+    private AtomicBoolean connectionActive;
 
     @BeforeMethod(alwaysRun = true)
     public void setup() throws Exception {
@@ -133,7 +142,7 @@ public class TopicListServiceTest {
         when(pulsar.getBrokerService()).thenReturn(brokerService);
         TopicListSizeResultCache topicListSizeResultCache = mock(TopicListSizeResultCache.class);
         when(brokerService.getTopicListSizeResultCache()).thenReturn(topicListSizeResultCache);
-        TopicListSizeResultCache.ResultHolder resultHolder = mock(TopicListSizeResultCache.ResultHolder.class);
+        resultHolder = mock(TopicListSizeResultCache.ResultHolder.class);
         doReturn(resultHolder).when(topicListSizeResultCache).getTopicListSize(anyString(), any());
         doReturn(CompletableFuture.completedFuture(1L)).when(resultHolder).getSizeAsync();
 
@@ -144,10 +153,11 @@ public class TopicListServiceTest {
         when(connection.getRemoteAddress()).thenReturn(new InetSocketAddress(10000));
         pulsarCommandSender = mock(PulsarCommandSender.class);
         when(connection.getCommandSender()).thenReturn(pulsarCommandSender);
-        when(connection.isActive()).thenReturn(true);
-        when(pulsarCommandSender.sendWatchTopicListUpdate(anyLong(), any(), any(), anyString(), any()))
+        connectionActive = new AtomicBoolean(true);
+        when(connection.isActive()).thenAnswer(__ -> connectionActive.get());
+        when(pulsarCommandSender.sendWatchTopicListUpdate(anyLong(), any(), any(), anyString(), any(), any()))
                 .thenReturn(CompletableFuture.completedFuture(null));
-        when(pulsarCommandSender.sendWatchTopicListSuccess(anyLong(), anyLong(), anyString(), any(), any()))
+        when(pulsarCommandSender.sendWatchTopicListSuccess(anyLong(), anyLong(), anyString(), any(), any(), any()))
                 .thenReturn(CompletableFuture.completedFuture(null));
 
         scheduledExecutorService = Executors.newSingleThreadScheduledExecutor();
@@ -629,7 +639,7 @@ public class TopicListServiceTest {
         verify(topicResources).registerPersistentTopicListener(any(TopicListService.TopicListWatcher.class));
         Collection<String> expectedTopics = new ArrayList<>(topics);
         verify(connection.getCommandSender()).sendWatchTopicListSuccess(eq(7L), eq(13L), eq(hash), eq(expectedTopics),
-                any());
+                any(), any());
     }
 
     @Test
@@ -657,7 +667,31 @@ public class TopicListServiceTest {
         verify(topicResources).registerPersistentTopicListener(any(TopicListService.TopicListWatcher.class));
         Collection<String> expectedTopics = new ArrayList<>(topics);
         verify(connection.getCommandSender()).sendWatchTopicListSuccess(eq(7L), eq(13L), eq(hash), eq(expectedTopics),
-                any());
+                any(), any());
+    }
+
+    @Test
+    public void testCancelledWatchResetsTopicListSizeEstimate() throws Exception {
+        // acquire all permits so that the watcher's permit request waits in the queue
+        AsyncDualMemoryLimiter.AsyncDualMemoryLimiterPermit permit =
+                memoryLimiter.acquire(1_000_000, AsyncDualMemoryLimiter.LimitType.HEAP_MEMORY,
+                                Boolean.FALSE::booleanValue)
+                        .get();
+        topicListService.handleWatchTopicList(
+                NamespaceName.get("tenant/ns"),
+                13,
+                7,
+                "persistent://tenant/ns/topic\\d",
+                topicsPatternImplementation, null,
+                lookupSemaphore);
+        Awaitility.await().untilAsserted(() -> Assert.assertEquals(
+                memoryLimiter.getLimiter(AsyncDualMemoryLimiter.LimitType.HEAP_MEMORY).getQueueSize(), 1));
+        // the connection closes while the request waits for permits
+        connectionActive.set(false);
+        memoryLimiter.release(permit);
+        // concurrent requests waiting for the size estimate of the cancelled request must be able to proceed
+        Awaitility.await().untilAsserted(() -> verify(resultHolder).resetIfInitializing());
+        verify(namespaceService, never()).getListOfUserTopics(any(), any());
     }
 
     @Test
@@ -718,12 +752,12 @@ public class TopicListServiceTest {
             } else {
                 return CompletableFuture.completedFuture(null);
             }
-        }).when(pulsarCommandSender).sendWatchTopicListSuccess(anyLong(), anyLong(), anyString(), any(), any());
+        }).when(pulsarCommandSender).sendWatchTopicListSuccess(anyLong(), anyLong(), anyString(), any(), any(), any());
         topicListFuture.complete(topics);
         assertThat(topicListService.getWatcherFuture(13)).succeedsWithin(Duration.ofSeconds(2));
         Collection<String> expectedTopics = new ArrayList<>(topics);
         verify(connection.getCommandSender(), timeout(2000L).times(3))
-                .sendWatchTopicListSuccess(eq(7L), eq(13L), eq(hash), eq(expectedTopics), any());
+                .sendWatchTopicListSuccess(eq(7L), eq(13L), eq(hash), eq(expectedTopics), any(), any());
     }
 
     @Test
@@ -744,13 +778,13 @@ public class TopicListServiceTest {
         notificationConsumer.accept(
                 new Notification(NotificationType.Created, "/managed-ledgers/tenant/ns/persistent/topic2"));
         verify(connection.getCommandSender(), timeout(2000L))
-                .sendWatchTopicListUpdate(eq(13L), eq(newTopics), any(), eq(hash), any());
+                .sendWatchTopicListUpdate(eq(13L), eq(newTopics), any(), eq(hash), any(), any());
 
         hash = TopicList.calculateHash(newTopics);
         notificationConsumer.accept(
                 new Notification(NotificationType.Deleted, "/managed-ledgers/tenant/ns/persistent/topic1"));
         verify(connection.getCommandSender(), timeout(2000L))
-                .sendWatchTopicListUpdate(eq(13L), eq(List.of()), eq(topics), eq(hash), any());
+                .sendWatchTopicListUpdate(eq(13L), eq(List.of()), eq(topics), eq(hash), any(), any());
     }
 
     @Test
@@ -767,7 +801,7 @@ public class TopicListServiceTest {
             } else {
                 return CompletableFuture.completedFuture(null);
             }
-        }).when(pulsarCommandSender).sendWatchTopicListUpdate(anyLong(), any(), any(), anyString(), any());
+        }).when(pulsarCommandSender).sendWatchTopicListUpdate(anyLong(), any(), any(), anyString(), any(), any());
 
         topicListService.handleWatchTopicList(
                 NamespaceName.get("tenant/ns"),
@@ -788,9 +822,9 @@ public class TopicListServiceTest {
                 new Notification(NotificationType.Deleted, "/managed-ledgers/tenant/ns/persistent/topic2"));
         InOrder inOrder = inOrder(connection.getCommandSender());
         inOrder.verify(connection.getCommandSender(), timeout(2000L).times(3))
-                .sendWatchTopicListUpdate(eq(13L), eq(newTopics), eq(List.of()), eq(hash), any());
+                .sendWatchTopicListUpdate(eq(13L), eq(newTopics), eq(List.of()), eq(hash), any(), any());
         inOrder.verify(connection.getCommandSender(), timeout(2000L).times(1))
-                .sendWatchTopicListUpdate(eq(13L), eq(List.of()), eq(newTopics), any(), any());
+                .sendWatchTopicListUpdate(eq(13L), eq(List.of()), eq(newTopics), any(), any(), any());
     }
 
     @Test
@@ -839,12 +873,12 @@ public class TopicListServiceTest {
                 topicsPatternImplementation, hash,
                 lookupSemaphore);
         doReturn(CompletableFuture.completedFuture(null)).when(pulsarCommandSender)
-                .sendWatchTopicListSuccess(anyLong(), anyLong(), anyString(), any(), any());
+                .sendWatchTopicListSuccess(anyLong(), anyLong(), anyString(), any(), any(), any());
         topicListFuture.complete(topics);
         assertThat(topicListService.getWatcherFuture(13)).succeedsWithin(Duration.ofSeconds(2));
         Collection<String> expectedTopics = List.of();
         verify(connection.getCommandSender(), timeout(2000L).times(1))
-                .sendWatchTopicListSuccess(eq(7L), eq(13L), eq(hash), eq(expectedTopics), any());
+                .sendWatchTopicListSuccess(eq(7L), eq(13L), eq(hash), eq(expectedTopics), any(), any());
     }
 
     @Test
@@ -859,12 +893,12 @@ public class TopicListServiceTest {
                 topicsPatternImplementation, "INVALID_HASH",
                 lookupSemaphore);
         doReturn(CompletableFuture.completedFuture(null)).when(pulsarCommandSender)
-                .sendWatchTopicListSuccess(anyLong(), anyLong(), anyString(), any(), any());
+                .sendWatchTopicListSuccess(anyLong(), anyLong(), anyString(), any(), any(), any());
         topicListFuture.complete(topics);
         assertThat(topicListService.getWatcherFuture(13)).succeedsWithin(Duration.ofSeconds(2));
         Collection<String> expectedTopics = topics;
         verify(connection.getCommandSender(), timeout(2000L).times(1))
-                .sendWatchTopicListSuccess(eq(7L), eq(13L), eq(hash), eq(expectedTopics), any());
+                .sendWatchTopicListSuccess(eq(7L), eq(13L), eq(hash), eq(expectedTopics), any(), any());
     }
 
     @Test
@@ -922,7 +956,7 @@ public class TopicListServiceTest {
                 .sendWatchTopicListUpdate(eq(13L),
                         argThat(newTopics -> new HashSet<>(newTopics).equals(new HashSet<>(expectedNew))),
                         argThat(deletedTopics -> new HashSet<>(deletedTopics).equals(new HashSet<>(expectedDeleted))),
-                        eq(expectedHash), any());
+                        eq(expectedHash), any(), any());
 
         // Verify the watcher's matching topics are updated
         assertThat(watcher.getMatchingTopics()).containsExactlyInAnyOrderElementsOf(topicsAfterReconnect);
@@ -979,7 +1013,7 @@ public class TopicListServiceTest {
                 .sendWatchTopicListUpdate(eq(13L),
                         argThat(newTopics -> new HashSet<>(newTopics).equals(new HashSet<>(expectedNew))),
                         argThat(deletedTopics -> new HashSet<>(deletedTopics).equals(new HashSet<>(expectedDeleted))),
-                        eq(expectedHash), any());
+                        eq(expectedHash), any(), any());
 
         assertThat(watcher.getMatchingTopics()).containsExactlyInAnyOrderElementsOf(topicsAfterReconnect);
     }
@@ -1023,7 +1057,7 @@ public class TopicListServiceTest {
 
         // Verify that sendWatchTopicListUpdate was NOT called (no changes to report)
         verify(connection.getCommandSender(), timeout(500L).times(0))
-                .sendWatchTopicListUpdate(eq(13L), any(), any(), any(), any());
+                .sendWatchTopicListUpdate(eq(13L), any(), any(), any(), any(), any());
     }
 
     @Test
