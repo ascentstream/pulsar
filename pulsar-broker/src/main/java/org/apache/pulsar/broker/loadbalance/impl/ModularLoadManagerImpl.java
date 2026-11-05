@@ -334,6 +334,11 @@ public class ModularLoadManagerImpl implements ModularLoadManager {
     }
 
     @VisibleForTesting
+    LoadData getLoadData() {
+        return this.loadData;
+    }
+
+    @VisibleForTesting
     void setLoadSheddingStrategy(LoadSheddingStrategy loadSheddingStrategy) {
         this.loadSheddingStrategy = loadSheddingStrategy;
     }

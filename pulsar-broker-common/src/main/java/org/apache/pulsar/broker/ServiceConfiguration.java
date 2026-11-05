@@ -3533,7 +3533,13 @@ public class ServiceConfiguration implements PulsarConfiguration {
         category = CATEGORY_METRICS,
         doc = "If true, export topic level metrics otherwise namespace level"
     )
+
     private boolean exposeTopicLevelMetricsInPrometheus = true;
+
+    @FieldContext(
+            doc = "Enable shadow topic creation, loading and replication. Requires a broker restart."
+    )
+    private boolean enableShadowTopics = false;
     @FieldContext(
             category = CATEGORY_METRICS,
             doc = "Set to true to enable the broker to cache the metrics response; the default is false. "
