@@ -286,20 +286,20 @@ public class PendingReadsManagerTest  {
 
     @Test
     public void singleEntryReadsShareAnIncludingReadAndNotEachOther() throws Exception {
-        boolean shouldCacheEntry = false;
-        PreparedReadFromStorage range = prepareReadFromStorage(lh, rangeEntryCache, 100, 199, shouldCacheEntry);
-        PreparedReadFromStorage single1 = prepareReadFromStorage(lh, rangeEntryCache, 300, 300, shouldCacheEntry);
-        PreparedReadFromStorage single2 = prepareReadFromStorage(lh, rangeEntryCache, 305, 305, shouldCacheEntry);
+        IntSupplier expectedReadCount = () -> 0;
+        PreparedReadFromStorage range = prepareReadFromStorage(lh, rangeEntryCache, 100, 199, expectedReadCount);
+        PreparedReadFromStorage single1 = prepareReadFromStorage(lh, rangeEntryCache, 300, 300, expectedReadCount);
+        PreparedReadFromStorage single2 = prepareReadFromStorage(lh, rangeEntryCache, 305, 305, expectedReadCount);
 
         CapturingReadEntriesCallback rangeCallback = new CapturingReadEntriesCallback();
-        pendingReadsManager.readEntries(lh, 100, 199, shouldCacheEntry, rangeCallback, CTX);
+        pendingReadsManager.readEntries(lh, 100, 199, NO_MAX_SIZE_LIMIT, expectedReadCount, rangeCallback, CTX);
         // as a dispatcher's replay reads single entries: one inside the pending range read, two outside of it
         CapturingReadEntriesCallback included = new CapturingReadEntriesCallback();
-        pendingReadsManager.readEntries(lh, 150, 150, shouldCacheEntry, included, CTX2);
+        pendingReadsManager.readEntries(lh, 150, 150, NO_MAX_SIZE_LIMIT, expectedReadCount, included, CTX2);
         CapturingReadEntriesCallback separate1 = new CapturingReadEntriesCallback();
-        pendingReadsManager.readEntries(lh, 300, 300, shouldCacheEntry, separate1, CTX);
+        pendingReadsManager.readEntries(lh, 300, 300, NO_MAX_SIZE_LIMIT, expectedReadCount, separate1, CTX);
         CapturingReadEntriesCallback separate2 = new CapturingReadEntriesCallback();
-        pendingReadsManager.readEntries(lh, 305, 305, shouldCacheEntry, separate2, CTX);
+        pendingReadsManager.readEntries(lh, 305, 305, NO_MAX_SIZE_LIMIT, expectedReadCount, separate2, CTX);
 
         range.storageReadCompleted();
         single1.storageReadCompleted();

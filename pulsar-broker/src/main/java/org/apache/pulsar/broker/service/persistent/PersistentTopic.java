@@ -254,6 +254,7 @@ public class PersistentTopic extends AbstractTopic implements Topic, AddEntryCal
     private Optional<SubscribeRateLimiter> subscribeRateLimiter = Optional.empty();
     @Getter
     private final Object subscribeRateLimiterLock = new Object();
+    @Getter
     private final long backloggedCursorThresholdEntries;
     public static final int MESSAGE_RATE_BACKOFF_MS = 1000;
 
