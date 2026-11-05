@@ -673,7 +673,7 @@ public class ManagedCursorImpl implements ManagedCursor {
                         }
                     }
 
-                    recoverLastActive(info.getIdleSince()); ([fix][broker] The configuration subscriptionExpirationTimeMinutes does not work if the topic was reloaded frequently (#25244))
+                    recoverLastActive(info.getIdleSince());
                     recoveredCursor(recoveredPosition, recoveredProperties, recoveredCursorProperties, null);
                     recoverCallback.operationComplete();
                 } else {
@@ -744,7 +744,7 @@ public class ManagedCursorImpl implements ManagedCursor {
 
                 LedgerEntry entry = seq.nextElement();
                 mbean.addReadCursorLedgerSize(entry.getLength());
-                recoverWithCheckpointFormat(info, lh, ledgerId, entry.getEntry(), callback); ([fix][broker] The configuration subscriptionExpirationTimeMinutes does not work if the topic was reloaded frequently (#25244))
+                recoverWithCheckpointFormat(info, lh, ledgerId, entry.getEntry(), callback);
             }, null);
         };
         try {
@@ -2856,7 +2856,7 @@ public class ManagedCursorImpl implements ManagedCursor {
         lock.writeLock().lock();
         boolean skipMarkDeleteBecauseAckedNothing = false;
         boolean batchIndexChanged = false;
-        boolean batchAckChanged = false; ([fix][managed-ledger] Persist partial batch ACKs on flush (#26765))
+        boolean batchAckChanged = false;
         try {
             if (log.isDebugEnabled()) {
                 log.debug("[{}] [{}] Deleting individual messages at {}. Current status: {} - md-position: {}",
@@ -3008,7 +3008,7 @@ public class ManagedCursorImpl implements ManagedCursor {
                     isDirty = true;
                     updateLastMarkDeleteEntryToLatest(markDeletePosition, null);
                 }
-                ackCallback.deleteComplete(ctx); ([fix][managed-ledger] Persist partial batch ACKs on flush (#26765))
+                ackCallback.deleteComplete(ctx);
             }
         }
 
@@ -4009,7 +4009,7 @@ public class ManagedCursorImpl implements ManagedCursor {
             piBuilder.addAllBatchedEntryDeletionIndexInfo(buildBatchEntryDeletionIndexInfoList());
         }
         if (lastActiveToPersist < 0) {
-            piBuilder.setIdleSince(-lastActiveToPersist); ([fix][broker] The configuration subscriptionExpirationTimeMinutes does not work if the topic was reloaded frequently (#25244))
+            piBuilder.setIdleSince(-lastActiveToPersist);
         }
 
         Map<Long, long[]> internalRanges = null;
@@ -4085,7 +4085,7 @@ public class ManagedCursorImpl implements ManagedCursor {
                 // last entry: any per-msgLedger checkpoint ledgers tracked from a recovery are
                 // obsolete (legacy recovery only reads this entry). Fired after the callback,
                 // matching the rollover/reset GC convention.
-                deleteObsoleteCursorLedgersAfterLegacyPersist(); ([fix][broker] The configuration subscriptionExpirationTimeMinutes does not work if the topic was reloaded frequently (#25244))
+                deleteObsoleteCursorLedgersAfterLegacyPersist();
             } else {
                 if (!ignoreClosedStateAfterFailure && state.isClosed()) {
                     // After closed the cursor, the in-progress persistence task will get a

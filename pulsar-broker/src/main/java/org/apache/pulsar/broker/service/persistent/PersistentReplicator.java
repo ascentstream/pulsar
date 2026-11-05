@@ -297,7 +297,7 @@ public abstract class PersistentReplicator extends AbstractReplicator
 
         // Apply per-read batch limits, honoring dynamic decreases of the maximum.
         int maxReadBatchSize = Math.min(readBatchSize, getMaxReadBatchSize());
-        readLimitOnMsg = Math.min(readLimitOnMsg, maxReadBatchSize); ([fix][broker] Honor dynamic decreases of dispatcherMaxReadBatchSize (#26908))
+        readLimitOnMsg = Math.min(readLimitOnMsg, maxReadBatchSize);
 
         return new ReadLimits((int) readLimitOnMsg, readLimitOnByte);
     }

@@ -2846,7 +2846,7 @@ public class ProducerImpl<T> extends ProducerBase<T> implements TimerTask, Conne
                 // producer while it was Connecting, leaving its registration on the broker intact.
                 cnx.channel().close();
                 return;
-            } ([fix][broker] Retry incompatible replication schemas without topic unload (#27026))
+            }
             OpSendMsg op = msgIterator.next();
             if (loopStartAt != null) {
                 if (op.msg == loopStartAt) {
@@ -2992,7 +2992,7 @@ public class ProducerImpl<T> extends ProducerBase<T> implements TimerTask, Conne
      * Check if final message size for non-batch and non-chunked messages is larger than max message size.
      */
     private boolean isMessageSizeExceeded(OpSendMsg op) {
-        if (op.msg != null && !isChunkingEnabled()) { ([fix][client] Make chunking inert on non-persistent topics, including the message-size checks (#26550))
+        if (op.msg != null && !isChunkingEnabled()) {
             int messageSize = op.getMessageHeaderAndPayloadSize();
             if (messageSize > getMaxMessageSize()) {
                 releaseSemaphoreForSendOp(op);

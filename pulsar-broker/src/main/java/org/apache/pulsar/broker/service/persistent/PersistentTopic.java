@@ -141,7 +141,7 @@ import org.apache.pulsar.broker.service.Topic;
 import org.apache.pulsar.broker.service.TopicEventsListener.EventStage;
 import org.apache.pulsar.broker.service.TopicEventsListener.TopicEvent;
 import org.apache.pulsar.broker.service.TopicLoadingContext;
-import org.apache.pulsar.broker.service.TopicLoadingContext.TopicLoadingStage; ([improve][broker] Add reason label for topic_load_failed_total (#26264))
+import org.apache.pulsar.broker.service.TopicLoadingContext.TopicLoadingStage;
 import org.apache.pulsar.broker.service.TopicPoliciesService;
 import org.apache.pulsar.broker.service.TransportCnx;
 import org.apache.pulsar.broker.service.schema.BookkeeperSchemaStorage;
@@ -253,7 +253,7 @@ public class PersistentTopic extends AbstractTopic implements Topic, AddEntryCal
     private final Object dispatchRateLimiterLock = new Object();
     private Optional<SubscribeRateLimiter> subscribeRateLimiter = Optional.empty();
     @Getter
-    private final Object subscribeRateLimiterLock = new Object(); ([fix][broker] Wait for topic cache removal before completing deletion (#27137))
+    private final Object subscribeRateLimiterLock = new Object();
     private final long backloggedCursorThresholdEntries;
     public static final int MESSAGE_RATE_BACKOFF_MS = 1000;
 
@@ -570,7 +570,7 @@ public class PersistentTopic extends AbstractTopic implements Topic, AddEntryCal
                 }, getPoliciesNotifyThread())
                 .thenCompose(ignore -> loadingContext == null ? initTopicPolicy()
                         : loadingContext.trace(TopicLoadingStage.TOPIC_POLICIES, initTopicPolicy()))
-                .thenCompose(ignore -> removeOrphanReplicationCursors())); ([fix][broker] Preserve topic initialization failures (#26775))
+                .thenCompose(ignore -> removeOrphanReplicationCursors()));
     }
 
     private void initializeDispatchRateLimiterIfNeeded() {
@@ -1683,7 +1683,7 @@ public class PersistentTopic extends AbstractTopic implements Topic, AddEntryCal
                                                 public void deleteLedgerComplete(Object ctx) {
                                                     managedLedgerDeleted = true;
                                                     FutureUtil.completeAfter(deleteFuture,
-                                                            cleanupAfterLedgerDeletion()); ([fix][broker] Wait for topic cache removal before completing deletion (#27137))
+                                                            cleanupAfterLedgerDeletion());
                                                 }
 
                                                 @Override

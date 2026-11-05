@@ -169,7 +169,7 @@ public class InMemoryDelayedDeliveryTracker extends AbstractDelayedDeliveryTrack
     public CompletableFuture<Void> clear() {
         this.priorityQueue.clear();
         this.index.clear();
-        resetFixedDelayDetection(); ([fix][broker] Reset fixed delay detection when the in-memory delayed delivery tracker is cleared (#27021))
+        resetFixedDelayDetection();
         return CompletableFuture.completedFuture(null);
     }
 

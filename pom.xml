@@ -198,7 +198,7 @@ flexible messaging model and an intuitive client API.</description>
     <jersey.version>2.42</jersey.version>
     <athenz.version>1.10.62</athenz.version>
     <prometheus.version>0.16.0</prometheus.version>
-    <vertx.version>4.5.35</vertx.version> ([fix][sec] Upgrade Vert.x to 4.5.35 (#27183))
+    <vertx.version>4.5.35</vertx.version>
     <rocksdb.version>7.9.2</rocksdb.version>
     <slf4j.version>2.0.18</slf4j.version>
     <commons.collections4.version>4.5.0</commons.collections4.version>
@@ -211,7 +211,7 @@ flexible messaging model and an intuitive client API.</description>
     <bouncycastle.bcpkix-fips.version>2.0.12</bouncycastle.bcpkix-fips.version>
     <bouncycastle.bcutil-fips.version>2.0.7</bouncycastle.bcutil-fips.version>
     <bouncycastle.bc-fips.version>2.0.2</bouncycastle.bc-fips.version>
-    <jackson.version>2.18.12</jackson.version> ([fix][sec][branch-4.x] Upgrade Jackson to 2.18.12 (#26898))
+    <jackson.version>2.18.12</jackson.version>
     <fastutil.version>8.5.16</fastutil.version>
     <jctools.version>4.0.5</jctools.version>
     <reflections.version>0.10.2</reflections.version>
@@ -272,7 +272,7 @@ flexible messaging model and an intuitive client API.</description>
     <commons-lang3.version>3.19.0</commons-lang3.version>
     <commons-io.version>2.22.0</commons-io.version>
     <commons-codec.version>1.23.0</commons-codec.version>
-    <commons-logging.version>1.4.0</commons-logging.version> ([fix][sec] Upgrade commons-codec to 1.23.0 (#27190))
+    <commons-logging.version>1.4.0</commons-logging.version>
     <jakarta.ws.rs-api.version>2.1.6</jakarta.ws.rs-api.version>
     <hdrHistogram.version>2.1.9</hdrHistogram.version>
     <javax.servlet-api>3.1.0</javax.servlet-api>

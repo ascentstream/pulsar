@@ -1567,7 +1567,7 @@ public class BrokerService implements Closeable {
                             config.setProperties(properties);
                         });
                         return config;
-                    }); ([fix][broker] Serialize topic metadata deletion with in-flight loading (#27136))
+                    });
             mlConfigFuture.thenAccept(config -> {
                 getManagedLedgerFactoryForTopic(tn, config.getStorageClassName())
                         .asyncDelete(tn.getPersistenceNamingEncoding(),
@@ -1959,7 +1959,7 @@ public class BrokerService implements Closeable {
         final var ownedFuture = checkTopicNsOwnership(topic);
         // ServiceUnitNotReadyException is classified as bundle_unloading when the topic future completes.
         trackTopicLoadFailure(context, TopicLoadFailureReason.FAILED_CHECK_OWNERSHIP,
-                context.trace("ownership", ownedFuture)) ([improve][broker] Add reason label for topic_load_failed_total (#26264))
+                context.trace("ownership", ownedFuture))
                 .thenRun(() -> {
                     final Semaphore topicLoadSemaphore = topicLoadRequestSemaphore.get();
 
@@ -2071,7 +2071,7 @@ public class BrokerService implements Closeable {
                 .thenCompose(__ -> isTopicAlreadyMigrated)
                 .thenCompose(__ -> getManagedLedgerConfig(topicName, context))
                 .thenCombine(trackTopicLoadFailure(context, TopicLoadFailureReason.FAILED_ACCESS_METADATA_STORE,
-                        pulsar().getNamespaceService().checkTopicExistsAsync(topicName)).thenApply(n -> { ([improve][broker] Add reason label for topic_load_failed_total (#26264))
+                        pulsar().getNamespaceService().checkTopicExistsAsync(topicName)).thenApply(n -> {
                             boolean found = n.isExists();
                             n.recycle();
                             return found;
@@ -3706,7 +3706,7 @@ public class BrokerService implements Closeable {
         final String topic = pendingTopic.getTopicName().toString();
         // ServiceUnitNotReadyException is classified as bundle_unloading when the topic future completes.
         trackTopicLoadFailure(pendingTopic, TopicLoadFailureReason.FAILED_CHECK_OWNERSHIP,
-                pendingTopic.trace("ownership", checkTopicNsOwnership(topic))).thenRun(() -> { ([improve][broker] Add reason label for topic_load_failed_total (#26264))
+                pendingTopic.trace("ownership", checkTopicNsOwnership(topic))).thenRun(() -> {
             CompletableFuture<Optional<Topic>> pendingFuture = pendingTopic.getTopicFuture();
             final Semaphore topicLoadSemaphore = topicLoadRequestSemaphore.get();
             final boolean acquiredPermit = topicLoadSemaphore.tryAcquire();
@@ -3722,7 +3722,7 @@ public class BrokerService implements Closeable {
         }).exceptionally(e -> {
             log.error("Failed to create pending topic {}", topic, e);
             // Ownership failed before a managed ledger was opened; no resource cleanup still owns this entry.
-            failTopicFuture(topic, pendingTopic.getTopicFuture(), e); ([fix][broker] Serialize topic metadata deletion with in-flight loading (#27136))
+            failTopicFuture(topic, pendingTopic.getTopicFuture(), e);
             // schedule to process next pending topic
             inactivityMonitor.schedule(this::createPendingLoadTopic, 100, MILLISECONDS);
             return null;

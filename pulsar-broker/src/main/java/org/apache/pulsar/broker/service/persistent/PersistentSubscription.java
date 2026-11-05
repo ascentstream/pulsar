@@ -136,7 +136,7 @@ public class PersistentSubscription extends AbstractSubscription {
     // supersedes a previously received remote target even when the mark-delete position is unchanged.
     private volatile CompletableFuture<Void> lastCursorResetFuture;
     private volatile Boolean replicatedControlled;
- ([fix][broker] Retry applying received subscription updates (#27158))
+
     private final ServiceConfiguration config;
 
     static {

@@ -721,7 +721,7 @@ public class PersistentDispatcherMultipleConsumers extends AbstractPersistentDis
             // are discarded too: the redelivery queue was cleared, and the rewind reads them again. The next read
             // rewinds the cursor once no read is pending.
             entries.forEach(Entry::release);
-            onReadEnded(readType); ([fix][broker] Don't dispatch a replay read that was pending when all consumers of a Shared subscription disconnected (#27007))
+            onReadEnded(readType);
             readMoreEntriesAsync();
             return;
         }
@@ -1058,7 +1058,7 @@ public class PersistentDispatcherMultipleConsumers extends AbstractPersistentDis
             }
         }
 
-        onReadEnded(readType); ([fix][broker] Don't dispatch a replay read that was pending when all consumers of a Shared subscription disconnected (#27007))
+        onReadEnded(readType);
         if (readType == ReadType.Normal) {
             havePendingRead = false;
         } else {

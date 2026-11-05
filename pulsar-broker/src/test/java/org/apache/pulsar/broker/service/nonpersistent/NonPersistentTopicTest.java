@@ -21,7 +21,7 @@ package org.apache.pulsar.broker.service.nonpersistent;
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertNotNull;
 import static org.testng.Assert.assertNotSame;
-import static org.testng.Assert.assertThrows; ([fix][broker] Fence non-persistent subscriptions before asynchronous … (#26991))
+import static org.testng.Assert.assertThrows;
 import static org.testng.Assert.assertTrue;
 import java.lang.reflect.Field;
 import java.util.Collections;

@@ -31,7 +31,7 @@ import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertNull;
 import static org.testng.Assert.assertTrue;
 import static org.testng.AssertJUnit.assertNotSame;
-import static org.testng.AssertJUnit.assertSame; ([improve][ml] Don't visit a ledger's other single-entry pending reads for a read of a single entry (#27005))
+import static org.testng.AssertJUnit.assertSame;
 import io.opentelemetry.api.OpenTelemetry;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;

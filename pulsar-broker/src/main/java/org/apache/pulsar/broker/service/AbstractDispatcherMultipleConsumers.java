@@ -95,7 +95,7 @@ public abstract class AbstractDispatcherMultipleConsumers extends AbstractBaseDi
         return true;
     }
 
- ([fix][broker] Prevent stale consumer removal from removing replacements (#26652))
+
     public boolean isClosed() {
         return isClosed == TRUE;
     }
