@@ -1556,11 +1556,7 @@ public class BrokerService implements Closeable {
                 future.completeExceptionally(ex);
                 return;
             }
-<<<<<<< HEAD
             CompletableFuture<ManagedLedgerConfig> mlConfigFuture = getManagedLedgerConfig(tn)
-=======
-            CompletableFuture<ManagedLedgerConfig> mlConfigFuture = getManagedLedgerConfig(topicName)
->>>>>>> 73ab0d96659 ([fix][ml][broker] Keep source ledger data on every shadow managed ledger trim, delete and offload path (#26746))
                     .thenCombine(fetchPartitionShadowSourceAsync(tn), (config, shadowSource) -> {
                         shadowSource.ifPresent(source -> {
                             Map<String, String> properties = new HashMap<>();

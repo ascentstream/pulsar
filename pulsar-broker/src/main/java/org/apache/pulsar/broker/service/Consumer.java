@@ -1412,7 +1412,7 @@ public class Consumer {
         }
 
         addAndGetUnAckedMsgs(this, -totalRedeliveryMessages);
-        int blockedPermits = unblockAndTransferBlockedPermits(); ([fix][broker] Fix Shared and Key_Shared consumer stalls during FLOW and unblock races (#26797))
+        int blockedPermits = unblockAndTransferBlockedPermits();
 
         if (log.isDebugEnabled()) {
             log.debug("[{}-{}] consumer {} received {} msg-redelivery {}", topicName, subscription, consumerId,
@@ -1438,6 +1438,10 @@ public class Consumer {
      * must immediately complete the corresponding blocked-permit transfer with
      * {@link #unblockAndTransferBlockedPermits()}.
      */
+    private int addAndGetUnAckedMsgs(Consumer consumer, int messages) {
+        return addAndGetUnackedMessages(messages);
+    }
+
     private int addAndGetUnackedMessages(int ackedMessages) {
         int unackedMsgs = 0;
         if (isPersistentTopic && Subscription.isIndividualAckMode(subType)) {

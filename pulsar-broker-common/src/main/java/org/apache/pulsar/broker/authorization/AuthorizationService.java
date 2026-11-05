@@ -34,6 +34,7 @@ import org.apache.pulsar.broker.authentication.AuthenticationDataForwarded;
 import org.apache.pulsar.broker.authentication.AuthenticationDataSource;
 import org.apache.pulsar.broker.authentication.AuthenticationDataSubscription;
 import org.apache.pulsar.broker.authentication.AuthenticationParameters;
+import org.apache.pulsar.broker.authentication.AuthenticationService;
 import org.apache.pulsar.broker.resources.PulsarResources;
 import org.apache.pulsar.client.admin.GrantTopicPermissionOptions;
 import org.apache.pulsar.client.admin.RevokeTopicPermissionOptions;
@@ -67,13 +68,22 @@ public class AuthorizationService {
 
     public AuthorizationService(ServiceConfiguration conf, PulsarResources pulsarResources)
             throws PulsarServerException {
+        this(conf, pulsarResources, null);
+    }
+
+    public AuthorizationService(ServiceConfiguration conf, PulsarResources pulsarResources,
+                                AuthenticationService authenticationService) throws PulsarServerException {
         this.conf = conf;
         try {
             final String providerClassname = conf.getAuthorizationProvider();
             if (StringUtils.isNotBlank(providerClassname)) {
                 provider = (AuthorizationProvider) Class.forName(providerClassname)
                         .getDeclaredConstructor().newInstance();
-                provider.initialize(conf, pulsarResources);
+                provider.initialize(AuthorizationProvider.InitialContext.builder()
+                        .config(conf)
+                        .pulsarResources(pulsarResources)
+                        .authenticationService(authenticationService)
+                        .build());
                 this.resources = pulsarResources;
                 log.info("{} has been loaded.", providerClassname);
             } else {
@@ -703,6 +713,31 @@ public class AuthorizationService {
                     namespaceName, operation, role, authData);
             CompletableFuture<Boolean> isOriginalAuthorizedFuture = allowNamespaceOperationAsync(
                     namespaceName, operation, originalRole, originalPrincipalAuthData(authData));
+            return isRoleAuthorizedFuture.thenCombine(isOriginalAuthorizedFuture,
+                    (isRoleAuthorized, isOriginalAuthorized) -> isRoleAuthorized && isOriginalAuthorized);
+        } else {
+            return allowNamespaceOperationAsync(namespaceName, operation, role, authData);
+        }
+    }
+
+    /**
+     * Checks a namespace operation, using separate authentication data for the original principal of a proxied
+     * request.
+     */
+    public CompletableFuture<Boolean> allowNamespaceOperationAsync(NamespaceName namespaceName,
+                                                                   NamespaceOperation operation,
+                                                                   String originalRole,
+                                                                   String role,
+                                                                   AuthenticationDataSource originalAuthData,
+                                                                   AuthenticationDataSource authData) {
+        if (!isValidOriginalPrincipal(role, originalRole, authData)) {
+            return CompletableFuture.completedFuture(false);
+        }
+        if (isProxyRole(role) && !isWebsocketPrinciple(originalRole)) {
+            CompletableFuture<Boolean> isRoleAuthorizedFuture = allowNamespaceOperationAsync(
+                    namespaceName, operation, role, authData);
+            CompletableFuture<Boolean> isOriginalAuthorizedFuture = allowNamespaceOperationAsync(
+                    namespaceName, operation, originalRole, originalAuthData);
             return isRoleAuthorizedFuture.thenCombine(isOriginalAuthorizedFuture,
                     (isRoleAuthorized, isOriginalAuthorized) -> isRoleAuthorized && isOriginalAuthorized);
         } else {

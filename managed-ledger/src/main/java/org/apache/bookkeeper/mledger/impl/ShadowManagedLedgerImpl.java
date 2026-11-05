@@ -423,7 +423,7 @@ public class ShadowManagedLedgerImpl extends ManagedLedgerImpl {
      * shadow managed ledger must only update its own metadata and leave the source ledgers untouched.
      */
     @Override
-    protected boolean ownsLedgerData() { ([fix][ml][broker] Keep source ledger data on every shadow managed ledger trim, delete and offload path (#26746))
+    protected boolean ownsLedgerData() {
         return false;
     }
 }

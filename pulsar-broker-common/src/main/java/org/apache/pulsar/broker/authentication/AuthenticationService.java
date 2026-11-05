@@ -161,7 +161,7 @@ public class AuthenticationService implements Closeable {
             if (!providers.isEmpty()) {
                 if (StringUtils.isNotBlank(anonymousUserRole)) {
                     request.setAttribute(AuthenticatedRoleAttributeName, anonymousUserRole);
-                    request.setAttribute(AuthenticatedDataAttributeName, new AuthenticationDataHttps(request));
+                    request.setAttribute(AuthenticatedDataAttributeName, AuthenticationDataAnonymous.INSTANCE);
                     return true;
                 }
                 // If at least a provider was configured, then the authentication needs to be provider
@@ -254,13 +254,7 @@ public class AuthenticationService implements Closeable {
     }
 
     /**
-     * Creates a binary authentication session for Pulsar's binary protocol.
-     * <p>
-     * This method initializes a {@link BinaryAuthSession} using the provided authentication context.
-     * Both the proxy and broker can use this method to perform binary protocol authentication.
-     *
-     * @param ctx the binary authentication context containing authentication state and credentials
-     * @return a new {@link BinaryAuthSession} instance
+     * Fork extension: creates a stateful binary auth session used by the topic-events dispatcher.
      */
     public BinaryAuthSession createBinaryAuthSession(BinaryAuthContext ctx) {
         return new BinaryAuthSession(ctx);

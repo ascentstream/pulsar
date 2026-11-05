@@ -221,10 +221,6 @@ public class PulsarService implements AutoCloseable, ShutdownService {
     private WebSocketService webSocketService = null;
     private TopicPoliciesService topicPoliciesService = TopicPoliciesService.DISABLED;
 
-    @VisibleForTesting
-    public void setTopicPoliciesService(TopicPoliciesService topicPoliciesService) {
-        this.topicPoliciesService = topicPoliciesService;
-    }
     private BookKeeperClientFactory bkClientFactory;
     protected CompactionServiceFactory compactionServiceFactory;
     private StrategicTwoPhaseCompactor strategicCompactor;

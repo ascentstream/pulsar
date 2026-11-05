@@ -589,8 +589,8 @@ public class ServerCnx extends PulsarHandler implements TransportCnx {
                     new AuthenticationDataSubscription(getAuthenticationData(), subscriptionName);
             AuthenticationDataSource originalAuthDataSource = null;
             AuthenticationDataSource originalAuthData = getOriginalAuthData();
-            if (originalAuthData != null) {
-                originalAuthDataSource = new AuthenticationDataSubscription(originalAuthData, subscriptionName);
+            if (getOriginalAuthData() != null) {
+                originalAuthDataSource = new AuthenticationDataSubscription(getOriginalAuthData(), subscriptionName);
             }
             return isTopicOperationAllowed(topicName, operation, authDataSource, originalAuthDataSource);
         } else {
@@ -638,7 +638,7 @@ public class ServerCnx extends PulsarHandler implements TransportCnx {
             String originalPrincipal = getOriginalPrincipal();
             AuthenticationDataSource authenticationData = getAuthenticationData();
             AuthenticationDataSource originalAuthData = getOriginalAuthData();
-            isTopicOperationAllowed(topicName, TopicOperation.LOOKUP, authenticationData, originalAuthData).thenApply(
+            isTopicOperationAllowed(topicName, TopicOperation.LOOKUP, getAuthenticationData(), getOriginalAuthData()).thenApply(
                     isAuthorized -> {
                 if (isAuthorized) {
                     final Map<String, String> properties;
@@ -652,8 +652,8 @@ public class ServerCnx extends PulsarHandler implements TransportCnx {
                         properties = Collections.emptyMap();
                     }
                     lookupTopicAsync(getBrokerService().pulsar(), topicName, authoritative,
-                            authRole, originalPrincipal, authenticationData,
-                            originalAuthData != null ? originalAuthData : authenticationData,
+                            authRole, originalPrincipal, getAuthenticationData(),
+                            getOriginalAuthData() != null ? getOriginalAuthData() : getAuthenticationData(),
                             requestId, advertisedListenerName, properties, this).handle((lookupResponse, ex) -> {
                                 if (ex == null) {
                                     writeAndFlush(lookupResponse);
@@ -728,7 +728,7 @@ public class ServerCnx extends PulsarHandler implements TransportCnx {
         final Semaphore lookupSemaphore = service.getLookupRequestSemaphore();
         if (lookupSemaphore.tryAcquire()) {
             FutureUtil.supplySafely(() -> isTopicOperationAllowed(topicName, TopicOperation.LOOKUP,
-                    authenticationData, originalAuthData)).handle((isAuthorized, ex) -> {
+                    getAuthenticationData(), getOriginalAuthData())).handle((isAuthorized, ex) -> {
                 if (ex != null) {
                     logAuthException(remoteAddress, "partition-metadata", getPrincipal(), Optional.of(topicName), ex);
                     Throwable actEx = FutureUtil.unwrapCompletionException(ex);
@@ -2591,12 +2591,12 @@ public class ServerCnx extends PulsarHandler implements TransportCnx {
         AuthenticationDataSource authenticationData = getAuthData();
         if (originalPrincipal != null) {
             isProxyAuthorizedFuture = service.getAuthorizationService().allowNamespaceOperationAsync(
-                    namespaceName, operation, originalPrincipal, originalAuthData);
+                    namespaceName, operation, originalPrincipal, getOriginalAuthData());
         } else {
             isProxyAuthorizedFuture = CompletableFuture.completedFuture(true);
         }
         CompletableFuture<Boolean> isAuthorizedFuture = service.getAuthorizationService().allowNamespaceOperationAsync(
-                namespaceName, operation, authRole, authenticationData);
+                namespaceName, operation, authRole, getAuthenticationData());
         return isProxyAuthorizedFuture.thenCombine(isAuthorizedFuture, (isProxyAuthorized, isAuthorized) -> {
             if (!isProxyAuthorized) {
                 log.warn("OriginalRole {} is not authorized to perform operation {} on namespace {}",
@@ -2783,7 +2783,7 @@ public class ServerCnx extends PulsarHandler implements TransportCnx {
 
         // Producers, consumers and readers fetch the schema of a topic they have looked up, so LOOKUP is a
         // permission every legitimate caller already holds.
-        isTopicOperationAllowed(topicName, TopicOperation.LOOKUP, authenticationData, originalAuthData)
+        isTopicOperationAllowed(topicName, TopicOperation.LOOKUP, getAuthenticationData(), getOriginalAuthData())
                 .thenCompose(isAuthorized -> {
                     if (!isAuthorized) {
                         commandSender.sendGetSchemaErrorResponse(requestId, ServerError.AuthorizationError,
@@ -2827,7 +2827,7 @@ public class ServerCnx extends PulsarHandler implements TransportCnx {
         // Adding a schema version changes what the topic's producers may send, so it takes PRODUCE, as the
         // REST schema upload does.
         CompletableFuture<Optional<Topic>> topicFuture =
-                isTopicOperationAllowed(parsedTopicName, TopicOperation.PRODUCE, authenticationData, originalAuthData)
+                isTopicOperationAllowed(parsedTopicName, TopicOperation.PRODUCE, getAuthenticationData(), getOriginalAuthData())
                         .thenCompose(isAuthorized -> {
                             if (!isAuthorized) {
                                 return CompletableFuture.failedFuture(new BrokerServiceException.NotAuthorizedException(
@@ -3053,7 +3053,7 @@ public class ServerCnx extends PulsarHandler implements TransportCnx {
                     "Invalid topic name " + topic + ": " + e.getMessage()));
         }
         CompletableFuture<Boolean> isAuthorized = subscription == null
-                ? isTopicOperationAllowed(topicName, operation, authenticationData, originalAuthData)
+                ? isTopicOperationAllowed(topicName, operation, getAuthenticationData(), getOriginalAuthData())
                 : isTopicOperationAllowed(topicName, subscription, operation);
         return isAuthorized.thenCompose(authorized -> authorized
                 ? CompletableFuture.<Void>completedFuture(null)
@@ -3120,11 +3120,11 @@ public class ServerCnx extends PulsarHandler implements TransportCnx {
             AuthenticationDataSource originalAuthData = getOriginalAuthData();
             AuthenticationDataSource authenticationData = getAuthData();
             CompletableFuture<Boolean> isAuthRoleAuthorized = service.getAuthorizationService().isSuperUser(
-                    getAuthRole(), authenticationData);
+                    getAuthRole(), getAuthenticationData());
             if (getOriginalPrincipal() != null) {
                 CompletableFuture<Boolean> isOriginalPrincipalAuthorized = service.getAuthorizationService()
                         .isSuperUser(getOriginalPrincipal(),
-                                originalAuthData != null ? originalAuthData : authenticationData);
+                                getOriginalAuthData() != null ? getOriginalAuthData() : getAuthenticationData());
                 return isOriginalPrincipalAuthorized.thenCombine(isAuthRoleAuthorized,
                         (originalPrincipal, authRole) -> originalPrincipal && authRole);
             } else {

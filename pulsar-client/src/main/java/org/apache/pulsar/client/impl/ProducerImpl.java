@@ -2889,7 +2889,7 @@ public class ProducerImpl<T> extends ProducerBase<T> implements TimerTask, Conne
             }
             if (!msgIterator.hasNext()) {
                 break;
-            } ([fix][client] Prevent duplicate cleanup and leaks on producer send failures (#26641))
+            }
             OpSendMsg op = msgIterator.next();
             if (loopStartAt != null) {
                 if (op.msg == loopStartAt) {
