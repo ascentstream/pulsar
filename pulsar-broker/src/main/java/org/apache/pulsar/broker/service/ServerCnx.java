@@ -638,7 +638,8 @@ public class ServerCnx extends PulsarHandler implements TransportCnx {
             String originalPrincipal = getOriginalPrincipal();
             AuthenticationDataSource authenticationData = getAuthenticationData();
             AuthenticationDataSource originalAuthData = getOriginalAuthData();
-            isTopicOperationAllowed(topicName, TopicOperation.LOOKUP, getAuthenticationData(), getOriginalAuthData()).thenApply(
+            isTopicOperationAllowed(topicName, TopicOperation.LOOKUP, getAuthenticationData(), getOriginalAuthData())
+                    .thenApply(
                     isAuthorized -> {
                 if (isAuthorized) {
                     final Map<String, String> properties;
@@ -2827,7 +2828,8 @@ public class ServerCnx extends PulsarHandler implements TransportCnx {
         // Adding a schema version changes what the topic's producers may send, so it takes PRODUCE, as the
         // REST schema upload does.
         CompletableFuture<Optional<Topic>> topicFuture =
-                isTopicOperationAllowed(parsedTopicName, TopicOperation.PRODUCE, getAuthenticationData(), getOriginalAuthData())
+                isTopicOperationAllowed(parsedTopicName, TopicOperation.PRODUCE, getAuthenticationData(),
+                        getOriginalAuthData())
                         .thenCompose(isAuthorized -> {
                             if (!isAuthorized) {
                                 return CompletableFuture.failedFuture(new BrokerServiceException.NotAuthorizedException(

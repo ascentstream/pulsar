@@ -58,7 +58,6 @@ import org.apache.pulsar.broker.testcontext.PulsarTestContext;
 import org.apache.pulsar.broker.testinterceptor.BrokerTestInterceptor;
 import org.apache.pulsar.client.admin.PulsarAdmin;
 import org.apache.pulsar.client.api.PulsarClient;
-import org.apache.pulsar.common.naming.NamespaceBundle;
 import org.apache.pulsar.common.naming.TopicName;
 import org.awaitility.Awaitility;
 import org.testng.annotations.AfterMethod;
