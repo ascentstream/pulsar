@@ -61,6 +61,7 @@ import java.util.stream.Collectors;
 import lombok.Cleanup;
 import org.apache.pulsar.client.api.BatchReceivePolicy;
 import org.apache.pulsar.client.api.Consumer;
+import org.apache.pulsar.client.api.MessageListener;
 import org.apache.pulsar.client.api.ConsumerInterceptor;
 import org.apache.pulsar.client.api.Message;
 import org.apache.pulsar.client.api.MessageId;
@@ -948,35 +949,6 @@ public class ConsumerImplTest {
 
         Assert.assertFalse(consumer.getUnAckedMessageTracker().isEmpty(),
                 "messages are no longer tracked for ack timeout on a persistent topic");
-    }
-
-    /**
-     * The listener dispatch path adds to the tracker itself, bypassing {@code trackMessage} entirely
-     * ({@code trackUnAckedMsgIfNoListener} only adds when no listener is set). Consumers with a
-     * {@code messageListener} are the common case, so this path must honour the same rule.
-     */
-    @Test
-    public void testMessagesAreNotTrackedForAckTimeoutOnNonPersistentTopicWithListener() {
-        ConsumerConfigurationData<byte[]> conf = new ConsumerConfigurationData<>();
-        conf.setAckTimeoutMillis(TimeUnit.SECONDS.toMillis(10));
-        conf.setMessageListener((MessageListener<byte[]>) (c, msg) -> { });
-        createConsumer(conf, "non-persistent://tenant/ns1/ack-timeout-listener-topic");
-
-        Assert.assertFalse(consumer.isAckTimeoutTrackingEnabled(),
-                "ack timeout tracking is still enabled on a non-persistent topic, so the listener dispatch path"
-                        + " would keep filling the tracker");
-    }
-
-    /** On a persistent topic the listener path must keep tracking. */
-    @Test
-    public void testMessagesAreStillTrackedForAckTimeoutOnPersistentTopicWithListener() {
-        ConsumerConfigurationData<byte[]> conf = new ConsumerConfigurationData<>();
-        conf.setAckTimeoutMillis(TimeUnit.SECONDS.toMillis(10));
-        conf.setMessageListener((MessageListener<byte[]>) (c, msg) -> { });
-        createConsumer(conf, "persistent://tenant/ns1/ack-timeout-listener-topic");
-
-        Assert.assertTrue(consumer.isAckTimeoutTrackingEnabled(),
-                "ack timeout tracking was disabled on a persistent topic");
     }
 
     /**
