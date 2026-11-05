@@ -253,6 +253,7 @@ public class PersistentTopic extends AbstractTopic implements Topic, AddEntryCal
     private final Object dispatchRateLimiterLock = new Object();
     private Optional<SubscribeRateLimiter> subscribeRateLimiter = Optional.empty();
     @Getter
+    private final Object subscribeRateLimiterLock = new Object(); ([fix][broker] Wait for topic cache removal before completing deletion (#27137))
     private final long backloggedCursorThresholdEntries;
     public static final int MESSAGE_RATE_BACKOFF_MS = 1000;
 
@@ -306,6 +307,15 @@ public class PersistentTopic extends AbstractTopic implements Topic, AddEntryCal
 
     private volatile CloseFutures closeFutures;
 
+    // Once the ledger is deleted, failures can only retry cleanup; clients must never resume on this instance.
+    private volatile boolean managedLedgerDeleted;
+    // Guarded by lock.writeLock(). Each attempt includes partitioned-topic deletion-marker cleanup.
+    private CompletableFuture<Void> deletionFuture;
+    // Accessed only by serialized deletion attempts; successful steps must not require idempotent cleanup.
+    private boolean dispatchRateLimiterClosedOnDelete;
+    private boolean subscribeRateLimiterClosedOnDelete;
+    private boolean topicPolicyListenerUnregisteredOnDelete;
+
     @Getter
     private final PersistentTopicMetrics persistentTopicMetrics = new PersistentTopicMetrics();
 
@@ -351,7 +361,7 @@ public class PersistentTopic extends AbstractTopic implements Topic, AddEntryCal
 
     /**
      * Set while a deletion triggered by {@link #removeTopicIfLocalClusterNotAllowed()} is in progress, and while
-     * a failed one is waiting to be retried. Every failure path of {@link #delete} un-fences the topic, and
+     * a failed one is waiting to be retried. Failures before ledger deletion in {@link #delete} un-fence the topic, and
      * un-fencing runs {@link #checkReplication()} again, which would start the same deletion again straight away.
      * Without this guard, a deletion that keeps failing is retried in a tight loop for as long as the local
      * cluster stays out of the replication clusters.
@@ -565,6 +575,9 @@ public class PersistentTopic extends AbstractTopic implements Topic, AddEntryCal
 
     private void initializeDispatchRateLimiterIfNeeded() {
         synchronized (dispatchRateLimiterLock) {
+            if (managedLedgerDeleted) {
+                return;
+            }
             // dispatch rate limiter for topic
             if (!dispatchRateLimiter.isPresent()
                 && DispatchRateLimiter.isDispatchRateEnabled(topicPolicies.getDispatchRate().get())) {
@@ -728,7 +741,10 @@ public class PersistentTopic extends AbstractTopic implements Topic, AddEntryCal
 
     public void updateSubscribeRateLimiter() {
         SubscribeRate subscribeRate = getSubscribeRate();
-        synchronized (subscribeRateLimiter) {
+        synchronized (subscribeRateLimiterLock) {
+            if (managedLedgerDeleted) {
+                return;
+            }
             if (isSubscribeRateEnabled(subscribeRate)) {
                 if (subscribeRateLimiter.isPresent()) {
                     this.subscribeRateLimiter.get().onSubscribeRateUpdate(subscribeRate);
@@ -1538,6 +1554,9 @@ public class PersistentTopic extends AbstractTopic implements Topic, AddEntryCal
 
         lock.writeLock().lock();
         try {
+            if (managedLedgerDeleted) {
+                return retryDeleteCleanup();
+            }
             if (isClosingOrDeleting) {
                 log.warn("[{}] Topic is already being closed or deleted", topic);
                 return FutureUtil.failedFuture(new TopicFencedException("Topic is already fenced"));
@@ -1587,8 +1606,9 @@ public class PersistentTopic extends AbstractTopic implements Topic, AddEntryCal
 
             fenceTopicToCloseOrDelete(); // Avoid clients reconnections while deleting
             // Mark the progress of close to prevent close calling concurrently.
-            this.closeFutures =
-                    new CloseFutures(new CompletableFuture(), new CompletableFuture(), new CompletableFuture());
+            CompletableFuture<Void> result = new CompletableFuture<>();
+            deletionFuture = result;
+            this.closeFutures = new CloseFutures(result, result, result);
 
             AtomicBoolean alreadyUnFenced = new AtomicBoolean();
             // The outer whenComplete below sees the same failure the inner handlers already reported, so it only
@@ -1661,18 +1681,9 @@ public class PersistentTopic extends AbstractTopic implements Topic, AddEntryCal
                                             ledger.asyncDelete(new AsyncCallbacks.DeleteLedgerCallback() {
                                                 @Override
                                                 public void deleteLedgerComplete(Object ctx) {
-                                                    brokerService.removeTopicFromCache(PersistentTopic.this);
-
-                                                    dispatchRateLimiter.ifPresent(DispatchRateLimiter::close);
-
-                                                    subscribeRateLimiter.ifPresent(SubscribeRateLimiter::close);
-
-                                                    unregisterTopicPolicyListener();
-
-                                                    closeResourceGroupLimiter();
-
-                                                    log.info("[{}] Topic deleted", topic);
-                                                    deleteFuture.complete(null);
+                                                    managedLedgerDeleted = true;
+                                                    FutureUtil.completeAfter(deleteFuture,
+                                                            cleanupAfterLedgerDeletion()); ([fix][broker] Wait for topic cache removal before completing deletion (#27137))
                                                 }
 
                                                 @Override
@@ -1715,20 +1726,56 @@ public class PersistentTopic extends AbstractTopic implements Topic, AddEntryCal
                         if (!deleteFailureLogged.get()) {
                             log.error("[{}] Error deleting topic", topic, ex);
                         }
-                        if (!alreadyUnFenced.get()) {
+                        if (!alreadyUnFenced.get() && !managedLedgerDeleted) {
                             unfenceTopicToResume();
                         }
                     }
                 });
 
-            FutureUtil.completeAfter(closeFutures.transferring, res);
-            FutureUtil.completeAfter(closeFutures.notWaitDisconnectClients, res);
-            FutureUtil.completeAfter(closeFutures.waitDisconnectClients, res);
-            return res;
+            FutureUtil.completeAfter(result, res);
+            return result;
         } finally {
             lock.writeLock().unlock();
         }
 
+    }
+
+    // Called with the topic write lock held, after ledger deletion has committed.
+    private CompletableFuture<Void> retryDeleteCleanup() {
+        if (!deletionFuture.isCompletedExceptionally()) {
+            return deletionFuture;
+        }
+        // Publish the new attempt before invoking cleanup, which may complete or reenter synchronously.
+        CompletableFuture<Void> result = new CompletableFuture<>();
+        deletionFuture = result;
+        closeFutures = new CloseFutures(result, result, result);
+        FutureUtil.completeAfter(result, FutureUtil.supplySafely(() -> brokerService.getPulsar().getPulsarResources()
+                .getNamespaceResources().getPartitionedTopicResources()
+                .runWithMarkDeleteAsync(TopicName.get(topic), this::cleanupAfterLedgerDeletion)));
+        return result;
+    }
+
+    private CompletableFuture<Void> cleanupAfterLedgerDeletion() {
+        return FutureUtil.supplySafely(() -> {
+            if (!dispatchRateLimiterClosedOnDelete) {
+                synchronized (dispatchRateLimiterLock) {
+                    dispatchRateLimiter.ifPresent(DispatchRateLimiter::close);
+                    dispatchRateLimiterClosedOnDelete = true;
+                }
+            }
+            if (!subscribeRateLimiterClosedOnDelete) {
+                synchronized (subscribeRateLimiterLock) {
+                    subscribeRateLimiter.ifPresent(SubscribeRateLimiter::close);
+                    subscribeRateLimiterClosedOnDelete = true;
+                }
+            }
+            if (!topicPolicyListenerUnregisteredOnDelete) {
+                unregisterTopicPolicyListener();
+                topicPolicyListenerUnregisteredOnDelete = true;
+            }
+            // Retain the fenced instance until all cleanup succeeds so normal admin retries can still find it.
+            return brokerService.removeTopicFromCache(PersistentTopic.this);
+        }).thenRun(() -> log.info("[{}] Topic deleted", topic));
     }
 
     public CompletableFuture<Void> close() {
@@ -1771,6 +1818,9 @@ public class PersistentTopic extends AbstractTopic implements Topic, AddEntryCal
         /** Maybe there is a in-progress half closing task. see the section 2-b-1 of {@link CloseFutures}. **/
         CompletableFuture<Void> inProgressTransferCloseTask = null;
         try {
+            if (managedLedgerDeleted) {
+                return retryDeleteCleanup();
+            }
             // Return in-progress future if exists.
             if (isClosingOrDeleting) {
                 if (closeType == CloseTypes.transferring) {
@@ -3806,8 +3856,13 @@ public class PersistentTopic extends AbstractTopic implements Topic, AddEntryCal
 
     @Override
     public void updateDispatchRateLimiter() {
-        initializeDispatchRateLimiterIfNeeded();
-        dispatchRateLimiter.ifPresent(DispatchRateLimiter::updateDispatchRate);
+        synchronized (dispatchRateLimiterLock) {
+            if (managedLedgerDeleted) {
+                return;
+            }
+            initializeDispatchRateLimiterIfNeeded();
+            dispatchRateLimiter.ifPresent(DispatchRateLimiter::updateDispatchRate);
+        }
     }
 
     @Override
