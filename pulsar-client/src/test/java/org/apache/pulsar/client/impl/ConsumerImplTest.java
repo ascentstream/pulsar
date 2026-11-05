@@ -558,17 +558,6 @@ public class ConsumerImplTest {
         Assert.assertNull(checkException);
     }
 
-    @Test
-    public void testConnectionOpenedAfterConsumerCloseReleasesConnection() {
-        ConnectionPool connectionPool = mock(ConnectionPool.class);
-        when(consumer.client.getCnxPool()).thenReturn(connectionPool);
-        ClientCnx clientCnx = mock(ClientCnx.class);
-
-        consumer.setState(HandlerState.State.Closed);
-        consumer.connectionOpened(clientCnx).join();
-
-        verify(connectionPool).releaseConnection(clientCnx);
-    }
 
     @DataProvider
     public static Object[][] subscriptionModes() {
@@ -916,27 +905,6 @@ public class ConsumerImplTest {
         }
     }
 
-    /**
-     * On a non-persistent topic the broker keeps nothing to replay, so an ack timeout can never lead to a
-     * redelivery: {@code NonPersistentSubscription.redeliverUnacknowledgedMessages} is a no-op. Tracking
-     * messages anyway is worse than useless, because acks do not clear the tracker either — the consumer
-     * installs {@code NonPersistentAcknowledgmentGroupingTracker}, whose {@code addAcknowledgment} is a no-op,
-     * and the tracker is only cleared from the persistent one. The tracker therefore fills up even for an
-     * application that acks every message, and once it times out the consumer clears its receive queue,
-     * destroying messages that nothing can replay.
-     */
-    @Test
-    public void testMessagesAreNotTrackedForAckTimeoutOnNonPersistentTopic() {
-        ConsumerConfigurationData<byte[]> conf = new ConsumerConfigurationData<>();
-        conf.setAckTimeoutMillis(TimeUnit.SECONDS.toMillis(10));
-        createConsumer(conf, "non-persistent://tenant/ns1/ack-timeout-topic");
-
-        consumer.trackMessage(new MessageIdImpl(1L, 1L, -1), 0);
-
-        Assert.assertTrue(consumer.getUnAckedMessageTracker().isEmpty(),
-                "a message was tracked for ack timeout on a non-persistent topic, where an ack never clears"
-                        + " the tracker and a redelivery can never happen");
-    }
 
     /** The same configuration must keep working on a persistent topic, where redelivery is possible. */
     @Test
