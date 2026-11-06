@@ -818,9 +818,9 @@ public class PersistentTopic extends AbstractTopic implements Topic, AddEntryCal
         if (!maxReadPositionMovedForward) {
             maxReadPositionMovedForward = true;
         }
-        if (replicatedSubscriptionsController.isEmpty()) {
-            return;
-        }
+        // Fork semantics: the timestamp tracks any forward move of the max read position, whether or
+        // not a replicated-subscriptions controller is active (the fork's delay-delivery and stats
+        // paths read it for ordinary topics too).
         lastMaxReadPositionMovedForwardTimestamp = Clock.systemUTC().millis();
     }
 
