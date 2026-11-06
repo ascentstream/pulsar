@@ -91,6 +91,7 @@ import org.apache.bookkeeper.mledger.PositionFactory;
 import org.apache.bookkeeper.mledger.impl.ManagedCursorContainer;
 import org.apache.bookkeeper.mledger.impl.ManagedCursorContainer.CursorInfo;
 import org.apache.bookkeeper.mledger.impl.ManagedLedgerImpl;
+import org.apache.bookkeeper.mledger.impl.NonDurableCursorImpl;
 import org.apache.bookkeeper.mledger.proto.MLDataFormats;
 import org.apache.bookkeeper.mledger.util.Futures;
 import org.apache.commons.collections4.CollectionUtils;
@@ -617,6 +618,12 @@ public class PersistentTopic extends AbstractTopic implements Topic, AddEntryCal
         List<String> replicationClusters = topicPolicies.getReplicationClusters().get();
         for (ManagedCursor cursor : ledger.getCursors()) {
             if (cursor.getName().startsWith(replicatorPrefix)) {
+                if (cursor instanceof NonDurableCursorImpl) {
+                    // Shadow-replication cursors are non-durable: they have no stored metadata to
+                    // delete, and the shadow replicator owns their lifecycle. Deleting them here
+                    // always fails with CursorNotFoundException.
+                    continue;
+                }
                 String remoteCluster = PersistentReplicator.getRemoteCluster(cursor.getName());
                 if (!replicationClusters.contains(remoteCluster)) {
                     log.warn("Remove the orphan replicator because the cluster '{}' does not exist", remoteCluster);
