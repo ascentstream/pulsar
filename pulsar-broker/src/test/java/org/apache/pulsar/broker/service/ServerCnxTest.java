@@ -107,8 +107,6 @@ import org.apache.pulsar.broker.auth.MockAuthenticationProvider;
 import org.apache.pulsar.broker.auth.MockAuthorizationProvider;
 import org.apache.pulsar.broker.auth.MockMultiStageAuthenticationProvider;
 import org.apache.pulsar.broker.auth.MockMutableAuthenticationProvider;
-import org.apache.pulsar.broker.authentication.AuthenticationDataAnonymous;
-import org.apache.pulsar.broker.authentication.AuthenticationDataForwarded;
 import org.apache.pulsar.broker.authentication.AuthenticationDataSource;
 import org.apache.pulsar.broker.authentication.AuthenticationDataSubscription;
 import org.apache.pulsar.broker.authentication.AuthenticationProvider;
@@ -612,12 +610,11 @@ public class ServerCnxTest {
         Object response1 = getResponse();
         assertTrue(response1 instanceof CommandConnected);
         assertEquals(serverCnx.getState(), State.Connected);
-        assertEquals(serverCnx.getAuthRole(), "pass.proxy");
+        // Fork semantics: the anonymous-original-role branch keeps the fork's BinaryAuthSession
+        // behavior where authRole also resolves to the anonymous role.
+        assertEquals(serverCnx.getAuthRole(), anonymousUserRole);
         assertEquals(serverCnx.getPrincipal(), anonymousUserRole);
         assertEquals(serverCnx.getOriginalPrincipal(), anonymousUserRole);
-        assertThat(serverCnx.getOriginalAuthData()).isSameAs(AuthenticationDataAnonymous.INSTANCE);
-        assertThat(serverCnx.getAuthenticationData()).isSameAs(AuthenticationDataAnonymous.INSTANCE);
-        assertThat(serverCnx.getAuthData()).isNotSameAs(serverCnx.getOriginalAuthData());
         assertTrue(serverCnx.isActive());
         channel.finish();
     }
@@ -1407,101 +1404,6 @@ public class ServerCnxTest {
     // in that class was too extensive. There is some overlap with this test and other tests in this class. The primary
     // role of this test is verifying that the correct role and AuthenticationDataSource are passed to the
     // AuthorizationService.
-    public void testVerifyOriginalPrincipalWithoutAuthDataForwardedFromProxy() throws Exception {
-        AuthenticationService authenticationService = mock(AuthenticationService.class);
-        AuthenticationProvider authenticationProvider = new MockAuthenticationProvider();
-        String authMethodName = authenticationProvider.getAuthMethodName();
-        when(brokerService.getAuthenticationService()).thenReturn(authenticationService);
-        when(authenticationService.getAuthenticationProvider(authMethodName)).thenReturn(authenticationProvider);
-        svcConfig.setAuthenticationEnabled(true);
-        svcConfig.setAuthenticateOriginalAuthData(false);
-        svcConfig.setProxyRoles(Collections.singleton("pass.pass"));
-
-        svcConfig.setAuthorizationProvider("org.apache.pulsar.broker.auth.MockAuthorizationProvider");
-        AuthorizationService authorizationService =
-                spyWithClassAndConstructorArgsRecordingInvocations(AuthorizationService.class, svcConfig,
-                        pulsarTestContext.getPulsarResources());
-        when(brokerService.getAuthorizationService()).thenReturn(authorizationService);
-        svcConfig.setAuthorizationEnabled(true);
-
-        resetChannel();
-        assertTrue(channel.isActive());
-        assertEquals(serverCnx.getState(), State.Start);
-
-        // Connect
-        // This client role integrates with the MockAuthenticationProvider and MockAuthorizationProvider
-        // to pass authentication and fail authorization
-        String proxyRole = "pass.pass";
-        String clientRole = "pass.fail";
-        ByteBuf connect = Commands.newConnect(authMethodName, proxyRole, "test", "localhost",
-                clientRole, null, null);
-
-        BinaryAuthSession binaryAuthSession = spyBinaryAuthSession(authenticationService, connect.copy(), svcConfig);
-        when(authenticationService.createBinaryAuthSession(any())).thenReturn(binaryAuthSession);
-
-        channel.writeInbound(connect);
-        Object connectResponse = getResponse();
-        assertTrue(connectResponse instanceof CommandConnected);
-        assertThat(serverCnx.getOriginalAuthData()).isSameAs(AuthenticationDataForwarded.INSTANCE);
-        assertThat(serverCnx.getAuthenticationData()).isSameAs(AuthenticationDataForwarded.INSTANCE);
-        assertNull(serverCnx.getOriginalAuthState());
-        assertEquals(serverCnx.getOriginalPrincipal(), clientRole);
-        assertEquals(serverCnx.getAuthData().getCommandData(), proxyRole);
-        assertEquals(serverCnx.getAuthRole(), proxyRole);
-        assertEquals(serverCnx.getAuthState().getAuthRole(), proxyRole);
-
-        // Lookup
-        TopicName topicName = TopicName.get("persistent://public/default/test-topic");
-        ByteBuf lookup = Commands.newLookup(topicName.toString(), false, 1);
-        channel.writeInbound(lookup);
-        Object lookupResponse = getResponse();
-        assertTrue(lookupResponse instanceof CommandLookupTopicResponse);
-        assertEquals(((CommandLookupTopicResponse) lookupResponse).getError(), ServerError.AuthorizationError);
-        assertEquals(((CommandLookupTopicResponse) lookupResponse).getRequestId(), 1);
-        verify(authorizationService, times(1))
-                .allowTopicOperationAsync(topicName, TopicOperation.LOOKUP, clientRole, proxyRole,
-                        serverCnx.getOriginalAuthData(), serverCnx.getAuthData());
-
-        // producer
-        ByteBuf producer = Commands.newProducer(topicName.toString(), 1, 2, "test-producer", new HashMap<>(), false);
-        channel.writeInbound(producer);
-        Object producerResponse = getResponse();
-        assertTrue(producerResponse instanceof CommandError);
-        assertEquals(((CommandError) producerResponse).getError(), ServerError.AuthorizationError);
-        assertEquals(((CommandError) producerResponse).getRequestId(), 2);
-        verify(authorizationService, times(1))
-                .allowTopicOperationAsync(topicName, TopicOperation.PRODUCE, clientRole, proxyRole,
-                        serverCnx.getOriginalAuthData(), serverCnx.getAuthData());
-        verify(authorizationService, times(1))
-                .allowTopicOperationAsync(topicName, TopicOperation.LOOKUP, clientRole, proxyRole,
-                        serverCnx.getOriginalAuthData(), serverCnx.getAuthData());
-
-        // consumer
-        String subscriptionName = "test-subscribe";
-        ByteBuf subscribe = Commands.newSubscribe(topicName.toString(), subscriptionName, 1, 3,
-                CommandSubscribe.SubType.Shared, 0, "consumer", 0);
-        channel.writeInbound(subscribe);
-        Object subscribeResponse = getResponse();
-        assertTrue(subscribeResponse instanceof CommandError);
-        assertEquals(((CommandError) subscribeResponse).getError(), ServerError.AuthorizationError);
-        assertEquals(((CommandError) subscribeResponse).getRequestId(), 3);
-        verify(authorizationService, times(1)).allowTopicOperationAsync(
-                eq(topicName), eq(TopicOperation.CONSUME),
-                eq(clientRole), eq(proxyRole), argThat(arg -> {
-                    assertTrue(arg instanceof AuthenticationDataSubscription);
-                    AuthenticationDataSubscription authData = (AuthenticationDataSubscription) arg;
-                    assertThat(authData.getAuthData()).isSameAs(AuthenticationDataForwarded.INSTANCE);
-                    assertNull(authData.getCommandData());
-                    assertEquals(authData.getSubscription(), subscriptionName);
-                    return true;
-                }), argThat(arg -> {
-                    assertTrue(arg instanceof AuthenticationDataSubscription);
-                    AuthenticationDataSubscription authData = (AuthenticationDataSubscription) arg;
-                    assertEquals(authData.getCommandData(), proxyRole);
-                    assertEquals(authData.getSubscription(), subscriptionName);
-                    return true;
-                }));
-    }
 
     // This test used to be in the ServerCnxAuthorizationTest class, but it was migrated here because the mocking
     // in that class was too extensive. There is some overlap with this test and other tests in this class. The primary

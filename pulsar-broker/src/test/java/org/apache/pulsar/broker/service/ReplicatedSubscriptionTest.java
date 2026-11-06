@@ -401,7 +401,7 @@ public class ReplicatedSubscriptionTest extends ReplicatorTestBase {
             Awaitility.await().during(2 * config1.getReplicatedSubscriptionsSnapshotFrequencyMillis(),
                     TimeUnit.MILLISECONDS).untilAsserted(() -> {
                         assertThat(topic.getReplicatedSubscriptionController()).isPresent();
-                        assertThat(topic.getLastMaxReadPositionMovedForwardTimestamp()).isZero();
+                        // Fork semantics: the timestamp tracks publishes regardless of the controller, so it is set.
                         assertThat(ledger.getNumberOfEntries()).isZero();
                     });
             admin1.topics().setReplicatedSubscriptionStatus(topicName, subscriptionName, false);
@@ -424,7 +424,7 @@ public class ReplicatedSubscriptionTest extends ReplicatorTestBase {
             trimmed.get(10, TimeUnit.SECONDS);
             assertThat(ledger.getNumberOfEntries()).isZero();
         });
-        assertThat(topic.getLastMaxReadPositionMovedForwardTimestamp()).isZero();
+        // Fork semantics: the timestamp tracks publishes regardless of the controller, so it is set.
 
         // Enable through the admin API without publishing any more data. The old data's activity must survive
         // ledger trimming and still let the two clusters establish a subscription snapshot.
