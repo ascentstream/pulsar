@@ -82,8 +82,6 @@ import org.apache.pulsar.broker.PulsarServerException;
 import org.apache.pulsar.broker.PulsarService;
 import org.apache.pulsar.broker.ServiceConfiguration;
 import org.apache.pulsar.broker.TransactionMetadataStoreService;
-import org.apache.pulsar.broker.authentication.AuthenticationDataAnonymous;
-import org.apache.pulsar.broker.authentication.AuthenticationDataForwarded;
 import org.apache.pulsar.broker.authentication.AuthenticationDataSource;
 import org.apache.pulsar.broker.authentication.AuthenticationDataSubscription;
 import org.apache.pulsar.broker.authentication.AuthenticationProvider;
@@ -1105,7 +1103,6 @@ public class ServerCnx extends PulsarHandler implements TransportCnx {
                 sslSession = ((SslHandler) sslHandler).engine().getSession();
             }
 
-<<<<<<< HEAD
             binaryAuthSession = service.getAuthenticationService().createBinaryAuthSession(BinaryAuthContext.builder()
                     .executor(ctx.executor())
                     .remoteAddress(remoteAddress)
@@ -1123,71 +1120,6 @@ public class ServerCnx extends PulsarHandler implements TransportCnx {
                             handleAuthResult(authResult);
                         }
                     }, ctx.executor());
-=======
-            authState = authenticationProvider.newAuthState(clientData, remoteAddress, sslSession);
-
-            if (log.isDebugEnabled()) {
-                String role = "";
-                if (authState != null && authState.isComplete()) {
-                    role = authState.getAuthRole();
-                } else {
-                    role = "authentication incomplete or null";
-                }
-                log.debug("[{}] Authenticate role : {}", remoteAddress, role);
-            }
-
-            if (connect.hasOriginalPrincipal() && service.getPulsar().getConfig().isAuthenticateOriginalAuthData()
-                    && !WEBSOCKET_DUMMY_ORIGINAL_PRINCIPLE.equals(connect.getOriginalPrincipal())) {
-                // Flow:
-                // 1. Initialize original authentication.
-                // 2. Authenticate the proxy's authentication data.
-                // 3. Authenticate the original authentication data.
-                String originalAuthMethod;
-                if (connect.hasOriginalAuthMethod()) {
-                    originalAuthMethod = connect.getOriginalAuthMethod();
-                } else {
-                    originalAuthMethod = "none";
-                }
-
-                AuthenticationProvider originalAuthenticationProvider = getBrokerService()
-                        .getAuthenticationService()
-                        .getAuthenticationProvider(originalAuthMethod);
-
-                /**
-                 * When both the broker and the proxy are configured with anonymousUserRole
-                 * if the client does not configure an authentication method
-                 * the proxy side will set the value of anonymousUserRole to clientAuthRole when it creates a connection
-                 * and the value of clientAuthMethod will be none.
-                 * The broker uses that role for the original principal while authenticating the proxy separately.
-                 */
-                if (originalAuthenticationProvider == null) {
-                    originalPrincipal = getBrokerService().getAuthenticationService().getAnonymousUserRole()
-                            .orElseThrow(() ->
-                                    new AuthenticationException("No anonymous role, and can't find "
-                                            + "AuthenticationProvider for original role using auth method "
-                                            + "[" + originalAuthMethod + "] is not available"));
-                    originalAuthData = AuthenticationDataAnonymous.INSTANCE;
-                } else {
-                    originalAuthDataCopy = AuthData.of(connect.getOriginalAuthData().getBytes());
-                    originalAuthState = originalAuthenticationProvider.newAuthState(
-                            originalAuthDataCopy,
-                            remoteAddress,
-                            sslSession);
-                }
-            } else if (connect.hasOriginalPrincipal()) {
-                originalPrincipal = connect.getOriginalPrincipal();
-                if (!WEBSOCKET_DUMMY_ORIGINAL_PRINCIPLE.equals(originalPrincipal)) {
-                    originalAuthData = AuthenticationDataForwarded.INSTANCE;
-                }
-
-                if (log.isDebugEnabled()) {
-                    log.debug("[{}] Setting original role (forwarded from proxy): {}",
-                        remoteAddress, originalPrincipal);
-                }
-            }
-
-            doAuthentication(clientData, false, clientProtocolVersion, clientVersion);
->>>>>>> e67d32f7cac ([fix][broker] Fix multi-role authorization regressions and optimize nested checks (#26551))
         } catch (Exception e) {
             authenticationFailed(e);
         }

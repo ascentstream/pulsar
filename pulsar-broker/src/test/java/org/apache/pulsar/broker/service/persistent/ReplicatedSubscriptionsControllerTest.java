@@ -123,6 +123,43 @@ public class ReplicatedSubscriptionsControllerTest {
         when(pulsar.getOpenTelemetryReplicatedSubscriptionStats())
                 .thenReturn(mock(OpenTelemetryReplicatedSubscriptionStats.class));
         when(executor.scheduleAtFixedRate(any(Runnable.class), anyLong(), anyLong(), any(TimeUnit.class)))
+                .thenReturn(mock(ScheduledFuture.class));
+        when(topic.getName()).thenReturn("persistent://public/default/t1");
+        when(topic.getBrokerService()).thenReturn(brokerService);
+        return topic;
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    public void testMaxReadPositionTimestampFollowsControllerLifecycle() {
+        PulsarService pulsar = mock(PulsarService.class);
+        ScheduledExecutorService executor = mock(ScheduledExecutorService.class);
+        @SuppressWarnings("rawtypes")
+        ScheduledFuture timer = mock(ScheduledFuture.class);
+        ServiceConfiguration config = new ServiceConfiguration();
+        config.setClusterName("local");
+        config.setEnableReplicatedSubscriptions(true);
+        OpenTelemetryReplicatedSubscriptionStats stats = mock(OpenTelemetryReplicatedSubscriptionStats.class);
+        MonotonicClock monotonicClock = System::nanoTime;
+        BacklogQuotaManager backlogQuotaManager = mock(BacklogQuotaManager.class);
+        when(backlogQuotaManager.getDefaultQuota()).thenReturn(BacklogQuotaImpl.builder()
+                .limitSize(0)
+                .limitTime(0)
+                .retentionPolicy(BacklogQuota.RetentionPolicy.producer_request_hold)
+                .build());
+        BrokerService brokerService = mock(BrokerService.class);
+        ManagedLedger ledger = mock(ManagedLedger.class);
+        MessageDeduplication messageDeduplication = mock(MessageDeduplication.class);
+
+        when(brokerService.getClock()).thenReturn(Clock.systemUTC());
+        when(brokerService.pulsar()).thenReturn(pulsar);
+        when(brokerService.getPulsar()).thenReturn(pulsar);
+        when(brokerService.getBacklogQuotaManager()).thenReturn(backlogQuotaManager);
+        when(pulsar.getExecutor()).thenReturn(executor);
+        when(pulsar.getConfiguration()).thenReturn(config);
+        when(pulsar.getOpenTelemetryReplicatedSubscriptionStats()).thenReturn(stats);
+        when(pulsar.getMonotonicClock()).thenReturn(monotonicClock);
+        when(executor.scheduleAtFixedRate(any(Runnable.class), anyLong(), anyLong(), any(TimeUnit.class)))
                 .thenReturn(timer);
 
         TestPersistentTopic topic =
@@ -356,7 +393,6 @@ public class ReplicatedSubscriptionsControllerTest {
         ServiceConfiguration config = new ServiceConfiguration();
         config.setReplicatorPrefix("pulsar.repl");
         config.setEnableReplicatedSubscriptions(true);
-        config.setClusterName("test-cluster");
         OpenTelemetryReplicatedSubscriptionStats stats = mock(OpenTelemetryReplicatedSubscriptionStats.class);
         MonotonicClock monotonicClock = System::nanoTime;
         BacklogQuotaManager backlogQuotaManager = mock(BacklogQuotaManager.class);

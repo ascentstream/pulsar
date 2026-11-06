@@ -334,11 +334,6 @@ public class ModularLoadManagerImpl implements ModularLoadManager {
     }
 
     @VisibleForTesting
-    LoadData getLoadData() {
-        return this.loadData;
-    }
-
-    @VisibleForTesting
     void setLoadSheddingStrategy(LoadSheddingStrategy loadSheddingStrategy) {
         this.loadSheddingStrategy = loadSheddingStrategy;
     }
@@ -704,9 +699,8 @@ public class ModularLoadManagerImpl implements ModularLoadManager {
         recentlyUnloadedBundles.keySet().removeIf(e -> recentlyUnloadedBundles.get(e) < timeout);
 
         Set<String> sheddingExcludedNamespaces = conf.getLoadBalancerSheddingExcludedNamespaces();
-        try {
-            final Multimap<String, String> bundlesToUnload =
-                    loadSheddingStrategy.findBundlesForUnloading(loadData, conf);
+        final Multimap<String, String> bundlesToUnload =
+                loadSheddingStrategy.findBundlesForUnloading(loadData, conf);
 
         boolean leadershipLost = false;
         for (Map.Entry<String, Collection<String>> entry : bundlesToUnload.asMap().entrySet()) {

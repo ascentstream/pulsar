@@ -405,7 +405,10 @@ public abstract class AbstractTopic implements Topic, TopicPolicyListener {
         }
 
         // Backward compatibility: Default use the current cluster name as key.
-        dispatchRateMap.putIfAbsent(brokerService.pulsar().getConfiguration().getClusterName(), defaultDispatchRate);
+        String localCluster = brokerService.pulsar().getConfiguration().getClusterName();
+        if (localCluster != null) {
+            dispatchRateMap.putIfAbsent(localCluster, defaultDispatchRate);
+        }
 
         // Process existing topic policies
         topicPolicies.getReplicatorDispatchRate().forEach((cluster, policyValue) -> {
@@ -1547,7 +1550,11 @@ public abstract class AbstractTopic implements Topic, TopicPolicyListener {
     }
 
     public void updateBrokerReplicatorDispatchRate() {
-        updateReplicatorDispatchRate(brokerService.pulsar().getConfiguration().getClusterName(), v -> {
+        String localCluster = brokerService.pulsar().getConfiguration().getClusterName();
+        if (localCluster == null) {
+            return;
+        }
+        updateReplicatorDispatchRate(localCluster, v -> {
             v.updateBrokerValue(replicatorDispatchRateInBroker(brokerService.pulsar().getConfiguration()));
         });
     }

@@ -227,11 +227,7 @@ public class MultiRolesTokenAuthorizationProviderTest {
                                                       boolean allowed) throws Exception {
         ServiceConfiguration config = tokenConfiguration(AuthTokenUtils.createSecretKey(SignatureAlgorithm.HS256));
         TokenAuthenticationProvider authenticationProvider = mock(TokenAuthenticationProvider.class);
-<<<<<<< HEAD
-        when(authenticationProvider.authenticateRolesAsync(any(), eq("sub")))
-=======
         when(authenticationProvider.authenticateRolesAsync(any(), eq("roles")))
->>>>>>> e67d32f7cac ([fix][broker] Fix multi-role authorization regressions and optimize nested checks (#26551))
                 .thenReturn(CompletableFuture.completedFuture(Set.of("reader", "writer")));
         TenantResources tenants = mock(TenantResources.class);
         when(tenants.getTenantAsync("tenant"))
@@ -253,21 +249,12 @@ public class MultiRolesTokenAuthorizationProviderTest {
                     new AuthenticationDataCommand("token"), subscription);
             assertThat(provider.allowTopicOperationAsync(TopicName.get("persistent://tenant/ns/topic"),
                     "reader", operation, data).get()).isEqualTo(allowed);
-<<<<<<< HEAD
-            verify(authenticationProvider).authenticateRolesAsync(data, "sub");
-            when(authenticationProvider.authenticateRolesAsync(data, "sub"))
-                    .thenReturn(CompletableFuture.completedFuture(Set.of()));
-            assertThat(provider.allowTopicOperationAsync(TopicName.get("persistent://tenant/ns/topic"),
-                    "reader", operation, data).get()).isFalse();
-            verify(authenticationProvider, times(2)).authenticateRolesAsync(data, "sub");
-=======
             verify(authenticationProvider).authenticateRolesAsync(data, "roles");
             when(authenticationProvider.authenticateRolesAsync(data, "roles"))
                     .thenReturn(CompletableFuture.completedFuture(Set.of()));
             assertThat(provider.allowTopicOperationAsync(TopicName.get("persistent://tenant/ns/topic"),
                     "reader", operation, data).get()).isFalse();
             verify(authenticationProvider, times(2)).authenticateRolesAsync(data, "roles");
->>>>>>> e67d32f7cac ([fix][broker] Fix multi-role authorization regressions and optimize nested checks (#26551))
         }
     }
 
@@ -317,7 +304,6 @@ public class MultiRolesTokenAuthorizationProviderTest {
         }
     }
 
-<<<<<<< HEAD
     private static AuthenticationDataSource httpAuthData(String token) {
         return new AuthenticationDataSource() {
             @Override
@@ -423,8 +409,6 @@ public class MultiRolesTokenAuthorizationProviderTest {
         assertThat(service.isSuperUserOrTenantAdmin("tenant", "user", httpAuthData(null)).get()).isFalse();
     }
 
-=======
->>>>>>> e67d32f7cac ([fix][broker] Fix multi-role authorization regressions and optimize nested checks (#26551))
     @DataProvider
     public Object[][] validationOutcomes() {
         return new Object[][]{{true}, {false}};
