@@ -39,6 +39,7 @@ import javax.ws.rs.container.AsyncResponse;
 import javax.ws.rs.core.Response;
 import javax.ws.rs.core.Response.Status;
 import lombok.extern.slf4j.Slf4j;
+import static org.apache.bookkeeper.mledger.ManagedLedgerConfig.PROPERTY_SOURCE_TOPIC_KEY;
 import org.apache.bookkeeper.client.BookKeeper;
 import org.apache.bookkeeper.mledger.ManagedLedgerException;
 import org.apache.commons.lang3.StringUtils;
@@ -811,6 +812,34 @@ public abstract class AdminResource extends PulsarWebResource {
      *
      * @param topicName given topic name
      */
+    protected CompletableFuture<Void> validateShadowTopicPropertiesAsync(Map<String, String> properties) {
+        if (properties == null || !properties.containsKey(PROPERTY_SOURCE_TOPIC_KEY)) {
+            return CompletableFuture.completedFuture(null);
+        }
+        if (!pulsar().getConfiguration().isEnableShadowTopics()) {
+            return FutureUtil.failedFuture(new RestException(Status.METHOD_NOT_ALLOWED, "Shadow topics are disabled"));
+        }
+        String shadowSource = properties.get(PROPERTY_SOURCE_TOPIC_KEY);
+        if (shadowSource == null) {
+            // A null value would drop the shadow source of an existing shadow topic.
+            return FutureUtil.failedFuture(new RestException(Status.PRECONDITION_FAILED,
+                    "Shadow source topic must not be null"));
+        }
+        final TopicName sourceTopic;
+        try {
+            sourceTopic = TopicName.get(shadowSource);
+        } catch (IllegalArgumentException e) {
+            return FutureUtil.failedFuture(new RestException(Status.PRECONDITION_FAILED,
+                    "Invalid shadow source topic name"));
+        }
+        return validateShadowTopicTenantAsync(sourceTopic);
+    }
+
+    protected CompletableFuture<Void> validateShadowTopicTenantAsync(TopicName relatedTopic) {
+        return topicName.getTenant().equals(relatedTopic.getTenant())
+                ? CompletableFuture.completedFuture(null) : validateSuperUserAccessAsync();
+    }
+
     protected CompletableFuture<TopicExistsInfo> checkTopicExistsAsync(TopicName topicName) {
         return pulsar().getNamespaceService().checkTopicExistsAsync(topicName);
     }

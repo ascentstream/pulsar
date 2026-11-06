@@ -57,6 +57,8 @@ import org.apache.pulsar.client.api.ProducerBuilder;
 import org.apache.pulsar.client.api.Schema;
 import org.apache.pulsar.client.api.schema.SchemaInfoProvider;
 import org.apache.pulsar.client.impl.MessageImpl;
+import org.apache.pulsar.common.policies.data.HierarchyTopicPolicies;
+import org.apache.pulsar.common.policies.data.PolicyHierarchyValue;
 import org.apache.pulsar.client.impl.ProducerImpl;
 import org.apache.pulsar.client.impl.PulsarClientImpl;
 import org.apache.pulsar.common.api.proto.MessageMetadata;
@@ -199,6 +201,9 @@ public class GeoPersistentReplicatorTest {
             when(topic.getBrokerService()).thenReturn(brokerService);
             when(topic.getReplicatorPrefix()).thenReturn("pulsar.repl");
             when(topic.getReplicatorDispatchRate(any())).thenReturn(null);
+            HierarchyTopicPolicies hierarchyTopicPolicies = mock(HierarchyTopicPolicies.class);
+            when(hierarchyTopicPolicies.getResourceGroupName()).thenReturn(new PolicyHierarchyValue<>());
+            when(topic.getHierarchyTopicPolicies()).thenReturn(hierarchyTopicPolicies);
             return topic;
         }
 
