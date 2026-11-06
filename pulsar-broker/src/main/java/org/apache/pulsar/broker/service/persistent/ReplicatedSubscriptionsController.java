@@ -34,6 +34,7 @@ import java.util.TreeMap;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -153,13 +154,18 @@ public class ReplicatedSubscriptionsController implements AutoCloseable, Topic.P
     private final OpenTelemetryReplicatedSubscriptionStats stats;
 
     public ReplicatedSubscriptionsController(PersistentTopic topic, String localCluster) {
+        this(topic, localCluster, topic.getBrokerService().pulsar().getExecutor());
+    }
+
+    @VisibleForTesting
+    ReplicatedSubscriptionsController(PersistentTopic topic, String localCluster,
+                                      ScheduledExecutorService executor) {
         this.topic = topic;
         this.localCluster = localCluster;
         var pulsar = topic.getBrokerService().pulsar();
-        timer = pulsar.getExecutor()
-                .scheduleAtFixedRate(catchingAndLoggingThrowables(this::startNewSnapshot), 0,
-                        pulsar.getConfiguration().getReplicatedSubscriptionsSnapshotFrequencyMillis(),
-                        TimeUnit.MILLISECONDS);
+        timer = executor.scheduleAtFixedRate(catchingAndLoggingThrowables(this::startNewSnapshot), 0,
+                pulsar.getConfiguration().getReplicatedSubscriptionsSnapshotFrequencyMillis(),
+                TimeUnit.MILLISECONDS);
         stats = pulsar.getOpenTelemetryReplicatedSubscriptionStats();
     }
 

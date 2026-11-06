@@ -2312,12 +2312,16 @@ public class PersistentTopicTest extends MockedBookKeeperTestCase {
         topicPolicies.setReplicationClusters(topicClusters);
         Optional<TopicPolicies> optionalTopicPolicies = Optional.of(topicPolicies);
         topicPoliciesFuture.complete(optionalTopicPolicies);
-        when(topicPoliciesService.getTopicPoliciesAsync(any(), any()))
+        when(topicPoliciesService.registerListenerAsync(any(), any()))
+                .thenReturn(CompletableFuture.completedFuture(true));
+        when(topicPoliciesService.getTopicPoliciesAsync(any(), eq(TopicPoliciesService.GetType.GLOBAL_ONLY)))
+                .thenReturn(CompletableFuture.completedFuture(Optional.empty()));
+        when(topicPoliciesService.getTopicPoliciesAsync(any(), eq(TopicPoliciesService.GetType.LOCAL_ONLY)))
                 .thenReturn(CompletableFuture.completedFuture(Optional.of(topicPolicies)));
 
         topic = new PersistentTopic(successTopicName, ledgerMock, brokerService);
         topic.initialize().join();
-        assertEquals(topic.getHierarchyTopicPolicies().getReplicationClusters().get(), namespaceClusters);
+        assertEquals(topic.getHierarchyTopicPolicies().getReplicationClusters().get(), topicClusters);
     }
 
     @Test
