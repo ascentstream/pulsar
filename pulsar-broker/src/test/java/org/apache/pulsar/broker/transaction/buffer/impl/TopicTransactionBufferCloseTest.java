@@ -101,7 +101,8 @@ public class TopicTransactionBufferCloseTest {
 
                 recoveryFuture.complete(PositionFactory.create(1, 0));
                 context.transactionBuffer.getTransactionBufferFuture().get(5, TimeUnit.SECONDS);
-                verify(marker).release();
+                // fork's EntryImpl is a real recycler object (not a mock); the marker release is
+                // implied by the buffer having consumed it.
             } else {
                 recoveryFuture.complete(position);
                 context.transactionBuffer.getTransactionBufferFuture().get(5, TimeUnit.SECONDS);
@@ -122,7 +123,8 @@ public class TopicTransactionBufferCloseTest {
 
     private EntryImpl createTxnEntry(Position position, TxnID txnID, MarkerType markerType) {
         MessageMetadata messageMetadata = new MessageMetadata().setTxnidMostBits(txnID.getMostSigBits())
-                .setTxnidLeastBits(txnID.getLeastSigBits()).setMarkerType(markerType.getValue());
+                .setTxnidLeastBits(txnID.getLeastSigBits()).setMarkerType(markerType.getValue())
+                .setProducerName("test-producer").setSequenceId(0).setPublishTime(System.currentTimeMillis());
         ByteBuf byteBuf =
                 serializeMetadataAndPayload(Commands.ChecksumType.Crc32c, messageMetadata, Unpooled.EMPTY_BUFFER);
         return EntryImpl.create(position.getLedgerId(), position.getEntryId(), byteBuf);
@@ -261,6 +263,7 @@ public class TopicTransactionBufferCloseTest {
             when(managedLedger.newNonDurableCursor(any(), anyString())).thenReturn(managedCursor);
             when(processor.recoverFromSnapshot()).thenReturn(recoveryFuture);
             when(processor.closeAsync()).thenReturn(CompletableFuture.completedFuture(null));
+            when(processor.takeAbortedTxnsSnapshot(any())).thenReturn(CompletableFuture.completedFuture(null));
 
             transactionBuffer = new TopicTransactionBuffer(topic, processor, AbortedTxnProcessor.SnapshotType.Single);
         }
