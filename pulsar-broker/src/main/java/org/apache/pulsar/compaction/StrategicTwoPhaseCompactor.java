@@ -19,6 +19,7 @@
 package org.apache.pulsar.compaction;
 
 import io.netty.buffer.ByteBuf;
+import io.netty.util.ReferenceCountUtil;
 import java.time.Duration;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
@@ -38,6 +39,7 @@ import org.apache.pulsar.client.api.CryptoKeyReader;
 import org.apache.pulsar.client.api.Message;
 import org.apache.pulsar.client.api.MessageId;
 import org.apache.pulsar.client.api.PulsarClient;
+import org.apache.pulsar.client.api.PulsarClientException;
 import org.apache.pulsar.client.api.Reader;
 import org.apache.pulsar.client.impl.BatchMessageIdImpl;
 import org.apache.pulsar.client.impl.CompactionReaderImpl;
@@ -64,14 +66,12 @@ public class StrategicTwoPhaseCompactor extends PublishingOrderCompactor {
     private static final int MAX_OUTSTANDING = 500;
     private static final int MAX_READER_RECONNECT_WAITING_TIME_IN_MILLIS = 20 * 1000;
     private final Duration phaseOneLoopReadTimeout;
-    private final RawBatchMessageContainerImpl batchMessageContainer;
 
     public StrategicTwoPhaseCompactor(ServiceConfiguration conf,
                                       PulsarClient pulsar,
                                       BookKeeper bk,
                                       ScheduledExecutorService scheduler) {
         super(conf, pulsar, bk, scheduler);
-        batchMessageContainer = new RawBatchMessageContainerImpl();
         phaseOneLoopReadTimeout = Duration.ofSeconds(conf.getBrokerServiceCompactionPhaseOneLoopTimeInSeconds());
     }
 
@@ -89,37 +89,49 @@ public class StrategicTwoPhaseCompactor extends PublishingOrderCompactor {
                                                TopicCompactionStrategy<T> strategy,
                                                CryptoKeyReader cryptoKeyReader) {
         CompletableFuture<Consumer<T>> consumerFuture = new CompletableFuture<>();
-        if (cryptoKeyReader != null) {
-            batchMessageContainer.setCryptoKeyReader(cryptoKeyReader);
-        }
         CompactionReaderImpl reader = CompactionReaderImpl.create(
                 (PulsarClientImpl) pulsar, strategy.getSchema(), topic, consumerFuture, cryptoKeyReader);
 
-        return consumerFuture.thenComposeAsync(__ -> compactAndCloseReader(reader, strategy), scheduler);
+        return consumerFuture.thenComposeAsync(
+                __ -> compactAndCloseReader(reader, strategy, cryptoKeyReader), scheduler);
     }
 
-    <T> CompletableFuture<Long> doCompaction(Reader<T> reader, TopicCompactionStrategy strategy) {
+    <T> CompletableFuture<Long> doCompaction(Reader<T> reader, TopicCompactionStrategy strategy,
+                                            CryptoKeyReader cryptoKeyReader) {
 
         if (!(reader instanceof CompactionReaderImpl<T>)) {
             return CompletableFuture.failedFuture(
                     new IllegalStateException("reader has to be CompactionReaderImpl"));
         }
-        return reader.hasMessageAvailableAsync()
+        // Batch state belongs to one attempt: a failed write must not leave messages or encryption state
+        // in the next compaction, even when the same compactor instance is reused.
+        RawBatchMessageContainerImpl batchMessageContainer = new RawBatchMessageContainerImpl();
+        batchMessageContainer.setCryptoKeyReader(cryptoKeyReader);
+        CompletableFuture<Long> compaction = reader.hasMessageAvailableAsync()
                 .thenCompose(available -> {
                     if (available) {
                         return phaseOne(reader, strategy)
-                                .thenCompose((result) -> phaseTwo(result, reader, bk));
+                                .thenCompose((result) -> phaseTwo(result, reader, bk, batchMessageContainer));
                     } else {
                         log.info("Skip compaction of the empty topic {}", reader.getTopic());
                         return CompletableFuture.completedFuture(-1L);
                     }
                 });
+        return compaction.whenCompleteAsync((__, exception) -> {
+            // This requires a single-threaded scheduler, as provided by PulsarService.getCompactorExecutor(),
+            // to serialize failure cleanup with the phase-two loop. Queued loop tasks check their
+            // terminal future before touching this container.
+            if (exception != null) {
+                batchMessageContainer.discard(new PulsarClientException(exception));
+            }
+        }, scheduler);
     }
 
-    <T> CompletableFuture<Long> compactAndCloseReader(Reader<T> reader, TopicCompactionStrategy strategy) {
+    <T> CompletableFuture<Long> compactAndCloseReader(Reader<T> reader, TopicCompactionStrategy strategy,
+                                                     CryptoKeyReader cryptoKeyReader) {
         CompletableFuture<Long> promise = new CompletableFuture<>();
         mxBean.addCompactionStartOp(reader.getTopic());
-        doCompaction(reader, strategy).whenComplete(
+        doCompaction(reader, strategy, cryptoKeyReader).whenComplete(
                 (ledgerId, exception) -> {
                     log.info("Completed doCompaction ledgerId:{}", ledgerId);
                     reader.closeAsync().whenComplete((v, exception2) -> {
@@ -324,7 +336,8 @@ public class StrategicTwoPhaseCompactor extends PublishingOrderCompactor {
         }
     }
 
-    private <T> CompletableFuture<Long> phaseTwo(PhaseOneResult<T> phaseOneResult, Reader<T> reader, BookKeeper bk) {
+    private <T> CompletableFuture<Long> phaseTwo(PhaseOneResult<T> phaseOneResult, Reader<T> reader, BookKeeper bk,
+                                                RawBatchMessageContainerImpl batchMessageContainer) {
         log.info("Completed phase one. Result:{}. ", phaseOneResult);
         Map<String, byte[]> metadata =
                 LedgerMetadataUtils.buildMetadataForCompactedLedger(
@@ -335,21 +348,22 @@ public class StrategicTwoPhaseCompactor extends PublishingOrderCompactor {
                             "Commencing phase two of compaction for {}, from {} to {}, compacting {} keys to ledger {}",
                             phaseOneResult.topic, phaseOneResult.firstId, phaseOneResult.lastId,
                             phaseOneResult.cache.size(), ledger.getId());
-                    return runPhaseTwo(phaseOneResult, reader, ledger, bk);
+                    return runPhaseTwo(phaseOneResult, reader, ledger, bk, batchMessageContainer);
                 });
     }
 
     private <T> CompletableFuture<Long> runPhaseTwo(
-            PhaseOneResult<T> phaseOneResult, Reader<T> reader, LedgerHandle ledger, BookKeeper bk) {
+            PhaseOneResult<T> phaseOneResult, Reader<T> reader, LedgerHandle ledger, BookKeeper bk,
+            RawBatchMessageContainerImpl batchMessageContainer) {
         CompletableFuture<Long> promise = new CompletableFuture<>();
         Semaphore outstanding = new Semaphore(MAX_OUTSTANDING);
         CompletableFuture<Void> loopPromise = new CompletableFuture<>();
         phaseTwoLoop(phaseOneResult.topic, phaseOneResult.cache.values().iterator(), ledger,
-                outstanding, loopPromise);
+                outstanding, loopPromise, batchMessageContainer);
         loopPromise.thenCompose((v) -> {
                     log.info("Flushing batch container numMessagesInBatch:{}",
                             batchMessageContainer.getNumMessagesInBatch());
-                    return addToCompactedLedger(ledger, null, reader.getTopic(), outstanding)
+                    return addToCompactedLedger(ledger, null, reader.getTopic(), outstanding, batchMessageContainer)
                             .whenComplete((res, exception2) -> {
                                 if (exception2 != null) {
                                     promise.completeExceptionally(exception2);
@@ -357,6 +371,9 @@ public class StrategicTwoPhaseCompactor extends PublishingOrderCompactor {
                                 }
                             });
                 })
+                // Close before publishing the ledger: a close failure must not delete a ledger
+                // already referenced by the compaction subscription.
+                .thenCompose(v -> closeLedger(ledger))
                 .thenCompose(v -> {
                     log.info("Acking ledger id {}", phaseOneResult.lastId);
                     return ((CompactionReaderImpl<T>) reader)
@@ -364,7 +381,6 @@ public class StrategicTwoPhaseCompactor extends PublishingOrderCompactor {
                                     phaseOneResult.lastId, Map.of(COMPACTED_TOPIC_LEDGER_PROPERTY,
                                             ledger.getId()));
                 })
-                .thenCompose((v) -> closeLedger(ledger))
                 .whenComplete((v, exception) -> {
                     if (exception != null) {
                         deleteLedger(bk, ledger).whenComplete((res2, exception2) -> {
@@ -385,21 +401,24 @@ public class StrategicTwoPhaseCompactor extends PublishingOrderCompactor {
 
     private <T> void phaseTwoLoop(String topic, Iterator<Message<T>> reader,
                                   LedgerHandle lh, Semaphore outstanding,
-                                  CompletableFuture<Void> promise) {
+                                  CompletableFuture<Void> promise, RawBatchMessageContainerImpl batchMessageContainer) {
         if (promise.isDone()) {
             return;
         }
         CompletableFuture.runAsync(() -> {
+                    if (promise.isDone()) {
+                        return;
+                    }
                     if (reader.hasNext()) {
                         Message<T> message = reader.next();
                         mxBean.addCompactionReadOp(topic, message.size());
-                        addToCompactedLedger(lh, message, topic, outstanding)
+                        addToCompactedLedger(lh, message, topic, outstanding, batchMessageContainer)
                                 .whenComplete((res, exception2) -> {
                                     if (exception2 != null) {
                                         promise.completeExceptionally(exception2);
                                     }
                                 });
-                        phaseTwoLoop(topic, reader, lh, outstanding, promise);
+                        phaseTwoLoop(topic, reader, lh, outstanding, promise, batchMessageContainer);
                     } else {
                         try {
                             outstanding.acquire(MAX_OUTSTANDING);
@@ -420,44 +439,68 @@ public class StrategicTwoPhaseCompactor extends PublishingOrderCompactor {
     }
 
     <T> CompletableFuture<Boolean> addToCompactedLedger(
-            LedgerHandle lh, Message<T> m, String topic, Semaphore outstanding) {
+            LedgerHandle lh, Message<T> m, String topic, Semaphore outstanding,
+            RawBatchMessageContainerImpl batchMessageContainer) {
         if (m == null) {
-            return flushBatchMessage(lh, topic, outstanding);
+            return flushBatchMessage(lh, topic, outstanding, batchMessageContainer);
         }
         if (batchMessageContainer.haveEnoughSpace((MessageImpl<?>) m)) {
             batchMessageContainer.add((MessageImpl<?>) m, null);
             return CompletableFuture.completedFuture(false);
         }
-        CompletableFuture<Boolean> f = flushBatchMessage(lh, topic, outstanding);
+        CompletableFuture<Boolean> f = flushBatchMessage(lh, topic, outstanding, batchMessageContainer);
         batchMessageContainer.add((MessageImpl<?>) m, null);
         return f;
     }
 
     private CompletableFuture<Boolean> flushBatchMessage(LedgerHandle lh, String topic,
-                                                         Semaphore outstanding) {
+                                                         Semaphore outstanding,
+                                                         RawBatchMessageContainerImpl batchMessageContainer) {
         if (batchMessageContainer.getNumMessagesInBatch() <= 0) {
             return CompletableFuture.completedFuture(false);
         }
         CompletableFuture<Boolean> bkf = new CompletableFuture<>();
+        ByteBuf serialized = null;
+        boolean acquired = false;
         try {
-            ByteBuf serialized = batchMessageContainer.toByteBuf();
+            serialized = batchMessageContainer.toByteBuf();
             outstanding.acquire();
+            acquired = true;
             mxBean.addCompactionWriteOp(topic, serialized.readableBytes());
             long start = System.nanoTime();
             lh.asyncAddEntry(serialized,
                     (rc, ledger, eid, ctx) -> {
                         outstanding.release();
-                        mxBean.addCompactionLatencyOp(topic, System.nanoTime() - start, TimeUnit.NANOSECONDS);
+                        try {
+                            mxBean.addCompactionLatencyOp(topic, System.nanoTime() - start, TimeUnit.NANOSECONDS);
+                        } catch (Throwable t) {
+                            // This callback can run synchronously inside asyncAddEntry: an exception escaping
+                            // it would reach the caller's catch, which would release the permit and the
+                            // buffer a second time - both already belong to the completed write here.
+                            log.warn("Failed to record the compaction write latency", t);
+                        }
                         if (rc != BKException.Code.OK) {
                             bkf.completeExceptionally(BKException.create(rc));
                         } else {
                             bkf.complete(true);
                         }
                     }, null);
+            // Ownership transferred to BookKeeper's write; it releases the buffer when done.
+            serialized = null;
 
         } catch (Throwable t) {
+            // toByteBuf() already cleared the container: nobody else holds the buffer if the hand-off
+            // never happened.
+            ReferenceCountUtil.safeRelease(serialized);
+            // Release the permit only when it was taken: a lost one stalls the next flush on acquire(),
+            // a surplus one raises the outstanding-writes limit.
+            if (acquired) {
+                outstanding.release();
+            }
             log.error("Failed to add entry", t);
-            batchMessageContainer.discard((Exception) t);
+            // discard(Exception) cannot take an Error: wrap non-Exception Throwables so the batch container is
+            // always cleared here and stays reusable after a failed flush.
+            batchMessageContainer.discard(t instanceof Exception ? (Exception) t : new PulsarClientException(t));
             bkf.completeExceptionally(t);
             return bkf;
         }

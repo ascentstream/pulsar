@@ -21,15 +21,37 @@ package org.apache.pulsar.broker.service;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.Setter;
+import org.apache.pulsar.broker.stats.BrokerOperabilityMetrics.TopicLoadFailureReason;
 import org.apache.pulsar.common.naming.TopicName;
 import org.apache.pulsar.common.util.LatencyTracer;
 import org.jspecify.annotations.Nullable;
 
 public class TopicLoadingContext extends LatencyTracer {
+
+    public enum TopicLoadingStage {
+        NAMESPACE_POLICIES("namespace policies", TopicLoadFailureReason.TIMEOUT_LOAD_NAMESPACE_POLICIES),
+        TOPIC_POLICIES("topic policies", TopicLoadFailureReason.TIMEOUT_LOAD_TOPIC_POLICIES),
+        OPEN_ML("open-ml", TopicLoadFailureReason.TIMEOUT_LOAD_ML),
+        INITIALIZE("init", TopicLoadFailureReason.TIMEOUT_INIT),
+        PRE_CREATE_COMPACTED_SUB("pre-create compacted sub", TopicLoadFailureReason.TIMEOUT_INIT),
+        REPLICATION("replication", TopicLoadFailureReason.TIMEOUT_INIT),
+        DEDUPLICATION("deduplication", TopicLoadFailureReason.TIMEOUT_DEDUP);
+
+        private final String tracePoint;
+        private final TopicLoadFailureReason timeoutReason;
+
+        TopicLoadingStage(String tracePoint, TopicLoadFailureReason timeoutReason) {
+            this.tracePoint = tracePoint;
+            this.timeoutReason = timeoutReason;
+        }
+    }
 
     @Getter
     private final TopicName topicName;
@@ -42,6 +64,8 @@ public class TopicLoadingContext extends LatencyTracer {
     @Getter
     @Setter
     @Nullable private Map<String, String> properties;
+    private final AtomicReference<TopicLoadFailureReason> failureReason = new AtomicReference<>();
+    private final ConcurrentHashMap<TopicLoadingStage, AtomicInteger> pendingStages = new ConcurrentHashMap<>();
 
     @Getter
     @Setter
@@ -63,5 +87,46 @@ public class TopicLoadingContext extends LatencyTracer {
         this.properties = properties;
         this.clientVersion = clientVersion;
         this.proxyVersion = proxyVersion;
+    }
+
+    public <T> CompletableFuture<T> trace(TopicLoadingStage stage, CompletableFuture<T> future) {
+        if (future.isDone()) {
+            return future;
+        }
+        start(stage);
+        return future.whenComplete((__, ___) -> {
+            finish(stage);
+        });
+    }
+
+    public void start(TopicLoadingStage stage) {
+        pendingStages.computeIfAbsent(stage, __ -> new AtomicInteger()).incrementAndGet();
+    }
+
+    public void finish(TopicLoadingStage stage) {
+        pendingStages.computeIfPresent(stage, (__, count) -> count.decrementAndGet() == 0 ? null : count);
+        trace(stage.tracePoint);
+    }
+
+    public void setTopicLoadFailureReason(TopicLoadFailureReason reason) {
+        failureReason.compareAndSet(null, reason);
+    }
+
+    public TopicLoadFailureReason getTopicLoadFailureReason() {
+        return failureReason.get();
+    }
+
+    public TopicLoadFailureReason getTopicLoadTimeoutReason() {
+        boolean namespacePoliciesPending = pendingStages.containsKey(TopicLoadingStage.NAMESPACE_POLICIES);
+        boolean topicPoliciesPending = pendingStages.containsKey(TopicLoadingStage.TOPIC_POLICIES);
+        if (namespacePoliciesPending != topicPoliciesPending) {
+            return namespacePoliciesPending
+                    ? TopicLoadFailureReason.TIMEOUT_LOAD_NAMESPACE_POLICIES
+                    : TopicLoadFailureReason.TIMEOUT_LOAD_TOPIC_POLICIES;
+        }
+        if (pendingStages.size() != 1) {
+            return TopicLoadFailureReason.TIMEOUT;
+        }
+        return pendingStages.keySet().iterator().next().timeoutReason;
     }
 }

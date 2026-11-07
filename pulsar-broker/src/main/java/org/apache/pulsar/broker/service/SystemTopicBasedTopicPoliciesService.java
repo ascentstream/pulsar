@@ -52,6 +52,7 @@ import org.apache.pulsar.broker.PulsarService;
 import org.apache.pulsar.broker.event.data.TopicPoliciesUpdateEventData;
 import org.apache.pulsar.broker.namespace.NamespaceBundleOwnershipListener;
 import org.apache.pulsar.broker.namespace.NamespaceService;
+import org.apache.pulsar.broker.service.BrokerServiceException.ServiceUnitNotReadyException;
 import org.apache.pulsar.broker.service.TopicEventsListener.TopicEvent;
 import org.apache.pulsar.broker.systopic.NamespaceEventsSystemTopicFactory;
 import org.apache.pulsar.broker.systopic.SystemTopicClient;
@@ -566,21 +567,40 @@ public class SystemTopicBasedTopicPoliciesService implements TopicPoliciesServic
         if (NamespaceService.isHeartbeatNamespace(namespace) || isSelf(topicName)) {
             return CompletableFuture.completedFuture(Optional.empty());
         }
+        if (closed.get()) {
+            return CompletableFuture.failedFuture(
+                    new ServiceUnitNotReadyException(getClass().getName() + " is closed."));
+        }
         // When the extensible load manager initializes its channel topic, it will trigger the topic policies
         // initialization by calling this method. At the moment, the load manager does not start so the lookup
         // for "__change_events" will fail. In this case, just return an empty policies to avoid deadlock.
         final var loadManager = pulsarService.getLoadManager().get();
-        if (loadManager == null || !loadManager.started() || closed.get()) {
+        if (loadManager == null || !loadManager.started()) {
+            if (closed.get()) {
+                return CompletableFuture.failedFuture(
+                        new ServiceUnitNotReadyException(getClass().getName() + " is closed."));
+            }
             return CompletableFuture.completedFuture(Optional.empty());
         }
         final CompletableFuture<Boolean> preparedFuture = prepareInitPoliciesCacheAsync(topicName.getNamespaceObject());
         // switch thread to avoid potential metadata thread cost and recursive deadlock
         return preparedFuture.thenComposeAsync(inserted -> {
+            if (closed.get()) {
+                return CompletableFuture.failedFuture(
+                        new ServiceUnitNotReadyException(getClass().getName() + " is closed."));
+            }
             // initialized : policies
             final Mutable<Pair<Boolean, Optional<TopicPolicies>>> policiesFutureHolder = new MutableObject<>();
             // NOTICE: avoid using any callback with lock scope to avoid deadlock
             policyCacheInitMap.compute(namespace, (___, existingFuture) -> {
-                if (!inserted || existingFuture != null) {
+                // A namespace-bundle bounce landing inside the thread hop above drops the cached policies together
+                // with the future tracking their load, then starts a new load under a new future: the presence of a
+                // future is not enough, since reading the caches mid-load reports "no policies" for a topic that has
+                // some. Read them only from a load that finished successfully; a missing, still running or failed
+                // future takes the retry below, which awaits a load again before reading. (!inserted -- namespace
+                // being deleted -- keeps answering from whatever the caches still hold.)
+                if (!inserted || (existingFuture != null && existingFuture.isDone()
+                        && !existingFuture.isCompletedExceptionally())) {
                     final var partitionedTopicName = TopicName.get(topicName.getPartitionedTopicName());
                     final var policies = Optional.ofNullable(switch (type) {
                         case GLOBAL_ONLY -> globalPoliciesCache.get(partitionedTopicName);
@@ -592,9 +612,14 @@ public class SystemTopicBasedTopicPoliciesService implements TopicPoliciesServic
                 }
                 return existingFuture;
             });
+            if (closed.get()) {
+                return CompletableFuture.failedFuture(
+                        new ServiceUnitNotReadyException(getClass().getName() + " is closed."));
+            }
             final var p = policiesFutureHolder.getValue();
             if (!p.getLeft()) {
-                log.info("The future of {} has been removed from cache, retry getTopicPolicies again", namespace);
+                log.info("Policy cache init future for {} is missing, failed or not yet complete, "
+                        + "retry getTopicPolicies again", namespace);
                 return getTopicPoliciesAsync(topicName, type);
             }
             return CompletableFuture.completedFuture(p.getRight());

@@ -18,12 +18,14 @@
  */
 package org.apache.pulsar.metadata.impl.oxia;
 
+import com.google.common.annotations.VisibleForTesting;
 import io.opentelemetry.api.OpenTelemetry;
 import io.oxia.client.api.AsyncOxiaClient;
 import io.oxia.client.api.Notification;
 import io.oxia.client.api.OxiaClientBuilder;
 import io.oxia.client.api.PutResult;
 import io.oxia.client.api.Version;
+import io.oxia.client.api.exceptions.AlreadyClosedException;
 import io.oxia.client.api.exceptions.KeyAlreadyExistsException;
 import io.oxia.client.api.exceptions.UnexpectedVersionIdException;
 import io.oxia.client.api.options.DeleteOption;
@@ -61,10 +63,15 @@ public class OxiaMetadataStore extends AbstractMetadataStore {
     private Optional<MetadataEventSynchronizer> synchronizer;
 
     public OxiaMetadataStore(AsyncOxiaClient oxia, String identity) {
+        this(oxia, identity, null);
+    }
+
+    @VisibleForTesting
+    OxiaMetadataStore(AsyncOxiaClient oxia, String identity, MetadataEventSynchronizer synchronizer) {
         super("oxia-metadata", OpenTelemetry.noop(), null, 1);
         this.client = oxia;
         this.identity = identity;
-        this.synchronizer = Optional.empty();
+        this.synchronizer = Optional.ofNullable(synchronizer);
         init();
     }
 
@@ -96,7 +103,6 @@ public class OxiaMetadataStore extends AbstractMetadataStore {
         updateMetadataEventSynchronizer(synchronizer.orElse(null));
 
         client.notifications(this::notificationCallback);
-        super.registerSyncListener(synchronizer);
     }
 
     private void notificationCallback(Notification notification) {
@@ -253,7 +259,7 @@ public class OxiaMetadataStore extends AbstractMetadataStore {
         if (actEx instanceof UnexpectedVersionIdException || actEx instanceof KeyAlreadyExistsException) {
             return CompletableFuture.failedFuture(
                     new MetadataStoreException.BadVersionException(actEx));
-        } else if (actEx instanceof IllegalStateException) {
+        } else if (actEx instanceof AlreadyClosedException || actEx instanceof IllegalStateException) {
             return CompletableFuture.failedFuture(new MetadataStoreException.AlreadyClosedException(actEx));
         } else if (actEx instanceof MetadataStoreException) {
             return CompletableFuture.failedFuture(actEx);

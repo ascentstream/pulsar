@@ -22,6 +22,7 @@ import static org.mockito.Mockito.spy;
 import com.google.common.collect.Sets;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.SignatureAlgorithm;
+import java.lang.reflect.Method;
 import java.util.Base64;
 import java.util.Collections;
 import java.util.HashSet;
@@ -37,6 +38,7 @@ import org.apache.pulsar.broker.authentication.AuthenticationService;
 import org.apache.pulsar.broker.authentication.utils.AuthTokenUtils;
 import org.apache.pulsar.broker.resources.PulsarResources;
 import org.apache.pulsar.client.admin.PulsarAdmin;
+import org.apache.pulsar.client.admin.PulsarAdminBuilder;
 import org.apache.pulsar.client.api.Authentication;
 import org.apache.pulsar.client.api.AuthenticationFactory;
 import org.apache.pulsar.client.api.ClientBuilder;
@@ -72,6 +74,7 @@ public class ProxyWithJwtAuthorizationTest extends ProducerConsumerBase {
     private static final String PROXY_ROLE = "proxy";
     private static final String BROKER_ROLE = "broker";
     private static final String CLIENT_ROLE = "client";
+    private static final String ANONYMOUS_ROLE = "anonymous";
     private static final SecretKey SECRET_KEY = AuthTokenUtils.createSecretKey(SignatureAlgorithm.HS256);
 
     private static final String ADMIN_TOKEN = Jwts.builder().setSubject(ADMIN_ROLE).signWith(SECRET_KEY).compact();
@@ -85,6 +88,17 @@ public class ProxyWithJwtAuthorizationTest extends ProducerConsumerBase {
     private Authentication proxyClientAuthentication;
 
     @BeforeMethod
+    public void setupForTest(Method method) throws Exception {
+        String anonymousRole = method.getName().equals("testAnonymousClientPermissionsWithSuperUserProxy")
+                ? ANONYMOUS_ROLE : null;
+        conf.setAuthenticateOriginalAuthData(
+                !method.getName().equals("testForwardedPrincipalPermissions"));
+        proxyConfig.setForwardAuthorizationCredentials(true);
+        conf.setAnonymousUserRole(anonymousRole);
+        proxyConfig.setAnonymousUserRole(anonymousRole);
+        setup();
+    }
+
     @Override
     protected void setup() throws Exception {
         // enable auth&auth and use JWT at broker
@@ -137,6 +151,12 @@ public class ProxyWithJwtAuthorizationTest extends ProducerConsumerBase {
         proxyClientAuthentication.start();
         proxyService = Mockito.spy(new ProxyService(proxyConfig, authService, proxyClientAuthentication));
         webServer = new WebServer(proxyConfig, authService);
+    }
+
+    @Override
+    protected void customizeNewPulsarAdminBuilder(PulsarAdminBuilder builder) {
+        super.customizeNewPulsarAdminBuilder(builder);
+        builder.authentication(AuthenticationFactory.token(ADMIN_TOKEN));
     }
 
     @AfterMethod(alwaysRun = true)
