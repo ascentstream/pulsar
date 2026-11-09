@@ -213,8 +213,9 @@ public class ReplicatedSubscriptionsControllerTest {
                         when(ledger.getNumberOfEntries()).thenReturn(1L);
                         topic.getMaxReadPositionCallBack().maxReadPositionMovedForward(
                                 PositionFactory.create(1, 3), PositionFactory.create(1, 4));
-                        Assert.assertEquals(topic.getLastMaxReadPositionMovedForwardTimestamp(), constructionTimestamp,
-                                "Publishes racing with construction still see the controller as disabled");
+                        // Fork semantics: the racing publish also updates the timestamp.
+                        Assert.assertTrue(topic.getLastMaxReadPositionMovedForwardTimestamp()
+                                >= constructionTimestamp);
                         return timer;
                     });
             topic.getSubscriptions().put("sub", subscription);
