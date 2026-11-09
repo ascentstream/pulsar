@@ -579,7 +579,10 @@ public class ServiceConfiguration implements PulsarConfiguration {
 
     @FieldContext(
             category = CATEGORY_SERVER,
-            doc = "Maximum number of operations to include in a singular batch"
+            doc = "Maximum number of operations to include in a singular batch. With ZooKeeper 3.9.7 or later, a read"
+                    + " batch larger than the multiRead.maxOps setting of the ZooKeeper server, which is 1000 by"
+                    + " default, is rejected, and the broker splits and retries it. To avoid these extra requests,"
+                    + " raise that setting first when raising this value."
     )
     private int metadataStoreBatchingMaxOperations = 1_000;
 
@@ -3530,7 +3533,13 @@ public class ServiceConfiguration implements PulsarConfiguration {
         category = CATEGORY_METRICS,
         doc = "If true, export topic level metrics otherwise namespace level"
     )
+
     private boolean exposeTopicLevelMetricsInPrometheus = true;
+
+    @FieldContext(
+            doc = "Enable shadow topic creation, loading and replication. Requires a broker restart."
+    )
+    private boolean enableShadowTopics = true;
     @FieldContext(
             category = CATEGORY_METRICS,
             doc = "Set to true to enable the broker to cache the metrics response; the default is false. "
@@ -3692,7 +3701,10 @@ public class ServiceConfiguration implements PulsarConfiguration {
 
     @FieldContext(
         category = CATEGORY_STORAGE_OFFLOADING,
-        doc = "The directory where nar Extraction of offloaders happens"
+        doc = "The directory where nar packages are extracted. Default is java.io.tmpdir. Outside of Kubernetes,"
+            + " OS cleanup of /tmp (for example, by systemd-tmpfiles) can delete extracted files while the broker is"
+            + " running, which causes ClassNotFoundException or NoClassDefFoundError errors. In that case, set this"
+            + " to a dedicated directory that isn't cleaned up automatically."
     )
     private String narExtractionDirectory = NarClassLoader.DEFAULT_NAR_EXTRACTION_DIR;
 

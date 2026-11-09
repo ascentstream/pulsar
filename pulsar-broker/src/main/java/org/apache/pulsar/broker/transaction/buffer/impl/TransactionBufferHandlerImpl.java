@@ -160,7 +160,7 @@ public class TransactionBufferHandlerImpl implements TransactionBufferHandler {
             } else {
                 Throwable cause = FutureUtil.unwrapCompletionException(ex);
                 log.error("endTxn error topic: [{}]", op.topic, cause);
-                if (cause instanceof PulsarClientException.BrokerMetadataException) {
+                if (cause instanceof PulsarClientException.TopicDoesNotExistException) {
                     op.cb.complete(null);
                 } else {
                     op.cb.completeExceptionally(
@@ -193,7 +193,7 @@ public class TransactionBufferHandlerImpl implements TransactionBufferHandler {
                         response.getRequestId(),
                         response.getError());
                 op.cb.completeExceptionally(ClientCnx.getPulsarClientException(response.getError(),
-                        response.getMessage()));
+                        response.hasMessage() ? response.getMessage() : null));
             }
         } finally {
             onResponse(op);
@@ -223,7 +223,7 @@ public class TransactionBufferHandlerImpl implements TransactionBufferHandler {
                 log.error("[{}] Got end txn on subscription response for request {} error {}",
                         op.topic, response.getRequestId(), response.getError());
                 op.cb.completeExceptionally(ClientCnx.getPulsarClientException(response.getError(),
-                        response.getMessage()));
+                        response.hasMessage() ? response.getMessage() : null));
             }
         } finally {
             onResponse(op);

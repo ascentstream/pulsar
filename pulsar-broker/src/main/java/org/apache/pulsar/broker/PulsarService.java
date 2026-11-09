@@ -220,6 +220,7 @@ public class PulsarService implements AutoCloseable, ShutdownService {
     private WebService webService = null;
     private WebSocketService webSocketService = null;
     private TopicPoliciesService topicPoliciesService = TopicPoliciesService.DISABLED;
+
     private BookKeeperClientFactory bkClientFactory;
     protected CompactionServiceFactory compactionServiceFactory;
     private StrategicTwoPhaseCompactor strategicCompactor;
@@ -1281,8 +1282,9 @@ public class PulsarService implements AutoCloseable, ShutdownService {
                                             ServiceConfiguration config)
             throws PulsarServerException, PulsarClientException, MalformedURLException, ServletException {
         if (config.isWebSocketServiceEnabled()) {
-            // Use local broker address to avoid different IP address when using a VIP for service discovery
-            this.webSocketService = new WebSocketService(null, config);
+            // Use local broker address to avoid different IP address when using a VIP for service discovery.
+            // Share the broker's configuration store client, which applies settings like configurationStoreConfigPath.
+            this.webSocketService = new WebSocketService(null, config, pulsarResources);
             this.webSocketService.start();
 
             addWebSocketServlet(new WebSocketProducerServlet(webSocketService), attributeMap,
@@ -2134,6 +2136,11 @@ public class PulsarService implements AutoCloseable, ShutdownService {
     @VisibleForTesting
     public void setTransactionBufferProvider(TransactionBufferProvider transactionBufferProvider) {
         this.transactionBufferProvider = transactionBufferProvider;
+    }
+
+    @VisibleForTesting
+    public void setTopicPoliciesService(TopicPoliciesService topicPoliciesService) {
+        this.topicPoliciesService = topicPoliciesService;
     }
 
     private CompactionServiceFactory loadCompactionServiceFactory() {

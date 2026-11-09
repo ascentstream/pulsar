@@ -46,6 +46,7 @@ import org.apache.pulsar.common.util.PulsarSslConfiguration;
 import org.apache.pulsar.common.util.PulsarSslFactory;
 import org.apache.pulsar.jetty.metrics.JettyStatisticsCollector;
 import org.apache.pulsar.jetty.tls.JettySslContextFactory;
+import org.apache.pulsar.jetty.tls.PulsarSslConnectionFactory;
 import org.eclipse.jetty.ee8.nested.ContextHandler;
 import org.eclipse.jetty.ee8.nested.ResourceHandler;
 import org.eclipse.jetty.ee8.servlet.FilterHolder;
@@ -65,7 +66,6 @@ import org.eclipse.jetty.server.RequestLog;
 import org.eclipse.jetty.server.SecureRequestCustomizer;
 import org.eclipse.jetty.server.Server;
 import org.eclipse.jetty.server.ServerConnector;
-import org.eclipse.jetty.server.SslConnectionFactory;
 import org.eclipse.jetty.server.handler.ContextHandlerCollection;
 import org.eclipse.jetty.server.handler.DefaultHandler;
 import org.eclipse.jetty.server.handler.QoSHandler;
@@ -176,7 +176,8 @@ public class WebService implements AutoCloseable {
                 if (config.isWebServiceHaProxyProtocolEnabled()) {
                     connectionFactories.add(new ProxyConnectionFactory());
                 }
-                connectionFactories.add(new SslConnectionFactory(sslCtxFactory, httpConnectionFactory.getProtocol()));
+                connectionFactories.add(
+                        new PulsarSslConnectionFactory(sslCtxFactory, httpConnectionFactory.getProtocol()));
                 connectionFactories.add(httpConnectionFactory);
                 // org.eclipse.jetty.server.AbstractConnectionFactory.getFactories contains similar logic
                 // this is needed for TLS authentication
@@ -236,6 +237,8 @@ public class WebService implements AutoCloseable {
             config.register(JsonMapperProvider.class);
         }
         config.register(MultiPartFeature.class);
+        // Write the responses of async endpoints on the web service executor instead of the thread that resumes them
+        config.register(new WebExecutorAsyncResponseFeature(webServiceExecutor));
         ServletHolder servletHolder = new ServletHolder(new ServletContainer(config));
         servletHolder.setAsyncSupported(true);
         addServlet(basePath, servletHolder, requiresAuthentication, attributeMap);
