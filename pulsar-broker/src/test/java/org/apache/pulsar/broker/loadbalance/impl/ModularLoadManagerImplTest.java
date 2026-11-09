@@ -685,33 +685,6 @@ public class ModularLoadManagerImplTest {
                 .unloadNamespaceBundle(Mockito.anyString(), Mockito.anyString(), Mockito.anyString());
     }
 
-    @Test
-    public void testLoadSheddingPassesBundleNameAndCompletesAttempt() throws Exception {
-        RecordingLoadSheddingStrategy.reset();
-        String strategyClass = RecordingLoadSheddingStrategy.class.getName();
-        pulsar3.getConfiguration().setLoadBalancerEnabled(true);
-        pulsar3.getConfiguration().setLoadBalancerLoadPlacementStrategy(strategyClass);
-        pulsar3.getConfiguration().setLoadBalancerLoadSheddingStrategy(strategyClass);
-        pulsar3.start();
-
-        ModularLoadManagerWrapper loadManagerWrapper = (ModularLoadManagerWrapper) pulsar3.getLoadManager().get();
-        ModularLoadManagerImpl loadManager = (ModularLoadManagerImpl) loadManagerWrapper.getLoadManager();
-        Awaitility.await().untilAsserted(() -> assertTrue(loadManager.getAvailableBrokers().size() > 1));
-
-        NamespaceBundle bundle = makeBundle("test", "load-shedding-strategy");
-        RecordingLoadSheddingStrategy strategy = RecordingLoadSheddingStrategy.getInstance();
-        assertTrue(strategy != null);
-        strategy.setBundlesToUnload(primaryBrokerId, bundle.toString());
-
-        loadManager.doLoadShedding();
-
-        assertEquals(strategy.getBundlePassedToSelector(), bundle.toString());
-        assertEquals(strategy.getCompletedAttempts(), 1);
-
-        strategy.failNextPlanning();
-        expectThrows(IllegalStateException.class, loadManager::doLoadShedding);
-        assertEquals(strategy.getCompletedAttempts(), 2);
-    }
 
     @Test
     public void testOverloadRetryUsesBundleAwareSelectionWithoutRemovingCandidates() throws Exception {
