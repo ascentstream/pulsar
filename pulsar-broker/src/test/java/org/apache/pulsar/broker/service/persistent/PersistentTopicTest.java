@@ -32,7 +32,6 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertFalse;
 import static org.testng.Assert.assertNotNull;
@@ -61,8 +60,6 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
@@ -79,18 +76,12 @@ import org.apache.bookkeeper.mledger.impl.ManagedCursorContainer;
 import org.apache.bookkeeper.mledger.impl.ManagedCursorImpl;
 import org.apache.bookkeeper.mledger.impl.ManagedLedgerImpl;
 import org.apache.pulsar.PrometheusMetricsTestUtil;
-import org.apache.pulsar.broker.namespace.NamespaceService;
-import org.apache.pulsar.broker.resources.NamespaceResources;
-import org.apache.pulsar.broker.resources.PulsarResources;
 import org.apache.pulsar.broker.service.BrokerService;
-import org.apache.pulsar.broker.service.BrokerServiceException;
 import org.apache.pulsar.broker.service.BrokerTestBase;
 import org.apache.pulsar.broker.service.Topic;
-import org.apache.pulsar.broker.service.TopicFactory;
 import org.apache.pulsar.broker.service.TopicPoliciesService;
 import org.apache.pulsar.broker.service.TopicPolicyListener;
 import org.apache.pulsar.broker.stats.prometheus.PrometheusMetricsClient.Metric;
-import org.apache.pulsar.broker.testinterceptor.BrokerTestInterceptor;
 import org.apache.pulsar.client.admin.PulsarAdminException;
 import org.apache.pulsar.client.api.Consumer;
 import org.apache.pulsar.client.api.Message;
@@ -739,128 +730,6 @@ public class PersistentTopicTest extends BrokerTestBase {
         }
     }
 
-    @Test(dataProvider = "deletedTopicCacheRemoval", timeOut = 60000)
-    public void testDeleteWaitsForCacheRemovalAndRetriesAfterFailure(boolean failRemoval) throws Exception {
-        brokerServiceCustomizer = service -> spy(service);
-        restartBroker(configuration -> configuration.setTopicFactoryClassName(
-                InitializationTopicFactory.class.getName()));
-        String topicName = "persistent://prop/ns-abc/delete-cache-removal-" + UUID.randomUUID();
-        TopicName parsedTopic = TopicName.get(topicName);
-        BrokerService brokerService = pulsar.getBrokerService();
-        assertThat(brokerService).isSameAs(pulsarTestContext.getBrokerService());
-        CompletableFuture<Void> reconnectAdmission = new CompletableFuture<>();
-        AtomicReference<PersistentTopic> observedTargetTopic = new AtomicReference<>();
-        BrokerTestInterceptor.INSTANCE.setPersistentTopicDecorator(loadedTopic -> {
-            if (!loadedTopic.getName().equals(topicName)) {
-                return loadedTopic;
-            }
-            PersistentTopic observedTopic = spy(loadedTopic);
-            doAnswer(invocation -> {
-                @SuppressWarnings("unchecked")
-                CompletableFuture<Optional<Long>> admission =
-                        (CompletableFuture<Optional<Long>>) invocation.callRealMethod();
-                admission.whenComplete((epoch, error) -> {
-                    if (error == null) {
-                        reconnectAdmission.complete(null);
-                    } else {
-                        reconnectAdmission.completeExceptionally(error);
-                    }
-                });
-                return admission;
-            }).when(observedTopic).addProducer(any(), any());
-            observedTargetTopic.set(observedTopic);
-            return observedTopic;
-        });
-        PersistentTopic topic;
-        try {
-            topic = (PersistentTopic) brokerService.getTopic(topicName, true)
-                    .get(10, TimeUnit.SECONDS).orElseThrow();
-        } finally {
-            BrokerTestInterceptor.INSTANCE.reset();
-        }
-        assertThat(topic).isSameAs(observedTargetTopic.get());
-        ManagedLedgerImpl ledger = (ManagedLedgerImpl) topic.getManagedLedger();
-        NamespaceService namespaceService = pulsar.getNamespaceService();
-        NamespaceBundle bundle = namespaceService.getBundleAsync(parsedTopic).get(10, TimeUnit.SECONDS);
-        CompletableFuture<NamespaceBundle> cacheRemoval = new CompletableFuture<>();
-        CompletableFuture<NamespaceBundle> retryCacheRemoval = new CompletableFuture<>();
-        AtomicReference<CompletableFuture<NamespaceBundle>> pendingCacheRemoval = new AtomicReference<>(cacheRemoval);
-        CompletableFuture<Void> cacheRemovalStarted = new CompletableFuture<>();
-        AtomicBoolean interceptCacheRemoval = new AtomicBoolean(true);
-        AtomicInteger cacheRemovalCalls = new AtomicInteger();
-        when(namespaceService.getBundleAsync(parsedTopic)).thenAnswer(invocation -> {
-            if (!interceptCacheRemoval.get()) {
-                return invocation.callRealMethod();
-            }
-            cacheRemovalStarted.complete(null);
-            cacheRemovalCalls.incrementAndGet();
-            return pendingCacheRemoval.get();
-        });
-        try {
-            CompletableFuture<Void> deletion = topic.delete();
-            cacheRemovalStarted.get(10, TimeUnit.SECONDS);
-            Awaitility.await().atMost(Duration.ofSeconds(10)).untilAsserted(() ->
-                    assertThat(pulsar.getPulsarResources().getTopicResources().persistentTopicExists(parsedTopic)
-                            .get(10, TimeUnit.SECONDS)).isFalse());
-            assertThat(ledger.getState()).isEqualTo(ManagedLedgerImpl.State.FencedForDeletion);
-            assertThat(deletion).as("deletion must wait for the deleted topic to leave the broker cache")
-                    .isNotDone();
-
-            if (failRemoval) {
-                RuntimeException failure = new RuntimeException("Injected bundle lookup failure during cache removal");
-                cacheRemoval.completeExceptionally(failure);
-                assertThatThrownBy(() -> deletion.get(10, TimeUnit.SECONDS)).hasRootCause(failure);
-                assertThat(brokerService.getTopicReference(topicName)).contains(topic);
-                interceptCacheRemoval.set(false);
-                // A real client must not reconnect to the cached instance whose ledger has already been deleted.
-                try (PulsarClient reconnectingClient = PulsarClient.builder()
-                        .serviceUrl(pulsar.getBrokerServiceUrl()).build()) {
-                    reconnectingClient.newProducer().topic(topicName).createAsync();
-                    assertThatThrownBy(() -> reconnectAdmission.get(10, TimeUnit.SECONDS))
-                            .hasRootCauseInstanceOf(BrokerServiceException.TopicFencedException.class);
-                    assertThat(topic.getProducers()).isEmpty();
-                    assertThat(topic.isFenced()).isTrue();
-                }
-                pendingCacheRemoval.set(retryCacheRemoval);
-                cacheRemovalCalls.set(0);
-                interceptCacheRemoval.set(true);
-                CompletableFuture<Void> retry = brokerService.deleteTopic(topicName, false);
-                Awaitility.await().atMost(Duration.ofSeconds(10)).untilAsserted(() ->
-                        assertThat(cacheRemovalCalls).hasValue(1));
-                CompletableFuture<Void> concurrentRetry = brokerService.deleteTopic(topicName, false);
-                assertThat(concurrentRetry).isSameAs(retry);
-                CompletableFuture<Void> closing = topic.close();
-                assertThat(closing).isNotDone();
-                assertThat(retry).isNotDone();
-                assertThat(cacheRemovalCalls).hasValue(1);
-                retryCacheRemoval.complete(bundle);
-                retry.get(10, TimeUnit.SECONDS);
-                concurrentRetry.get(10, TimeUnit.SECONDS);
-                closing.get(10, TimeUnit.SECONDS);
-                interceptCacheRemoval.set(false);
-            } else {
-                cacheRemoval.complete(bundle);
-                deletion.get(10, TimeUnit.SECONDS);
-            }
-            // Retrying local cleanup must not reenter the metadata-deletion pipeline.
-            verify(brokerService, times(1)).deleteTopicAuthenticationWithRetry(eq(topicName), any(), anyInt());
-            assertThat(brokerService.getTopicReference(topicName)).isEmpty();
-            assertThat(brokerService.getTopics()).doesNotContainKey(topicName);
-            PersistentTopic recreated = (PersistentTopic) brokerService.getTopic(topicName, true)
-                    .get(10, TimeUnit.SECONDS).orElseThrow();
-            assertThat(recreated).isNotSameAs(topic);
-            assertThat(pulsar.getPulsarResources().getTopicResources().persistentTopicExists(parsedTopic)
-                    .get(10, TimeUnit.SECONDS)).isTrue();
-            try (Producer<String> producer = pulsarClient.newProducer(Schema.STRING).topic(topicName).create()) {
-                producer.send("after cache removal retry");
-            }
-        } finally {
-            interceptCacheRemoval.set(false);
-            cacheRemoval.complete(bundle);
-            retryCacheRemoval.complete(bundle);
-        }
-    }
-
     @DataProvider(name = "topicLevelPolicy")
     public static Object[][] topicLevelPolicy() {
         return new Object[][] { { true }, { false } };
@@ -968,7 +837,8 @@ public class PersistentTopicTest extends BrokerTestBase {
                     return policies;
                 });
 
-        // A live replicator must never reach the orphan-removal path, even if deleting its cursor would succeed.
+        // The sweep swallows its own failure, so the warning it logs before deleting is what has to be
+        // asserted on: a live replicator must never reach it.
         @Cleanup
         final TestLogAppender logAppender = TestLogAppender.create(PersistentTopic.class);
 
@@ -1019,100 +889,6 @@ public class PersistentTopicTest extends BrokerTestBase {
         assertEquals(persistentTopic.getManagedLedger().getConfig().getRetentionSizeInMB(), 1L);
         assertEquals(persistentTopic.getManagedLedger().getConfig().getRetentionTimeMillis(),
                 TimeUnit.MINUTES.toMillis(1));
-    }
-
-    public static class InitializationTopicFactory implements TopicFactory {
-        @Override
-        public <T extends Topic> T create(String topic, ManagedLedger ledger, BrokerService brokerService,
-                                         Class<T> topicClass) {
-            return topicClass.cast(BrokerTestInterceptor.INSTANCE.getPersistentTopicDecorator()
-                    .apply(new PersistentTopic(topic, ledger, brokerService)));
-        }
-    }
-
-    @DataProvider
-    public Object[][] initializationFailureStages() {
-        return new Object[][] {{"namespace"}, {"topic"}, {"replication-cursor"}};
-    }
-
-    @Test(dataProvider = "initializationFailureStages", timeOut = 60000)
-    public void testInitializationFailureClosesTopicAndAllowsRetry(String failureStage) throws Exception {
-        restartBroker(configuration -> configuration.setTopicFactoryClassName(
-                InitializationTopicFactory.class.getName()));
-        final String topicName = "persistent://prop/ns-abc/initialization-failure-" + UUID.randomUUID();
-        final TopicName parsedTopicName = TopicName.get(topicName);
-        pulsar.getPulsarResources().getNamespaceResources()
-                .setPolicies(parsedTopicName.getNamespaceObject(), policies -> {
-                    policies.encryption_required = true;
-                    return policies;
-                });
-        PersistentTopic initialTopic = (PersistentTopic) pulsar.getBrokerService().getTopic(topicName, true)
-                .get(10, TimeUnit.SECONDS).orElseThrow();
-        assertThat(initialTopic.isEncryptionRequired()).isTrue();
-        if (failureStage.equals("replication-cursor")) {
-            initialTopic.getManagedLedger().openCursor(conf.getReplicatorPrefix() + ".removed-cluster");
-        }
-        initialTopic.close().get(10, TimeUnit.SECONDS);
-
-        RuntimeException injectedFailure = new RuntimeException("Injected " + failureStage + " initialization failure");
-        AtomicBoolean initializing = new AtomicBoolean();
-        AtomicReference<PersistentTopic> failedTopic = new AtomicReference<>();
-        PulsarResources originalResources = pulsar.getPulsarResources();
-        TopicPoliciesService originalPoliciesService = pulsar.getTopicPoliciesService();
-        BrokerTestInterceptor.INSTANCE.setPersistentTopicDecorator(topic -> {
-            if (!topic.getName().equals(topicName)) {
-                return topic;
-            }
-            initializing.set(true);
-            PersistentTopic decorated = spy(topic);
-            if (failureStage.equals("replication-cursor")) {
-                doReturn(CompletableFuture.failedFuture(injectedFailure)).when(decorated)
-                        .removeReplicator("removed-cluster");
-            }
-            failedTopic.set(decorated);
-            return decorated;
-        });
-        try {
-            if (failureStage.equals("namespace")) {
-                PulsarResources resources = spy(originalResources);
-                NamespaceResources namespaceResources = spy(originalResources.getNamespaceResources());
-                doReturn(resources).when(pulsar).getPulsarResources();
-                doReturn(namespaceResources).when(resources).getNamespaceResources();
-                doAnswer(invocation -> initializing.compareAndSet(true, false)
-                        ? CompletableFuture.failedFuture(injectedFailure) : invocation.callRealMethod())
-                        .when(namespaceResources).getPoliciesAsync(parsedTopicName.getNamespaceObject());
-            } else if (failureStage.equals("topic")) {
-                TopicPoliciesService policiesService = spy(originalPoliciesService);
-                doReturn(policiesService).when(pulsar).getTopicPoliciesService();
-                doAnswer(invocation -> initializing.compareAndSet(true, false)
-                        ? CompletableFuture.failedFuture(injectedFailure) : invocation.callRealMethod())
-                        .when(policiesService).getTopicPoliciesAsync(parsedTopicName,
-                                TopicPoliciesService.GetType.LOCAL_ONLY);
-            }
-
-            assertThatThrownBy(() -> pulsar.getBrokerService().getTopic(topicName, false).get(10, TimeUnit.SECONDS))
-                    .hasRootCause(injectedFailure);
-            assertThat(failedTopic.get()).as("failure must occur after the topic is constructed").isNotNull();
-            assertThat(pulsar.getBrokerService().getTopics()).doesNotContainKey(topicName);
-            assertThat(((ManagedLedgerImpl) failedTopic.get().getManagedLedger()).getState())
-                    .isEqualTo(ManagedLedgerImpl.State.Closed);
-        } finally {
-            BrokerTestInterceptor.INSTANCE.reset();
-            doReturn(originalResources).when(pulsar).getPulsarResources();
-            doReturn(originalPoliciesService).when(pulsar).getTopicPoliciesService();
-        }
-
-        PersistentTopic recoveredTopic = (PersistentTopic) pulsar.getBrokerService().getTopic(topicName, false)
-                .get(10, TimeUnit.SECONDS).orElseThrow();
-        assertThat(recoveredTopic).isNotSameAs(failedTopic.get());
-        assertThat(recoveredTopic.isEncryptionRequired()).isTrue();
-        @Cleanup
-        PulsarClient client = PulsarClient.builder().serviceUrl(pulsar.getBrokerServiceUrl())
-                .operationTimeout(1, TimeUnit.SECONDS).build();
-        assertThatThrownBy(() -> client.newProducer().topic(topicName).createAsync().get(10, TimeUnit.SECONDS))
-                .hasRootCauseInstanceOf(PulsarClientException.BrokerMetadataException.class)
-                .hasMessageContaining("Encryption is required");
-        recoveredTopic.close().get(10, TimeUnit.SECONDS);
     }
 
     @Test

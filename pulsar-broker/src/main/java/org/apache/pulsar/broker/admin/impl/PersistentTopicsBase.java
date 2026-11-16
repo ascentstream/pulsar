@@ -85,7 +85,7 @@ import org.apache.pulsar.broker.event.data.SubscriptionDeleteEventData;
 import org.apache.pulsar.broker.event.data.SubscriptionSeekEventData;
 import org.apache.pulsar.broker.event.data.TopicDeleteEventData;
 import org.apache.pulsar.broker.event.data.TopicMetadataUpdateEventData;
-import org.apache.pulsar.broker.service.AbstractReplicator; ([fix][broker] Resolve replicator remote cluster by prefix so cluster names containing a dot work (#26451))
+import org.apache.pulsar.broker.service.AbstractReplicator;
 import org.apache.pulsar.broker.service.AnalyzeBacklogResult;
 import org.apache.pulsar.broker.service.BrokerServiceException.AlreadyRunningException;
 import org.apache.pulsar.broker.service.BrokerServiceException.SubscriptionBusyException;
@@ -1989,7 +1989,7 @@ public class PersistentTopicsBase extends AdminResource {
                         PersistentReplicator persistentReplicator =
                                 (PersistentReplicator) topic.getPersistentReplicator(remoteClusterOpt.get());
                         repl.set(persistentReplicator);
-                        if (persistentReplicator == null) { ([fix][broker] Resolve replicator remote cluster by prefix so cluster names containing a dot work (#26451))
+                        if (persistentReplicator == null) {
                             asyncResponse.resume(new RestException(Status.NOT_FOUND,
                                     getSubNotFoundErrorMessage(topicName.toString(), subName)));
                             return CompletableFuture.completedFuture(null);

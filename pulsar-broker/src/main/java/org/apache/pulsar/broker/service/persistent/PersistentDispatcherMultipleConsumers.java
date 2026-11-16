@@ -74,7 +74,6 @@ import org.apache.pulsar.broker.transaction.exception.buffer.TransactionBufferEx
 import org.apache.pulsar.common.api.proto.CommandSubscribe.SubType;
 import org.apache.pulsar.common.api.proto.MessageMetadata;
 import org.apache.pulsar.common.policies.data.stats.TopicMetricBean;
-import org.apache.pulsar.common.protocol.Commands;
 import org.apache.pulsar.common.util.Backoff;
 import org.apache.pulsar.common.util.Codec;
 import org.apache.pulsar.common.util.FutureUtil;
@@ -93,7 +92,7 @@ public class PersistentDispatcherMultipleConsumers extends AbstractPersistentDis
     protected final MessageRedeliveryController redeliveryMessages;
     protected final RedeliveryTracker redeliveryTracker;
 
-    private Optional<DelayedDeliveryTracker> delayedDeliveryTracker = Optional.empty();
+    private volatile Optional<DelayedDeliveryTracker> delayedDeliveryTracker = Optional.empty();
 
     protected volatile boolean havePendingRead = false;
     protected volatile boolean havePendingReplayRead = false;
@@ -758,7 +757,9 @@ public class PersistentDispatcherMultipleConsumers extends AbstractPersistentDis
             // are discarded too: the redelivery queue was cleared, and the rewind reads them again. The next read
             // rewinds the cursor once no read is pending.
             entries.forEach(Entry::release);
-            onReadEnded(readType);
+            onReadEnded(ReadType.Normal);
+            cursor.rewind();
+            shouldRewindBeforeReadingOrReplaying = false;
             readMoreEntriesAsync();
             return;
         }
@@ -861,10 +862,11 @@ public class PersistentDispatcherMultipleConsumers extends AbstractPersistentDis
             if (entry instanceof EntryAndMetadata) {
                 metadata = ((EntryAndMetadata) entry).getMetadata();
             } else {
-                metadata = Commands.peekAndCopyMessageMetadata(entry.getDataBuffer(), subscription.toString(), -1);
                 // cache the metadata in the entry with EntryAndMetadata for later use to avoid re-parsing the metadata
                 // and to carry the metadata and calculated stickyKeyHash with the entry
-                entries.set(i, EntryAndMetadata.create(entry, metadata));
+                EntryAndMetadata entryAndMetadata = EntryAndMetadata.create(entry);
+                metadata = entryAndMetadata.getMetadata();
+                entries.set(i, entryAndMetadata);
             }
             if (metadata != null) {
                 remainingMessages += metadata.getNumMessagesInBatch();
@@ -1096,6 +1098,11 @@ public class PersistentDispatcherMultipleConsumers extends AbstractPersistentDis
                 log.debug("[{}] Error reading entries at {} : {}, Read Type {} - Retrying to read in {} seconds", name,
                         cursor.getReadPosition(), exception.getMessage(), readType, waitTimeMillis / 1000.0);
             }
+        }
+
+        if (shouldRewindBeforeReadingOrReplaying) {
+            shouldRewindBeforeReadingOrReplaying = false;
+            cursor.rewind();
         }
 
         onReadEnded(readType);
@@ -1423,13 +1430,12 @@ public class PersistentDispatcherMultipleConsumers extends AbstractPersistentDis
     }
 
 
-
-    protected synchronized boolean shouldPauseDeliveryForDelayTracker() {
-        return delayedDeliveryTracker.isPresent() && delayedDeliveryTracker.get().shouldPauseAllDeliveries();
+    protected boolean shouldPauseDeliveryForDelayTracker() {
+        return delayedDeliveryTracker.map(DelayedDeliveryTracker::shouldPauseAllDeliveries).orElse(false);
     }
 
     @Override
-    public synchronized long getNumberOfDelayedMessages() {
+    public long getNumberOfDelayedMessages() {
         return delayedDeliveryTracker.map(DelayedDeliveryTracker::getNumberOfDelayedMessages).orElse(0L);
     }
 
@@ -1513,20 +1519,15 @@ public class PersistentDispatcherMultipleConsumers extends AbstractPersistentDis
     }
 
 
-    public synchronized long getDelayedTrackerMemoryUsage() {
+    public long getDelayedTrackerMemoryUsage() {
         return delayedDeliveryTracker.map(DelayedDeliveryTracker::getBufferMemoryUsage).orElse(0L);
     }
 
-    public synchronized Map<String, TopicMetricBean> getBucketDelayedIndexStats() {
-        if (delayedDeliveryTracker.isEmpty()) {
-            return Collections.emptyMap();
-        }
-
-        if (delayedDeliveryTracker.get() instanceof BucketDelayedDeliveryTracker) {
-            return ((BucketDelayedDeliveryTracker) delayedDeliveryTracker.get()).genTopicMetricMap();
-        }
-
-        return Collections.emptyMap();
+    public Map<String, TopicMetricBean> getBucketDelayedIndexStats() {
+        return delayedDeliveryTracker
+                .filter(BucketDelayedDeliveryTracker.class::isInstance)
+                .map(tracker -> ((BucketDelayedDeliveryTracker) tracker).genTopicMetricMap())
+                .orElse(Collections.emptyMap());
     }
 
     @Override

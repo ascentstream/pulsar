@@ -25,7 +25,7 @@
   <parent>
     <groupId>com.ascentstream.pulsar</groupId>
     <artifactId>pulsar</artifactId>
-    <version>4.0.9.0-dca1e7d-20260514030753-SNAPSHOT</version>
+    <version>4.0.14.0</version>
   </parent>
 
   <artifactId>managed-ledger</artifactId>
@@ -101,6 +101,18 @@
     <dependency>
       <groupId>org.roaringbitmap</groupId>
       <artifactId>RoaringBitmap</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>it.unimi.dsi</groupId>
+      <artifactId>fastutil</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>io.github.merlimat.slog</groupId>
+      <artifactId>slog</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.jctools</groupId>
+      <artifactId>jctools-core</artifactId>
     </dependency>
     <dependency>
        <groupId>io.dropwizard.metrics</groupId>

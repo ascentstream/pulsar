@@ -968,6 +968,9 @@ public class PrometheusMetricsTest extends BrokerTestBase {
         conf.setLoadManagerClassName(ExtensibleLoadManagerImpl.class.getName());
         conf.setExposeBundlesMetricsInPrometheus(true);
         setup();
+        admin.tenants().createTenant("my-property",
+                new TenantInfoImpl(Set.of("role1"), Set.of(conf.getClusterName())));
+        admin.namespaces().createNamespace("my-property/my-ns");
 
         @Cleanup
         Producer<byte[]> producer = pulsarClient.newProducer()

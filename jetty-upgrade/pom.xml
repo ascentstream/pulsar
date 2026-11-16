@@ -23,15 +23,9 @@
   <modelVersion>4.0.0</modelVersion>
   <packaging>pom</packaging>
   <parent>
-<<<<<<< HEAD
     <groupId>com.ascentstream.pulsar</groupId>
     <artifactId>pulsar</artifactId>
     <version>4.0.14.0</version>
-=======
-    <groupId>org.apache.pulsar</groupId>
-    <artifactId>pulsar</artifactId>
-    <version>4.0.10-SNAPSHOT</version>
->>>>>>> e428972aec0 ([fix][sec][branch-4.0] Upgrade to Jetty 12.1.8 to address several CVEs (#25534))
   </parent>
 
   <artifactId>jetty-upgrade</artifactId>

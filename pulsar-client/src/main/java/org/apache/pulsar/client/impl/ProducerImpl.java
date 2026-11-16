@@ -2872,6 +2872,7 @@ public class ProducerImpl<T> extends ProducerBase<T> implements TimerTask, Conne
         Iterator<OpSendMsg> msgIterator = pendingMessages.iterator();
         MessageImpl loopStartAt = latestMsgAttemptedRegisteredSchema;
         OpSendMsg loopEndDueToSchemaRegisterNeeded = null;
+        boolean pausedSendingToPreservePublishOrderOnSchemaRegFailure = false;
         while (true) {
             // Re-check after every iteration that can invoke application callbacks, including the
             // last one: closing the producer may also drain the queue and invalidate this iterator.

@@ -21,6 +21,7 @@ package org.apache.pulsar.client.impl;
 import static org.mockito.Mockito.RETURNS_SELF;
 import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.doAnswer;
+import org.mockito.MockedStatic;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.never;
@@ -40,6 +41,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.apache.pulsar.client.api.CryptoKeyReader;
+import org.apache.pulsar.client.api.TopicMessageId;
 import org.apache.pulsar.client.api.Message;
 import org.apache.pulsar.client.api.Reader;
 import org.apache.pulsar.client.api.ReaderBuilder;
@@ -136,8 +138,8 @@ public class TableViewImplTest {
         when(reader.closeAsync()).thenReturn(CompletableFuture.completedFuture(null));
         TopicMessageIdImpl messageId = new TopicMessageIdImpl(topic, new MessageIdImpl(1, 0, -1));
         when(reader.getLastMessageIdsAsync()).thenReturn(
-                CompletableFuture.completedFuture(List.of()),
-                CompletableFuture.completedFuture(List.of(messageId)));
+                CompletableFuture.completedFuture(Collections.emptyList()),
+                CompletableFuture.completedFuture(Collections.singletonList(messageId)));
         CompletableFuture<Message<String>> nextMessage = new CompletableFuture<>();
         when(reader.readNextAsync()).thenReturn(nextMessage, new CompletableFuture<>());
         TableViewConfigurationData conf = new TableViewConfigurationData();
@@ -145,7 +147,7 @@ public class TableViewImplTest {
         TopicCompactionStrategy<String> strategy = mock(TopicCompactionStrategy.class);
         when(strategy.shouldKeepLeft(any(), any())).thenReturn(skipped);
         TableViewImpl<String> tableView;
-        try (var strategies = mockStatic(TopicCompactionStrategy.class)) {
+        try (MockedStatic<TopicCompactionStrategy> strategies = mockStatic(TopicCompactionStrategy.class)) {
             strategies.when(() -> TopicCompactionStrategy.load(TopicCompactionStrategy.TABLE_VIEW_TAG, null))
                     .thenReturn(strategy);
             tableView = new TableViewImpl<>(client, Schema.STRING, conf);
@@ -173,10 +175,10 @@ public class TableViewImplTest {
         });
         ExecutorService executor = Executors.newSingleThreadExecutor();
         try {
-            var delivery = executor.submit(() -> nextMessage.complete(message));
+            java.util.concurrent.Future<?> delivery = executor.submit(() -> nextMessage.complete(message));
             assertTrue(decoding.await(5, TimeUnit.SECONDS));
             assertNull(tableView.get("key"));
-            var refresh = tableView.refreshAsync();
+            CompletableFuture<Void> refresh = tableView.refreshAsync();
             assertFalse(refresh.isDone(), "Refresh must not finish before the message updates the table");
             applyMessage.countDown();
             delivery.get(5, TimeUnit.SECONDS);

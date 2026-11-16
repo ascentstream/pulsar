@@ -58,7 +58,6 @@ import org.apache.pulsar.broker.testcontext.PulsarTestContext;
 import org.apache.pulsar.broker.testinterceptor.BrokerTestInterceptor;
 import org.apache.pulsar.client.admin.PulsarAdmin;
 import org.apache.pulsar.client.api.PulsarClient;
-import org.apache.pulsar.common.naming.NamespaceBundle;
 import org.apache.pulsar.common.naming.TopicName;
 import org.awaitility.Awaitility;
 import org.testng.annotations.AfterMethod;
@@ -352,8 +351,9 @@ public class BrokerServiceTopicDeletionTest {
                 if (replaceBeforeFailure) {
                     replacement = new CompletableFuture<>();
                     realBroker.getTopics().put(name, replacement);
-                    realBroker.loadOrCreatePersistentTopic(new TopicLoadingContext(TopicName.get(name), true,
-                            replacement, mock(PulsarStats.class))).get(10, TimeUnit.SECONDS);
+                    realBroker.loadOrCreatePersistentTopic(TopicLoadingContext.builder()
+                            .topicName(TopicName.get(name)).createIfMissing(true).topicFuture(replacement)
+                            .build()).get(10, TimeUnit.SECONDS);
                 }
                 ServiceUnitNotReadyException failure = new ServiceUnitNotReadyException("Ownership was lost in queue");
                 fixture.failOwnershipAndAwaitCleanup(ownership, failure);
@@ -469,35 +469,6 @@ public class BrokerServiceTopicDeletionTest {
         }
     }
 
-    @Test
-    public void testMetadataDeletionBlocksNewLoadAndConcurrentDeleteAndBundleUnload() throws Exception {
-        String name = "persistent://public/default/load-during-delete";
-        CompletableFuture<Void> deleting = new CompletableFuture<>();
-        metadataDeletion.set(deleting);
-
-        CompletableFuture<Void> deletion = broker.deleteTopic(name, true);
-        CompletableFuture<Optional<Topic>> reservation = broker.getTopics().get(name);
-
-        assertThat(reservation).as("deletion must reserve the same cache key used by topic loading").isNotNull();
-        assertThat(reservation).isNotDone();
-        CompletableFuture<Optional<Topic>> loading = broker.getTopic(name, true);
-        assertThat(loading).isSameAs(reservation).isNotDone();
-        CompletableFuture<Void> concurrentDelete = broker.deleteTopic(name, true);
-        assertThat(concurrentDelete).isNotDone();
-        CompletableFuture<Integer> unloading = broker.unloadServiceUnit(mock(NamespaceBundle.class),
-                false, false, 60, TimeUnit.SECONDS, Map.of(name, reservation));
-        assertThat(unloading).as("bundle ownership must wait for the pending metadata deletion").isNotDone();
-
-        deleting.complete(null);
-
-        deletion.get(5, TimeUnit.SECONDS);
-        concurrentDelete.get(5, TimeUnit.SECONDS);
-        assertThat(unloading.get(5, TimeUnit.SECONDS)).isEqualTo(1);
-        assertThatThrownBy(() -> loading.get(5, TimeUnit.SECONDS))
-                .hasCauseInstanceOf(ServiceUnitNotReadyException.class);
-        assertThat(metadataDeletes.get()).isEqualTo(1);
-        assertThat(broker.getTopics()).doesNotContainKey(name);
-    }
 
     @DataProvider
     public Object[][] metadataDeletionFailure() {

@@ -36,11 +36,7 @@ import org.apache.bookkeeper.mledger.ManagedLedgerException;
 import org.apache.bookkeeper.mledger.Position;
 import org.apache.pulsar.common.policies.data.ManagedLedgerInternalStats;
 
-<<<<<<< HEAD
 class MockManagedCursor implements ManagedCursor {
-=======
-public class MockManagedCursor implements ManagedCursor {
->>>>>>> c7e295fe413 ([refactor][broker] Decouple delayed delivery trackers from dispatcher (#25384))
     ActiveManagedCursorContainer container;
     Position markDeletePosition;
     Position readPosition;
@@ -62,12 +58,7 @@ public class MockManagedCursor implements ManagedCursor {
         this.durable = durable;
     }
 
-<<<<<<< HEAD
     static MockManagedCursor createCursor(ActiveManagedCursorContainer container, String name, Position position) {
-=======
-    public static MockManagedCursor createCursor(ActiveManagedCursorContainer container, String name,
-                                                Position position) {
->>>>>>> c7e295fe413 ([refactor][broker] Decouple delayed delivery trackers from dispatcher (#25384))
         return new MockManagedCursor(container, name, position, position, false, true);
     }
 

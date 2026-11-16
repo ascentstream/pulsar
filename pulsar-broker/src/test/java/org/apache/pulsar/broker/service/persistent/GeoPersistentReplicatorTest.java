@@ -60,6 +60,8 @@ import org.apache.pulsar.client.impl.MessageImpl;
 import org.apache.pulsar.client.impl.ProducerImpl;
 import org.apache.pulsar.client.impl.PulsarClientImpl;
 import org.apache.pulsar.common.api.proto.MessageMetadata;
+import org.apache.pulsar.common.policies.data.HierarchyTopicPolicies;
+import org.apache.pulsar.common.policies.data.PolicyHierarchyValue;
 import org.apache.pulsar.common.protocol.Commands;
 import org.apache.pulsar.common.schema.SchemaInfo;
 import org.mockito.ArgumentCaptor;
@@ -198,7 +200,10 @@ public class GeoPersistentReplicatorTest {
             when(topic.getName()).thenReturn("persistent://public/default/t1");
             when(topic.getBrokerService()).thenReturn(brokerService);
             when(topic.getReplicatorPrefix()).thenReturn("pulsar.repl");
-            when(topic.getReplicatorDispatchRate()).thenReturn(null);
+            when(topic.getReplicatorDispatchRate(any())).thenReturn(null);
+            HierarchyTopicPolicies hierarchyTopicPolicies = mock(HierarchyTopicPolicies.class);
+            when(hierarchyTopicPolicies.getResourceGroupName()).thenReturn(new PolicyHierarchyValue<>());
+            when(topic.getHierarchyTopicPolicies()).thenReturn(hierarchyTopicPolicies);
             return topic;
         }
 

@@ -2305,10 +2305,13 @@ public class PersistentTopicTest extends MockedBookKeeperTestCase {
 
         TopicPoliciesService topicPoliciesService = mock(TopicPoliciesService.class);
         doReturn(topicPoliciesService).when(pulsarTestContext.getPulsarService()).getTopicPoliciesService();
+        CompletableFuture<Optional<TopicPolicies>> topicPoliciesFuture = new CompletableFuture<>();
         TopicPolicies topicPolicies = new TopicPolicies();
         List<String> topicClusters = new ArrayList<>();
         topicClusters.add("topic-cluster");
         topicPolicies.setReplicationClusters(topicClusters);
+        Optional<TopicPolicies> optionalTopicPolicies = Optional.of(topicPolicies);
+        topicPoliciesFuture.complete(optionalTopicPolicies);
         when(topicPoliciesService.registerListenerAsync(any(), any()))
                 .thenReturn(CompletableFuture.completedFuture(true));
         when(topicPoliciesService.getTopicPoliciesAsync(any(), eq(TopicPoliciesService.GetType.GLOBAL_ONLY)))

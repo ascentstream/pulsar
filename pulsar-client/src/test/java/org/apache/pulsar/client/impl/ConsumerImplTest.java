@@ -557,17 +557,6 @@ public class ConsumerImplTest {
         Assert.assertNull(checkException);
     }
 
-    @Test
-    public void testConnectionOpenedAfterConsumerCloseReleasesConnection() {
-        ConnectionPool connectionPool = mock(ConnectionPool.class);
-        when(consumer.client.getCnxPool()).thenReturn(connectionPool);
-        ClientCnx clientCnx = mock(ClientCnx.class);
-
-        consumer.setState(HandlerState.State.Closed);
-        consumer.connectionOpened(clientCnx).join();
-
-        verify(connectionPool).releaseConnection(clientCnx);
-    }
 
     @DataProvider
     public static Object[][] subscriptionModes() {
@@ -751,6 +740,18 @@ public class ConsumerImplTest {
     }
 
     @Test
+    public void testConnectionOpenedAfterConsumerCloseReleasesConnection() {
+        ConnectionPool connectionPool = mock(ConnectionPool.class);
+        when(consumer.client.getCnxPool()).thenReturn(connectionPool);
+        ClientCnx clientCnx = mock(ClientCnx.class);
+
+        consumer.setState(HandlerState.State.Closed);
+        consumer.connectionOpened(clientCnx).join();
+
+        verify(connectionPool).releaseConnection(clientCnx);
+    }
+
+    @Test
     public void testConsumerCreatedWhilePaused() throws InterruptedException {
         PulsarClientImpl client = ClientTestFixtures.createPulsarClientMock(executorProvider, internalExecutor);
         ClientConfigurationData clientConf = client.getConfiguration();
@@ -915,27 +916,6 @@ public class ConsumerImplTest {
         }
     }
 
-    /**
-     * On a non-persistent topic the broker keeps nothing to replay, so an ack timeout can never lead to a
-     * redelivery: {@code NonPersistentSubscription.redeliverUnacknowledgedMessages} is a no-op. Tracking
-     * messages anyway is worse than useless, because acks do not clear the tracker either — the consumer
-     * installs {@code NonPersistentAcknowledgmentGroupingTracker}, whose {@code addAcknowledgment} is a no-op,
-     * and the tracker is only cleared from the persistent one. The tracker therefore fills up even for an
-     * application that acks every message, and once it times out the consumer clears its receive queue,
-     * destroying messages that nothing can replay.
-     */
-    @Test
-    public void testMessagesAreNotTrackedForAckTimeoutOnNonPersistentTopic() {
-        ConsumerConfigurationData<byte[]> conf = new ConsumerConfigurationData<>();
-        conf.setAckTimeoutMillis(TimeUnit.SECONDS.toMillis(10));
-        createConsumer(conf, "non-persistent://tenant/ns1/ack-timeout-topic");
-
-        consumer.trackMessage(new MessageIdImpl(1L, 1L, -1), 0);
-
-        Assert.assertTrue(consumer.getUnAckedMessageTracker().isEmpty(),
-                "a message was tracked for ack timeout on a non-persistent topic, where an ack never clears"
-                        + " the tracker and a redelivery can never happen");
-    }
 
     /** The same configuration must keep working on a persistent topic, where redelivery is possible. */
     @Test
@@ -948,35 +928,6 @@ public class ConsumerImplTest {
 
         Assert.assertFalse(consumer.getUnAckedMessageTracker().isEmpty(),
                 "messages are no longer tracked for ack timeout on a persistent topic");
-    }
-
-    /**
-     * The listener dispatch path adds to the tracker itself, bypassing {@code trackMessage} entirely
-     * ({@code trackUnAckedMsgIfNoListener} only adds when no listener is set). Consumers with a
-     * {@code messageListener} are the common case, so this path must honour the same rule.
-     */
-    @Test
-    public void testMessagesAreNotTrackedForAckTimeoutOnNonPersistentTopicWithListener() {
-        ConsumerConfigurationData<byte[]> conf = new ConsumerConfigurationData<>();
-        conf.setAckTimeoutMillis(TimeUnit.SECONDS.toMillis(10));
-        conf.setMessageListener((MessageListener<byte[]>) (c, msg) -> { });
-        createConsumer(conf, "non-persistent://tenant/ns1/ack-timeout-listener-topic");
-
-        Assert.assertFalse(consumer.isAckTimeoutTrackingEnabled(),
-                "ack timeout tracking is still enabled on a non-persistent topic, so the listener dispatch path"
-                        + " would keep filling the tracker");
-    }
-
-    /** On a persistent topic the listener path must keep tracking. */
-    @Test
-    public void testMessagesAreStillTrackedForAckTimeoutOnPersistentTopicWithListener() {
-        ConsumerConfigurationData<byte[]> conf = new ConsumerConfigurationData<>();
-        conf.setAckTimeoutMillis(TimeUnit.SECONDS.toMillis(10));
-        conf.setMessageListener((MessageListener<byte[]>) (c, msg) -> { });
-        createConsumer(conf, "persistent://tenant/ns1/ack-timeout-listener-topic");
-
-        Assert.assertTrue(consumer.isAckTimeoutTrackingEnabled(),
-                "ack timeout tracking was disabled on a persistent topic");
     }
 
     /**

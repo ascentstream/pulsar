@@ -220,6 +220,7 @@ public class PulsarService implements AutoCloseable, ShutdownService {
     private WebService webService = null;
     private WebSocketService webSocketService = null;
     private TopicPoliciesService topicPoliciesService = TopicPoliciesService.DISABLED;
+
     private BookKeeperClientFactory bkClientFactory;
     protected CompactionServiceFactory compactionServiceFactory;
     private StrategicTwoPhaseCompactor strategicCompactor;

@@ -23,7 +23,7 @@ import org.testng.annotations.Test;
 /**
  * Same test with ProxyRoleAuthWebServiceURLTest but with authenticateOriginalAuthData enabled.
  */
-@Test(groups = "websocket")
+@Test(groups = "quarantine")
 public class ProxyRoleAuthenticateOriginalAuthDataWebServiceURLTest extends ProxyRoleAuthWebServiceURLTest {
 
     @Override

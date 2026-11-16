@@ -18,7 +18,6 @@
  */
 package org.apache.bookkeeper.mledger.impl;
 
-<<<<<<< HEAD
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.spy;
@@ -38,17 +37,11 @@ import org.apache.bookkeeper.mledger.Position;
 import org.apache.bookkeeper.mledger.PositionFactory;
 import org.apache.pulsar.common.api.proto.MessageMetadata;
 import org.apache.pulsar.common.protocol.Commands;
-=======
-import static org.testng.Assert.assertTrue;
-import io.netty.buffer.Unpooled;
-import org.apache.bookkeeper.mledger.PositionFactory;
->>>>>>> a9accad6f7c ([fix][ml] Reset the lazily-cached position when reusing a recycled EntryImpl (#26707))
 import org.testng.annotations.Test;
 
 public class EntryImplTest {
 
     @Test
-<<<<<<< HEAD
     public void testFailedMetadataInitializationIsNotRetried() {
         ByteBuf bytes = Unpooled.buffer(4).writeInt(-1);
         EntryImpl entry = EntryImpl.create(1, 0, bytes);
@@ -325,8 +318,6 @@ public class EntryImplTest {
     }
 
     @Test
-=======
->>>>>>> a9accad6f7c ([fix][ml] Reset the lazily-cached position when reusing a recycled EntryImpl (#26707))
     public void testRecycledObjectDoesNotInheritPoisonedPosition() {
         // Given a legitimate entry that is released normally
         EntryImpl first = EntryImpl.create(5L, 10L, new byte[]{1, 2, 3});
@@ -351,7 +342,6 @@ public class EntryImplTest {
                 "ByteBuf variant: a recycled entry must not inherit the poisoned (-1, -1) position");
         third.release();
     }
-<<<<<<< HEAD
 
     private void assertEntryFields(EntryImpl entry, long expectedLedgerId, long expectedEntryId) {
         assertEquals(entry.getLedgerId(), expectedLedgerId);
@@ -387,6 +377,3 @@ public class EntryImplTest {
         assertEntryData(copiedEntry, testData);
     }
 }
-=======
-}
->>>>>>> a9accad6f7c ([fix][ml] Reset the lazily-cached position when reusing a recycled EntryImpl (#26707))

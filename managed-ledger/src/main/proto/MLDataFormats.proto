@@ -188,7 +188,7 @@ message AckStateRef {
 message CursorCheckpointChunk {
     optional int32 partIndex = 1;
     optional int32 partCount = 2;
-    optional bytes checkpointBytes = 3; ([fix][broker] The configuration subscriptionExpirationTimeMinutes does not work if the topic was reloaded frequently (#25244))
+    optional bytes checkpointBytes = 3;
 }
 
 enum CompressionType {

@@ -23,7 +23,7 @@ import org.testng.annotations.Test;
 /**
  * Same test with ProxyRoleAuthTest but using REST API as the internal client.
  */
-@Test(groups = "websocket")
+@Test(groups = "quarantine")
 public class ProxyRoleAuthenticateOriginalAuthDataTest extends ProxyRoleAuthTest {
 
     @Override

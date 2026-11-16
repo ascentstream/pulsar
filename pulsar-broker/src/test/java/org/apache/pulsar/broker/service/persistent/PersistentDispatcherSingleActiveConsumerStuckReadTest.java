@@ -178,13 +178,9 @@ public class PersistentDispatcherSingleActiveConsumerStuckReadTest extends Mocke
 
     private final AtomicLong msgCounter = new AtomicLong();
 
-<<<<<<< HEAD
     @Override
     protected ManagedLedgerConfig initManagedLedgerConfig(ManagedLedgerConfig config) {
         super.initManagedLedgerConfig(config);
-=======
-    private ManagedLedgerConfig initManagedLedgerConfig(ManagedLedgerConfig config) {
->>>>>>> f6c8e70d09b ([fix][broker] Prevent stale read completions from stranding Failover subscriptions (#26174))
         // Inline checkForNewEntries: the +10ms task runs synchronously at arm time -> deterministic.
         config.setNewEntriesCheckDelayInMillis(0);
         config.setMaxEntriesPerLedger(1_000_000);

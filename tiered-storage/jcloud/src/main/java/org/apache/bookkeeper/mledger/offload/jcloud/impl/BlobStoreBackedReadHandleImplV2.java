@@ -59,9 +59,6 @@ public class BlobStoreBackedReadHandleImplV2 implements ReadHandle {
 
     private final long ledgerId;
     private final List<OffloadIndexBlockV2> indices;
-    // Copied at open time since the indices are recycled on close, while the managed ledger may still use the handle,
-    // which it closes when it no longer reads the ledger
-    private final LedgerMetadata ledgerMetadata;
     private final List<BackedInputStream> inputStreams;
     private final List<DataInputStream> dataStreams;
     private final ExecutorService executor;
@@ -107,8 +104,6 @@ public class BlobStoreBackedReadHandleImplV2 implements ReadHandle {
                                             ExecutorService executor) {
         this.ledgerId = ledgerId;
         this.indices = indices;
-        // the most complete one
-        this.ledgerMetadata = indices.get(indices.size() - 1).getLedgerMetadata(ledgerId);
         this.inputStreams = inputStreams;
         this.dataStreams = new LinkedList<>();
         for (BackedInputStream inputStream : inputStreams) {
@@ -125,7 +120,8 @@ public class BlobStoreBackedReadHandleImplV2 implements ReadHandle {
 
     @Override
     public LedgerMetadata getLedgerMetadata() {
-        return ledgerMetadata;
+        //get the most complete one
+        return indices.get(indices.size() - 1).getLedgerMetadata(ledgerId);
     }
 
     @Override

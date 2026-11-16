@@ -74,8 +74,15 @@ public abstract class AbstractDispatcherMultipleConsumers extends AbstractBaseDi
      * The caller must hold the dispatcher monitor while checking membership and acting on the result.
      */
     protected final boolean containsConsumerInstance(Consumer consumer) {
-        int index = consumerSetImpl.indexOf(consumer);
-        return consumerSetImpl.indexExists(index) && consumerSetImpl.indexGet(index) == consumer;
+        // consumerList is kept in sync with consumerSet under the dispatcher monitor; scan it by
+        // identity because ObjectSet#contains uses equals and can match a replacement consumer
+        // that reuses the same protocol identity.
+        for (int i = 0; i < consumerList.size(); i++) {
+            if (consumerList.get(i) == consumer) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -88,6 +95,7 @@ public abstract class AbstractDispatcherMultipleConsumers extends AbstractBaseDi
         consumerSet.removeAll(consumer);
         return true;
     }
+
 
     public boolean isClosed() {
         return isClosed == TRUE;

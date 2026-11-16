@@ -31,7 +31,7 @@
 
   <groupId>com.ascentstream.pulsar</groupId>
   <artifactId>buildtools</artifactId>
-  <version>4.0.9.0-dca1e7d-20260514030753-SNAPSHOT</version>
+  <version>4.0.14.0</version>
   <packaging>jar</packaging>
   <name>Pulsar Build Tools</name>
 
@@ -43,7 +43,7 @@
   </developers>
 
   <properties>
-    <project.build.outputTimestamp>2026-05-14T03:08:07Z</project.build.outputTimestamp>
+    <project.build.outputTimestamp>2026-10-15T06:32:51Z</project.build.outputTimestamp>
     <maven.compiler.source>1.8</maven.compiler.source>
     <maven.compiler.target>1.8</maven.compiler.target>
     <maven.compiler.release>8</maven.compiler.release>
@@ -57,11 +57,11 @@
     <maven-checkstyle-plugin.version>3.1.2</maven-checkstyle-plugin.version>
     <netty.version>4.1.133.Final</netty.version>
     <guice.version>4.2.3</guice.version>
-    <guava.version>33.7.2-jre</guava.version>
+    <guava.version>32.1.2-jre</guava.version>
     <ant.version>1.10.12</ant.version>
     <snakeyaml.version>2.0</snakeyaml.version>
     <mockito.version>5.19.0</mockito.version>
-    <byte-buddy.version>1.18.16</byte-buddy.version>
+    <byte-buddy.version>1.17.7</byte-buddy.version>
     <!-- required for running tests on JDK11+ -->
     <test.additional.args>
       --add-opens java.base/jdk.internal.loader=ALL-UNNAMED
@@ -348,7 +348,7 @@
           <plugin>
             <groupId>io.github.nodece</groupId>
             <artifactId>sonatype-central-publish-maven-plugin</artifactId>
-            <version>0.0.7</version>
+            <version>0.0.8</version>
             <extensions>true</extensions>
             <configuration>
               <skip>false</skip>

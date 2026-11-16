@@ -47,7 +47,7 @@ jobs:
         uses: actions/checkout@v7
 =======
         uses: actions/checkout@v4
->>>>>>> 2f7ee5d0fdf ([improve][ci] Run the Python function instance tests in CI (#26399))
+>>>>>>> 2f7ee5d0fdf
 
       - name: Detect changed files
         id: changes
@@ -81,7 +81,7 @@ jobs:
         uses: actions/checkout@v7
 =======
         uses: actions/checkout@v4
->>>>>>> 2f7ee5d0fdf ([improve][ci] Run the Python function instance tests in CI (#26399))
+>>>>>>> 2f7ee5d0fdf
 
       - name: Tune Runner VM
         uses: ./.github/actions/tune-runner-vm
@@ -91,7 +91,7 @@ jobs:
         uses: actions/setup-python@v7
 =======
         uses: actions/setup-python@v5
->>>>>>> 2f7ee5d0fdf ([improve][ci] Run the Python function instance tests in CI (#26399))
+>>>>>>> 2f7ee5d0fdf
         with:
           python-version: ${{ matrix.python-version }}
 

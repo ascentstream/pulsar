@@ -56,13 +56,8 @@ public class LegacyAwareTopicPoliciesService implements TopicPoliciesService {
                 .buildAsync(new AsyncCacheLoader<>() {
                     @NonNull
                     @Override
-<<<<<<< HEAD
                     public CompletableFuture<Boolean> asyncLoad(NamespaceName key,
                                                                 @NonNull Executor executor) {
-=======
-                    public CompletableFuture<? extends Boolean> asyncLoad(NamespaceName key,
-                                                                          @NonNull Executor executor) {
->>>>>>> c333504534e ([feat][broker] PIP-469: Legacy-aware topic policies backend routing and metadata-store topic policies (#25707))
                         return NamespaceEventsSystemTopicFactory.checkSystemTopicExists(key, EventType.TOPIC_POLICY,
                                 pulsar);
                     }

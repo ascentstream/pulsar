@@ -22,7 +22,7 @@ import static org.apache.bookkeeper.mledger.util.ManagedLedgerTestUtil.rawEntryC
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
-import static org.mockito.Mockito.spy; ([fix][ml] Fail queued adds when a managed ledger is terminated during a ledger rollover (#26680))
+import static org.mockito.Mockito.spy;
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertFalse;
 import static org.testng.Assert.assertTrue;

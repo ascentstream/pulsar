@@ -1411,7 +1411,7 @@ public class Consumer {
             return;
         }
 
-        addAndGetUnackedMessages(-totalRedeliveryMessages);
+        addAndGetUnAckedMsgs(this, -totalRedeliveryMessages);
         int blockedPermits = unblockAndTransferBlockedPermits();
 
         if (log.isDebugEnabled()) {
@@ -1438,6 +1438,10 @@ public class Consumer {
      * must immediately complete the corresponding blocked-permit transfer with
      * {@link #unblockAndTransferBlockedPermits()}.
      */
+    private int addAndGetUnAckedMsgs(Consumer consumer, int messages) {
+        return addAndGetUnackedMessages(messages);
+    }
+
     private int addAndGetUnackedMessages(int ackedMessages) {
         int unackedMsgs = 0;
         if (isPersistentTopic && Subscription.isIndividualAckMode(subType)) {

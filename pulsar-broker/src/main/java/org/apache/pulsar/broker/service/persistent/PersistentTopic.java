@@ -91,6 +91,7 @@ import org.apache.bookkeeper.mledger.PositionFactory;
 import org.apache.bookkeeper.mledger.impl.ManagedCursorContainer;
 import org.apache.bookkeeper.mledger.impl.ManagedCursorContainer.CursorInfo;
 import org.apache.bookkeeper.mledger.impl.ManagedLedgerImpl;
+import org.apache.bookkeeper.mledger.impl.NonDurableCursorImpl;
 import org.apache.bookkeeper.mledger.proto.MLDataFormats;
 import org.apache.bookkeeper.mledger.util.Futures;
 import org.apache.commons.collections4.CollectionUtils;
@@ -141,7 +142,7 @@ import org.apache.pulsar.broker.service.Topic;
 import org.apache.pulsar.broker.service.TopicEventsListener.EventStage;
 import org.apache.pulsar.broker.service.TopicEventsListener.TopicEvent;
 import org.apache.pulsar.broker.service.TopicLoadingContext;
-import org.apache.pulsar.broker.service.TopicLoadingContext.TopicLoadingStage; ([improve][broker] Add reason label for topic_load_failed_total (#26264))
+import org.apache.pulsar.broker.service.TopicLoadingContext.TopicLoadingStage;
 import org.apache.pulsar.broker.service.TopicPoliciesService;
 import org.apache.pulsar.broker.service.TransportCnx;
 import org.apache.pulsar.broker.service.schema.BookkeeperSchemaStorage;
@@ -233,6 +234,7 @@ public class PersistentTopic extends AbstractTopic implements Topic, AddEntryCal
     private final TopicName shadowSourceTopic;
 
     public static final String DEDUPLICATION_CURSOR_NAME = "pulsar.dedup";
+    private volatile int lastMessageTtlInSeconds;
 
     public static boolean isDedupCursorName(String name) {
         return DEDUPLICATION_CURSOR_NAME.equals(name);
@@ -253,7 +255,8 @@ public class PersistentTopic extends AbstractTopic implements Topic, AddEntryCal
     private final Object dispatchRateLimiterLock = new Object();
     private Optional<SubscribeRateLimiter> subscribeRateLimiter = Optional.empty();
     @Getter
-    private final Object subscribeRateLimiterLock = new Object(); ([fix][broker] Wait for topic cache removal before completing deletion (#27137))
+    private final Object subscribeRateLimiterLock = new Object();
+    @Getter
     private final long backloggedCursorThresholdEntries;
     public static final int MESSAGE_RATE_BACKOFF_MS = 1000;
 
@@ -301,6 +304,9 @@ public class PersistentTopic extends AbstractTopic implements Topic, AddEntryCal
     // Record the last time max read position is moved forward, unless it's a marker message.
     @Getter
     private volatile long lastMaxReadPositionMovedForwardTimestamp = 0;
+
+    // Preserve data activity for this topic instance even if its entries are trimmed before controller activation.
+    private volatile boolean maxReadPositionMovedForward = false;
 
     @Getter
     private final ExecutorService orderedExecutor;
@@ -570,7 +576,7 @@ public class PersistentTopic extends AbstractTopic implements Topic, AddEntryCal
                 }, getPoliciesNotifyThread())
                 .thenCompose(ignore -> loadingContext == null ? initTopicPolicy()
                         : loadingContext.trace(TopicLoadingStage.TOPIC_POLICIES, initTopicPolicy()))
-                .thenCompose(ignore -> removeOrphanReplicationCursors())); ([fix][broker] Preserve topic initialization failures (#26775))
+                .thenCompose(ignore -> removeOrphanReplicationCursors()));
     }
 
     private void initializeDispatchRateLimiterIfNeeded() {
@@ -616,10 +622,18 @@ public class PersistentTopic extends AbstractTopic implements Topic, AddEntryCal
         List<String> replicationClusters = topicPolicies.getReplicationClusters().get();
         for (ManagedCursor cursor : ledger.getCursors()) {
             if (cursor.getName().startsWith(replicatorPrefix)) {
-                String remoteCluster = PersistentReplicator.getRemoteCluster(cursor.getName());
-                if (!replicationClusters.contains(remoteCluster)) {
-                    log.warn("Remove the orphan replicator because the cluster '{}' does not exist", remoteCluster);
-                    futures.add(removeReplicator(remoteCluster));
+                if (cursor instanceof NonDurableCursorImpl) {
+                    // Shadow-replication cursors are non-durable: they have no stored metadata to
+                    // delete, and the shadow replicator owns their lifecycle. Deleting them here
+                    // always fails with CursorNotFoundException.
+                    continue;
+                }
+                Optional<String> remoteCluster =
+                        AbstractReplicator.getRemoteCluster(replicatorPrefix, cursor.getName());
+                if (remoteCluster.isPresent() && !replicationClusters.contains(remoteCluster.get())) {
+                    log.warn("Remove the orphan replicator because the cluster '{}' does not exist",
+                            remoteCluster.get());
+                    futures.add(removeReplicator(remoteCluster.get()));
                 }
             }
         }
@@ -799,7 +813,23 @@ public class PersistentTopic extends AbstractTopic implements Topic, AddEntryCal
     }
 
     private void updateMaxReadPositionMovedForwardTimestamp() {
+        // Set this before checking the controller so that activation's second seed cannot miss an inactive publish.
+        // Once set, later callbacks only read this flag; ordinary topics still avoid reading the wall clock.
+        if (!maxReadPositionMovedForward) {
+            maxReadPositionMovedForward = true;
+        }
+        // Fork semantics: the timestamp tracks any forward move of the max read position, whether or
+        // not a replicated-subscriptions controller is active (the fork's delay-delivery and stats
+        // paths read it for ordinary topics too).
         lastMaxReadPositionMovedForwardTimestamp = Clock.systemUTC().millis();
+    }
+
+    private void seedMaxReadPositionMovedForwardTimestamp() {
+        // Retained entries also cover topics loaded from storage. Activity observed by this instance must survive
+        // ledger trimming. Recheck after publishing the controller reference to cover advances during construction.
+        if (maxReadPositionMovedForward || ledger.getNumberOfEntries() > 0) {
+            lastMaxReadPositionMovedForwardTimestamp = Clock.systemUTC().millis();
+        }
     }
 
     @Override
@@ -825,18 +855,22 @@ public class PersistentTopic extends AbstractTopic implements Topic, AddEntryCal
          Instead, we will rely on the service unit state channel's bundle(topic) transfer protocol.
          At the end of the transfer protocol, at Owned state, the source broker should close the topic properly.
          */
+        PublishContext callback = (PublishContext) ctx;
         if (transferring) {
             if (log.isDebugEnabled()) {
                 log.debug("[{}] Failed to persist msg in store: {} while transferring.",
                         topic, exception.getMessage(), exception);
             }
+            callback.completed(new TopicClosedException(exception), -1, -1);
+            decrementPendingWriteOpsAndCheck();
             return;
         }
 
-        PublishContext callback = (PublishContext) ctx;
         if (exception instanceof ManagedLedgerFencedException) {
             // If the managed ledger has been fenced, we cannot continue using it. We need to close and reopen
             close();
+            callback.completed(new TopicFencedException(exception.getMessage()), -1, -1);
+            decrementPendingWriteOpsAndCheck();
         } else {
             // fence topic when failed to write a message to BK
             fence();
@@ -1327,7 +1361,19 @@ public class PersistentTopic extends AbstractTopic implements Topic, AddEntryCal
                 .getTransactionPendingAckStoreSuffix(topic,
                         Codec.encode(subscriptionName)));
         if (brokerService.pulsar().getConfiguration().isTransactionCoordinatorEnabled()) {
-            ManagedLedgerConfig managedLedgerConfig = ledger.getConfig();
+            ManagedLedgerConfig topicConfig = ledger.getConfig();
+            // The pending ack store is a separate managed ledger that owns its ledgers. The config of a shadow
+            // topic carries its shadow source, so a config without topic properties is used in that case. The
+            // storage class and the offloader of the topic are kept, since new pending ack stores are created
+            // with the config of the topic.
+            CompletableFuture<ManagedLedgerConfig> pendingAckStoreConfigFuture = topicConfig.getShadowSource() == null
+                    ? CompletableFuture.completedFuture(topicConfig)
+                    : brokerService.getManagedLedgerConfig(tn).thenApply(pendingAckStoreConfig -> {
+                        pendingAckStoreConfig.setStorageClassName(topicConfig.getStorageClassName());
+                        pendingAckStoreConfig.setLedgerOffloader(topicConfig.getLedgerOffloader());
+                        return pendingAckStoreConfig;
+                    });
+            pendingAckStoreConfigFuture.thenAccept(managedLedgerConfig -> {
                 ManagedLedgerFactory managedLedgerFactory = getBrokerService()
                         .getManagedLedgerFactoryForTopic(tn, managedLedgerConfig.getStorageClassName());
                 managedLedgerFactory.asyncDelete(tn.getPersistenceNamingEncoding(),
@@ -1350,6 +1396,13 @@ public class PersistentTopic extends AbstractTopic implements Topic, AddEntryCal
                                     topic, subscriptionName, exception);
                         }
                     }, null);
+            }).exceptionally(ex -> {
+                Throwable cause = FutureUtil.unwrapCompletionException(ex);
+                unsubscribeFuture.completeExceptionally(cause);
+                log.error("[{}][{}] Error deleting subscription pending ack store",
+                        topic, subscriptionName, cause);
+                return null;
+            });
         } else {
             asyncDeleteCursorWithClearDelayedMessage(subscriptionName, unsubscribeFuture);
         }
@@ -1683,7 +1736,7 @@ public class PersistentTopic extends AbstractTopic implements Topic, AddEntryCal
                                                 public void deleteLedgerComplete(Object ctx) {
                                                     managedLedgerDeleted = true;
                                                     FutureUtil.completeAfter(deleteFuture,
-                                                            cleanupAfterLedgerDeletion()); ([fix][broker] Wait for topic cache removal before completing deletion (#27137))
+                                                            cleanupAfterLedgerDeletion());
                                                 }
 
                                                 @Override
@@ -2392,7 +2445,8 @@ public class PersistentTopic extends AbstractTopic implements Topic, AddEntryCal
 
     private void checkMessageExpiryWithoutSharedPosition(int messageTtlInSeconds) {
         subscriptions.forEach((__, sub) -> {
-            if (!isCompactionSubscription(sub.getName())
+            // TTL must not advance non-durable reader cursors past unread retained messages.
+            if (sub.getCursor().isDurable() && !isCompactionSubscription(sub.getName())
                     && (additionalSystemCursorNames.isEmpty()
                     || !additionalSystemCursorNames.contains(sub.getName()))) {
                 sub.expireMessagesAsync(messageTtlInSeconds);
@@ -2437,9 +2491,9 @@ public class PersistentTopic extends AbstractTopic implements Topic, AddEntryCal
                 // Nothing need to be expired.
                 return;
             }
-            // Expire messages by position, which is more efficient.
+            // Expire durable subscriptions by position. Non-durable readers must retain their read position.
             subscriptions.forEach((__, sub) -> {
-                if (!isCompactionSubscription(sub.getName())
+                if (sub.getCursor().isDurable() && !isCompactionSubscription(sub.getName())
                         && (additionalSystemCursorNames.isEmpty()
                         || !additionalSystemCursorNames.contains(sub.getName()))) {
                     // The variable "position" is to mark delete position.
@@ -3915,12 +3969,16 @@ public class PersistentTopic extends AbstractTopic implements Topic, AddEntryCal
 
         // Client permission check.
         subscriptions.forEach((subName, sub) -> {
-            sub.getConsumers().forEach(consumer -> applyPoliciesFutureList.add(consumer.checkPermissionsAsync()));
+            sub.getConsumers().forEach(consumer -> {
+                consumer.reconcileBlockedStateAfterPolicyUpdate();
+                applyPoliciesFutureList.add(consumer.checkPermissionsAsync());
+            });
         });
         producers.values().forEach(producer -> applyPoliciesFutureList.add(
                 producer.checkPermissionsAsync().thenRun(producer::checkEncryption)));
-        // Check message expiry.
-        applyPoliciesFutureList.add(FutureUtil.runWithCurrentThread(() -> checkMessageExpiry()));
+
+        // Check message expiry in the background so that it doesn't block updating or loading topic policies.
+        maybeCheckMessageExpiryOnPolicyUpdateInBackground();
 
         // Update rate limiters.
         applyPoliciesFutureList.add(FutureUtil.runWithCurrentThread(() -> updateDispatchRateLimiter()));
@@ -3944,6 +4002,26 @@ public class PersistentTopic extends AbstractTopic implements Topic, AddEntryCal
                 () -> updateBrokerDispatchPauseOnAckStatePersistentEnabled()));
 
         return applyPoliciesFutureList;
+    }
+
+    /**
+     * Triggers a message-expiry check on a policy update, but only when the message TTL actually changed, and
+     * runs it on the messageExpiryMonitor thread (the same thread the periodic expiry check uses) so it never
+     * blocks updating or loading topic policies. Unlike before, the expiry check is no longer part of the
+     * returned {@link #applyUpdatedTopicPolicies()} futures, so callers no longer wait for it; the periodic
+     * monitor provides eventual coverage and the check is idempotent.
+     */
+    private void maybeCheckMessageExpiryOnPolicyUpdateInBackground() {
+        int messageTtlInSeconds = topicPolicies.getMessageTTLInSeconds().get();
+        // don't check if the message expiry hasn't changed
+        if (messageTtlInSeconds > 0) {
+            if (lastMessageTtlInSeconds != messageTtlInSeconds) {
+                lastMessageTtlInSeconds = messageTtlInSeconds;
+                brokerService.getMessageExpiryMonitor().execute(this::checkMessageExpiry);
+            }
+        } else {
+            lastMessageTtlInSeconds = messageTtlInSeconds;
+        }
     }
 
     /**
@@ -4928,8 +5006,13 @@ public class PersistentTopic extends AbstractTopic implements Topic, AddEntryCal
 
         if (shouldBeEnabled && !isCurrentlyEnabled && isEnableReplicatedSubscriptions && replicationEnabled) {
             log.info("[{}] Enabling replicated subscriptions controller", topic);
+            // Force the new controller's first snapshot to cover messages published before it was enabled.
+            // Seed before construction because the controller schedules its first snapshot from its constructor.
+            seedMaxReadPositionMovedForwardTimestamp();
             replicatedSubscriptionsController = Optional.of(new ReplicatedSubscriptionsController(this,
                     brokerService.pulsar().getConfiguration().getClusterName()));
+            // Cover a max-read-position advance racing with construction, before the controller became visible.
+            seedMaxReadPositionMovedForwardTimestamp();
         } else if (isCurrentlyEnabled && (!shouldBeEnabled || !isEnableReplicatedSubscriptions
                 || !replicationEnabled)) {
             log.info("[{}] Disabled replicated subscriptions controller", topic);

@@ -53,7 +53,7 @@ import org.apache.pulsar.broker.event.data.TopicPoliciesUpdateEventData;
 import org.apache.pulsar.broker.namespace.NamespaceBundleOwnershipListener;
 import org.apache.pulsar.broker.namespace.NamespaceService;
 import org.apache.pulsar.broker.service.BrokerServiceException.ServiceUnitNotReadyException;
-import org.apache.pulsar.broker.service.TopicEventsListener.TopicEvent; ([fix][broker] Fail topic policy reads after the service closes (#27225))
+import org.apache.pulsar.broker.service.TopicEventsListener.TopicEvent;
 import org.apache.pulsar.broker.systopic.NamespaceEventsSystemTopicFactory;
 import org.apache.pulsar.broker.systopic.SystemTopicClient;
 import org.apache.pulsar.client.api.Message;
@@ -618,7 +618,8 @@ public class SystemTopicBasedTopicPoliciesService implements TopicPoliciesServic
             }
             final var p = policiesFutureHolder.getValue();
             if (!p.getLeft()) {
-                log.info("The future of {} has been removed from cache, retry getTopicPolicies again", namespace);
+                log.info("Policy cache init future for {} is missing, failed or not yet complete, "
+                        + "retry getTopicPolicies again", namespace);
                 return getTopicPoliciesAsync(topicName, type);
             }
             return CompletableFuture.completedFuture(p.getRight());

@@ -136,7 +136,7 @@ public class PersistentSubscription extends AbstractSubscription {
     // supersedes a previously received remote target even when the mark-delete position is unchanged.
     private volatile CompletableFuture<Void> lastCursorResetFuture;
     private volatile Boolean replicatedControlled;
- ([fix][broker] Retry applying received subscription updates (#27158))
+
     private final ServiceConfiguration config;
 
     static {
@@ -938,16 +938,11 @@ public class PersistentSubscription extends AbstractSubscription {
 
     @Override
     public CompletableFuture<Void> resetCursor(long timestamp) {
-<<<<<<< HEAD
         return resetCursorTo(timestamp).thenApply(v -> null);
     }
 
     @Override
     public CompletableFuture<Position> resetCursorTo(long timestamp) {
-        if (!IS_FENCED_UPDATER.compareAndSet(PersistentSubscription.this, FALSE, TRUE)) {
-            return CompletableFuture.failedFuture(new SubscriptionBusyException("Failed to fence subscription"));
-        }
-
         final CompletableFuture<Position> future = new CompletableFuture<>();
         // Admit the reset under the monitor used by acknowledgeReplicatedSubscriptionMessage.
         synchronized (this) {
@@ -956,7 +951,7 @@ public class PersistentSubscription extends AbstractSubscription {
             }
             inProgressResetCursorFuture = future;
             lastCursorResetFuture = future.handle((position, throwable) -> null);
-        } ([fix][broker] Retry applying received subscription updates (#27158))
+        }
         PersistentMessageFinder persistentMessageFinder = new PersistentMessageFinder(topicName, cursor,
                 config.getManagedLedgerCursorResetLedgerCloseTimestampMaxClockSkewMillis());
 
