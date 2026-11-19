@@ -336,5 +336,18 @@
         </plugins>
       </build>
     </profile>
+    <profile>
+      <id>ascentstream-github</id>
+      <distributionManagement>
+        <repository>
+          <id>apache.releases.https</id>
+          <url>https://maven.pkg.github.com/ascentstream/pulsar</url>
+        </repository>
+        <snapshotRepository>
+          <id>apache.snapshots.https</id>
+          <url>https://maven.pkg.github.com/ascentstream/pulsar</url>
+        </snapshotRepository>
+      </distributionManagement>
+    </profile>
   </profiles>
 </project>
