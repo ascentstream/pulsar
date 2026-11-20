@@ -360,7 +360,10 @@ fi
 cd "$PULSAR_HOME"
 if [ $COMMAND == "broker" ]; then
     PULSAR_LOG_FILE=${PULSAR_LOG_FILE:-"pulsar-broker.log"}
-    exec $JAVA $LOG4J2_SHUTDOWN_HOOK_DISABLED $OPTS -Dpulsar.log.file=$PULSAR_LOG_FILE org.apache.pulsar.PulsarBrokerStarter --broker-conf $PULSAR_BROKER_CONF "$@"
+    # Cap glibc malloc arenas for the broker as well: native (non-direct) allocations on the
+    # broker also accumulate per-thread arenas (observed ~100 x 64MB = 5-6GB invisible to all
+    # JVM accounting, ratcheting on bundle unload/reload churn; see ascentstream/pulsar#111).
+    MALLOC_ARENA_MAX="${MALLOC_ARENA_MAX:-4}" exec $JAVA $LOG4J2_SHUTDOWN_HOOK_DISABLED $OPTS -Dpulsar.log.file=$PULSAR_LOG_FILE org.apache.pulsar.PulsarBrokerStarter --broker-conf $PULSAR_BROKER_CONF "$@"
 elif [ $COMMAND == "bookie" ]; then
     PULSAR_LOG_FILE=${PULSAR_LOG_FILE:-"bookkeeper.log"}
     # Cap glibc malloc arenas for the bookie process only.
