@@ -32,11 +32,14 @@ import io.opentelemetry.api.OpenTelemetry;
 import java.io.IOException;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Enumeration;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.NavigableMap;
+import java.util.Set;
 import java.util.TreeMap;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
@@ -66,6 +69,7 @@ import org.apache.bookkeeper.mledger.AsyncCallbacks.DeleteLedgerCallback;
 import org.apache.bookkeeper.mledger.AsyncCallbacks.ManagedLedgerInfoCallback;
 import org.apache.bookkeeper.mledger.AsyncCallbacks.OpenLedgerCallback;
 import org.apache.bookkeeper.mledger.AsyncCallbacks.OpenReadOnlyCursorCallback;
+import org.apache.bookkeeper.mledger.ManagedCursor;
 import org.apache.bookkeeper.mledger.ManagedLedger;
 import org.apache.bookkeeper.mledger.ManagedLedgerConfig;
 import org.apache.bookkeeper.mledger.ManagedLedgerException;
@@ -95,6 +99,7 @@ import org.apache.bookkeeper.mledger.proto.MLDataFormats;
 import org.apache.bookkeeper.mledger.proto.MLDataFormats.LongProperty;
 import org.apache.bookkeeper.mledger.proto.MLDataFormats.ManagedCursorInfo;
 import org.apache.bookkeeper.mledger.proto.MLDataFormats.MessageRange;
+import org.apache.bookkeeper.mledger.proto.MLDataFormats.StringProperty;
 import org.apache.bookkeeper.mledger.util.Errors;
 import org.apache.bookkeeper.mledger.util.Futures;
 import org.apache.bookkeeper.stats.NullStatsLogger;
@@ -859,6 +864,11 @@ public class ManagedLedgerFactoryImpl implements ManagedLedgerFactory {
                                                     .format(stat.getModificationTimestamp());
 
                                             cursorInfo.cursorsLedgerId = pbCursorInfo.getCursorsLedgerId();
+                                            if (pbCursorInfo.hasLastCmCursorLedgerId()) {
+                                                cursorInfo.lastCmCursorLedgerId =
+                                                        pbCursorInfo.getLastCmCursorLedgerId();
+                                                cursorInfo.lastCmEntryId = pbCursorInfo.getLastCmEntryId();
+                                            }
 
                                             if (pbCursorInfo.hasMarkDeleteLedgerId()) {
                                                 cursorInfo.markDelete = new PositionInfo();
@@ -871,6 +881,15 @@ public class ManagedLedgerFactoryImpl implements ManagedLedgerFactory {
                                                 for (int i = 0; i < pbCursorInfo.getPropertiesCount(); i++) {
                                                     LongProperty property = pbCursorInfo.getProperties(i);
                                                     cursorInfo.properties.put(property.getName(), property.getValue());
+                                                }
+                                            }
+
+                                            if (pbCursorInfo.getCursorPropertiesCount() > 0) {
+                                                cursorInfo.cursorProperties = new TreeMap<>();
+                                                for (int i = 0; i < pbCursorInfo.getCursorPropertiesCount(); i++) {
+                                                    StringProperty property = pbCursorInfo.getCursorProperties(i);
+                                                    cursorInfo.cursorProperties.put(property.getName(),
+                                                            property.getValue());
                                                 }
                                             }
 
@@ -990,13 +1009,18 @@ public class ManagedLedgerFactoryImpl implements ManagedLedgerFactory {
         asyncGetManagedLedgerInfo(managedLedgerName, new ManagedLedgerInfoCallback() {
             @Override
             public void getInfoComplete(ManagedLedgerInfo info, Object ctx) {
-                getBookKeeper().thenCompose(bk -> {
-                    // First delete all cursors resources
-                    List<CompletableFuture<Void>> futures = info.cursors.entrySet().stream()
-                            .map(e -> deleteCursor(bk, managedLedgerName, e.getKey(), e.getValue()))
-                            .collect(Collectors.toList());
-                    return Futures.waitForAll(futures).thenApply(v -> bk);
-                }).thenAccept(bk -> {
+                getBookKeeper().thenCompose(bk ->
+                        mlConfigFuture.handle((config, ex) -> config != null ? config : new ManagedLedgerConfig())
+                                .thenCompose(config -> {
+                                    // First delete all cursor resources, including checkpoint-history ledgers
+                                    // and delayed-index buckets. A topic that is not loaded has no
+                                    // ManagedCursor instance to perform this cleanup.
+                                    List<CompletableFuture<Void>> futures = info.cursors.entrySet().stream()
+                                            .map(e -> deleteCursor(bk, managedLedgerName, e.getKey(),
+                                                    e.getValue(), config))
+                                            .collect(Collectors.toList());
+                                    return Futures.waitForAll(futures).thenApply(v -> bk);
+                                })).thenAccept(bk -> {
                     deleteManagedLedgerData(bk, managedLedgerName, info, mlConfigFuture, callback, ctx);
                 }).exceptionally(ex -> {
                     callback.deleteLedgerFailed(new ManagedLedgerException(ex), ctx);
@@ -1143,30 +1167,38 @@ public class ManagedLedgerFactoryImpl implements ManagedLedgerFactory {
     }
 
     private CompletableFuture<Void> deleteCursor(BookKeeper bkc, String managedLedgerName, String cursorName,
-                                                 CursorInfo cursor) {
-        CompletableFuture<Void> future = new CompletableFuture<>();
-        CompletableFuture<Void> cursorLedgerDeleteFuture;
-
-        // Delete the cursor ledger if present
-        if (cursor.cursorsLedgerId != -1) {
-            cursorLedgerDeleteFuture = bkc.newDeleteLedgerOp().withLedgerId(cursor.cursorsLedgerId)
-                    .execute()
-                    .handle((result, ex) -> {
-                        if (ex != null) {
-                            int rc = BKException.getExceptionCode(ex);
-                            if (rc == BKException.Code.NoSuchLedgerExistsOnMetadataServerException
-                                    || rc == BKException.Code.NoSuchLedgerExistsException) {
-                                log.info("Ledger {} does not exist, ignoring", cursor.cursorsLedgerId);
-                                return null;
-                            }
-                            throw new CompletionException(ex);
-                        }
-                        return result;
-                    });
-        } else {
-            cursorLedgerDeleteFuture = CompletableFuture.completedFuture(null);
+                                                 CursorInfo cursor, ManagedLedgerConfig config) {
+        Set<Long> ledgerIds = new HashSet<>();
+        if (cursor.cursorsLedgerId >= 0) {
+            ledgerIds.add(cursor.cursorsLedgerId);
+        }
+        if (cursor.lastCmCursorLedgerId >= 0) {
+            ledgerIds.add(cursor.lastCmCursorLedgerId);
         }
 
+        // Delayed-delivery bucket snapshots are raw BookKeeper ledgers referenced only from cursor
+        // properties. Loaded topics clear them through the dispatcher; the unloaded-topic deletion
+        // path must discover them from the metadata snapshot instead.
+        if (cursor.cursorProperties != null) {
+            cursor.cursorProperties.forEach((key, value) -> {
+                if (key.startsWith(ManagedCursor.CURSOR_DELAYED_BUCKET_PROPERTY_PREFIX)) {
+                    try {
+                        ledgerIds.add(Long.parseLong(value));
+                    } catch (NumberFormatException e) {
+                        log.warn("Ignoring invalid delayed bucket ledger id {} for cursor {}-{}",
+                                value, managedLedgerName, cursorName);
+                    }
+                }
+            });
+        }
+
+        CompletableFuture<Void> cursorLedgerDeleteFuture = recoverTrackedCursorLedgers(bkc, cursor, config)
+                .thenCompose(trackedIds -> {
+                    ledgerIds.addAll(trackedIds);
+                    return deleteLedgers(bkc, ledgerIds);
+                });
+
+        CompletableFuture<Void> future = new CompletableFuture<>();
         cursorLedgerDeleteFuture.thenRun(() -> {
             store.asyncRemoveCursor(managedLedgerName, cursorName, new MetaStoreCallback<Void>() {
                 @Override
@@ -1185,6 +1217,90 @@ public class ManagedLedgerFactoryImpl implements ManagedLedgerFactory {
         });
 
         return future;
+    }
+
+    /**
+     * Rebuilds the cursor ledgers tracked by the latest readable checkpoint. The ZK snapshot only
+     * contains the live ledger and the last checkpoint hint; older generations are referenced by
+     * the checkpoint itself. Reading them before deleting the live ledger lets an unloaded-topic
+     * delete reclaim the whole checkpoint history instead of orphaning it.
+     */
+    private CompletableFuture<Set<Long>> recoverTrackedCursorLedgers(BookKeeper bkc, CursorInfo cursor,
+                                                                     ManagedLedgerConfig config) {
+        Set<Long> candidates = new HashSet<>();
+        if (cursor.cursorsLedgerId >= 0) {
+            candidates.add(cursor.cursorsLedgerId);
+        }
+        if (cursor.lastCmCursorLedgerId >= 0) {
+            candidates.add(cursor.lastCmCursorLedgerId);
+        }
+        if (candidates.isEmpty()) {
+            return CompletableFuture.completedFuture(Collections.emptySet());
+        }
+
+        CompletableFuture<Set<Long>> result = CompletableFuture.completedFuture(new HashSet<>());
+        for (long ledgerId : candidates) {
+            result = result.thenCompose(ids -> readTrackedCursorLedgerIds(bkc, ledgerId, config)
+                    .thenApply(tracked -> {
+                        ids.addAll(tracked);
+                        return ids;
+                    }));
+        }
+        return result;
+    }
+
+    private CompletableFuture<Set<Long>> readTrackedCursorLedgerIds(BookKeeper bkc, long ledgerId,
+                                                                    ManagedLedgerConfig config) {
+        CompletableFuture<Set<Long>> future = new CompletableFuture<>();
+        BookKeeper.DigestType digestType = BookKeeper.DigestType.fromApiDigestType(config.getDigestType());
+        bkc.asyncOpenLedgerNoRecovery(ledgerId, digestType, config.getPassword(), (rc, lh, ctx) -> {
+            if (rc != BKException.Code.OK) {
+                log.debug("Cursor ledger {} is not readable during unloaded-topic deletion: {}",
+                        ledgerId, BKException.getMessage(rc));
+                future.complete(Collections.emptySet());
+                return;
+            }
+            CursorCheckpointLog checkpointLog = new CursorCheckpointLog(
+                    Math.max(1024, config.getPersistentUnackedRangesMaxEntrySize()));
+            checkpointLog.readTrackedCursorLedgerIds(lh).whenComplete((tracked, error) -> {
+                if (error != null) {
+                    log.warn("Failed to read tracked cursor ledgers from {}, during unloaded-topic deletion",
+                            ledgerId, FutureUtil.unwrapCompletionException(error));
+                }
+                Set<Long> result = error == null ? tracked : Collections.emptySet();
+                lh.asyncClose((closeRc, closeLh, closeCtx) -> {
+                    if (closeRc != BKException.Code.OK) {
+                        log.debug("Failed to close cursor ledger {} after reading tracked ids: {}",
+                                ledgerId, BKException.getMessage(closeRc));
+                    }
+                    future.complete(result);
+                }, null);
+            });
+        }, null);
+        return future;
+    }
+
+    private CompletableFuture<Void> deleteLedgers(BookKeeper bkc, Set<Long> ledgerIds) {
+        List<CompletableFuture<Void>> futures = new ArrayList<>(ledgerIds.size());
+        for (long ledgerId : ledgerIds) {
+            if (ledgerId < 0) {
+                continue;
+            }
+            futures.add(bkc.newDeleteLedgerOp().withLedgerId(ledgerId).execute()
+                    .handle((result, ex) -> {
+                        if (ex != null) {
+                            int rc = BKException.getExceptionCode(ex);
+                            if (rc == BKException.Code.NoSuchLedgerExistsOnMetadataServerException
+                                    || rc == BKException.Code.NoSuchLedgerExistsException) {
+                                log.info("Ledger {} does not exist, ignoring", ledgerId);
+                                return null;
+                            }
+                            throw new CompletionException(ex);
+                        }
+                        return result;
+                    }));
+        }
+        return Futures.waitForAll(futures);
     }
 
     @Override

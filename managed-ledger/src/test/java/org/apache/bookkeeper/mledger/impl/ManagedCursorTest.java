@@ -8205,6 +8205,143 @@ public class ManagedCursorTest extends MockedBookKeeperTestCase {
     }
 
     /**
+     * Regression: when a checkpoint cannot be fully recovered (here an AckStateRef target was
+     * deleted), recovery rewinds to the ZK snapshot, which has no tracked cursor-ledger set.
+     * The newest readable checkpoint still embeds that set, so recovery must use it for GC bookkeeping
+     * instead of silently starting with an empty set and orphaning the checkpoint generations.
+     */
+    @Test(timeOut = 60000)
+    public void testCheckpointFallbackRebuildsTrackedCursorLedgerIds() throws Exception {
+        ManagedLedgerConfig config = new ManagedLedgerConfig();
+        config.setPersistentUnackedRangesWithPerLedgerEntryEnabled(true);
+        config.setMaxEntriesPerLedger(3);
+        config.setMetadataMaxEntriesPerLedger(2);
+        config.setMaxUnackedRangesToPersistInMetadataStore(-1);
+        config.setThrottleMarkDelete(0);
+
+        String ledgerName = "test_checkpoint_fallback_tracked_ids";
+        ManagedLedger ledger = factory.open(ledgerName, config);
+        ManagedCursorImpl cursor = (ManagedCursorImpl) ledger.openCursor("c1");
+        List<Position> positions = new ArrayList<>();
+        for (int i = 0; i < 15; i++) {
+            positions.add(ledger.addEntry(("m-" + i).getBytes(Encoding)));
+        }
+        cursor.markDelete(positions.get(0));
+        for (int i : new int[]{5, 8, 11, 14}) {
+            cursor.delete(positions.get(i)); // holes keep refs (and old cursor ledgers) alive
+        }
+        for (int i = 1; i <= 5; i++) {
+            cursor.markDelete(positions.get(i));
+        }
+
+        long holeLedgerId = positions.get(11).getLedgerId();
+        // Force at least one rollover after the hole's checkpoint was written, so its AckStateRef
+        // target is an older cursor ledger rather than the live one.
+        ManagedCursorImpl cursorRef = cursor;
+        Awaitility.await().untilAsserted(() -> {
+            cursorRef.periodicRollover();
+            Position checkpointPos = cursorRef.checkpointPosOf(holeLedgerId);
+            assertThat(checkpointPos).isNotNull();
+            assertThat(checkpointPos.getLedgerId()).isNotEqualTo(cursorRef.getCursorLedger());
+        });
+
+        Set<Long> trackedBeforeClose = new HashSet<>(cursor.getAllCursorLedgerIds());
+        long refTarget = cursor.checkpointPosOf(holeLedgerId).getLedgerId();
+        assertThat(trackedBeforeClose).contains(refTarget);
+        ledger.close();
+
+        // The ZK snapshot only knows the live ledger and the last checkpoint hint. Pick a tracked
+        // ledger that neither of those covers, so the assertion cannot pass from those two ids.
+        AtomicReference<ManagedCursorInfo> infoRef = new AtomicReference<>();
+        readCursorInfoViaMetadataStore(ledgerName, infoRef);
+        ManagedCursorInfo info = infoRef.get();
+        assertThat(info).isNotNull();
+        Set<Long> snapshotLedgerIds = new HashSet<>();
+        snapshotLedgerIds.add(info.getCursorsLedgerId());
+        if (info.hasLastCmCursorLedgerId()) {
+            snapshotLedgerIds.add(info.getLastCmCursorLedgerId());
+        }
+        Set<Long> expectedHistorical = new HashSet<>(trackedBeforeClose);
+        expectedHistorical.remove(refTarget); // deleted below; recovery cannot reopen it
+        expectedHistorical.removeAll(snapshotLedgerIds);
+        assertThat(expectedHistorical).isNotEmpty();
+
+        bkc.deleteLedger(refTarget); // makes recovery fail while resolving the checkpoint's refs
+
+        ledger = factory.open(ledgerName, config);
+        cursor = (ManagedCursorImpl) ledger.openCursor("c1");
+        assertThat(cursor.getAllCursorLedgerIds()).containsAll(expectedHistorical);
+
+        // The fallback lost the in-memory holes, so the GC gate is open. Every historical cursor
+        // ledger rebuilt from the checkpoint must now be reclaimable instead of orphaned.
+        cursor.gcOldCursorLedgers();
+        ManagedCursorImpl recoveredCursor = cursor;
+        Awaitility.await().untilAsserted(() -> {
+            recoveredCursor.gcOldCursorLedgers();
+            assertThat(bkc.getLedgers()).doesNotContainAnyElementsOf(expectedHistorical);
+        });
+        ledger.close();
+    }
+
+    /**
+     * Deleting a topic while it is not loaded must not leave checkpoint-history cursor ledgers or
+     * delayed-delivery bucket snapshots behind. The metadata-only path has no ManagedCursor, so it
+     * has to recover the tracked ids from the latest checkpoint and clean the bucket ids recorded
+     * in the cursor properties before removing the cursor z-node.
+     */
+    @Test(timeOut = 60000)
+    public void testDeleteUnloadedTopicCleansCheckpointAndDelayedBucketLedgers() throws Exception {
+        ManagedLedgerConfig config = new ManagedLedgerConfig();
+        config.setPersistentUnackedRangesWithPerLedgerEntryEnabled(true);
+        config.setMaxEntriesPerLedger(3);
+        config.setMetadataMaxEntriesPerLedger(2);
+        config.setMaxUnackedRangesToPersistInMetadataStore(-1);
+        config.setThrottleMarkDelete(0);
+
+        String ledgerName = "test_delete_unloaded_topic_cleans_cursor_resources";
+        ManagedLedger ledger = factory.open(ledgerName, config);
+        ManagedCursorImpl cursor = (ManagedCursorImpl) ledger.openCursor("c1");
+
+        LedgerHandle delayedBucket = bkc.createLedger(DigestType.CRC32C, new byte[0]);
+        long delayedBucketId = delayedBucket.getId();
+        delayedBucket.close();
+        cursor.putCursorProperty(ManagedCursor.CURSOR_DELAYED_BUCKET_PROPERTY_PREFIX + "_0_0",
+                Long.toString(delayedBucketId)).get();
+
+        List<Position> positions = new ArrayList<>();
+        for (int i = 0; i < 15; i++) {
+            positions.add(ledger.addEntry(("m-" + i).getBytes(Encoding)));
+        }
+        cursor.markDelete(positions.get(0));
+        for (int i : new int[]{5, 8, 11, 14}) {
+            cursor.delete(positions.get(i));
+        }
+        for (int i = 1; i <= 5; i++) {
+            cursor.markDelete(positions.get(i));
+        }
+
+        // The holes above span several msg ledgers, so the mark-delete advances create several
+        // cursor-ledger generations while the GC max-hold gate stays closed.
+        Set<Long> historicalCursorLedgers = new HashSet<>(cursor.getAllCursorLedgerIds());
+        assertThat(historicalCursorLedgers).isNotEmpty();
+
+        Set<Long> expectedDeleted = new HashSet<>(historicalCursorLedgers);
+        expectedDeleted.add(cursor.getCursorLedger());
+        expectedDeleted.add(delayedBucketId);
+        assertThat(bkc.getLedgers()).containsAll(expectedDeleted);
+
+        // Closing removes the ledger from the factory cache, so deletion takes the unloaded
+        // metadata-only path rather than ManagedLedgerImpl.asyncDelete (which owns live cursors).
+        ledger.close();
+        factory.delete(ledgerName, CompletableFuture.completedFuture(config));
+
+        Awaitility.await().untilAsserted(() -> {
+            assertThat(bkc.getLedgers()).doesNotContainAnyElementsOf(expectedDeleted);
+            assertThat(factory.asyncExists(ledgerName).get()).isFalse();
+        });
+    }
+
+    /**
      * Unlike the legacy single-PositionInfo path (which truncates batch indexes at
      * {@code maxBatchDeletedIndexToPersist}), the per-ledger path does NOT truncate: each
      * checkpoint is bounded by chunking, so all batch indexes survive recovery.
