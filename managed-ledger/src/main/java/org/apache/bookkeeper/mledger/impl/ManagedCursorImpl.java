@@ -677,6 +677,18 @@ public class ManagedCursorImpl implements ManagedCursor {
                     // Need to proceed and read the last entry in the specified ledger to find out the last position
                     log.info("[{}] Cursor {} meta-data recover from ledger {}", ledger.getName(), name,
                             info.getCursorsLedgerId());
+                    // Remember every cursor ledger the ZK snapshot points at. If the checkpoint
+                    // log is unreadable and recovery rewinds to the snapshot, this is the only
+                    // GC bookkeeping that survives; the historical ids are recovered separately
+                    // below when the ledger can still be opened.
+                    if (ackPersistence.isPerLedgerEntryPersistEnabled()) {
+                        if (info.getCursorsLedgerId() >= 0) {
+                            allCursorLedgerIds.add(info.getCursorsLedgerId());
+                        }
+                        if (info.hasLastCmCursorLedgerId() && info.getLastCmCursorLedgerId() >= 0) {
+                            allCursorLedgerIds.add(info.getLastCmCursorLedgerId());
+                        }
+                    }
                     recoverFromLedger(info, recoverCallback);
                 }
             }
@@ -775,7 +787,8 @@ public class ManagedCursorImpl implements ManagedCursor {
                     LongProperty property = info.getProperties(i);
                     rollbackProperties.put(property.getName(), property.getValue());
                 }
-                initialize(getRollbackPosition(info), rollbackProperties, cursorProperties, callback);
+                recoverTrackedCursorLedgers(lh, () ->
+                        initialize(getRollbackPosition(info), rollbackProperties, cursorProperties, callback));
                 return;
             }
             if (recovered != null && !recovered.isLegacy()) {
@@ -783,7 +796,43 @@ public class ManagedCursorImpl implements ManagedCursor {
                 return;
             }
             byte[] legacyBytes = recovered != null ? recovered.legacyBytes() : lastEntryBytes;
-            applyLegacyPositionInfo(legacyBytes, info, lh, cursorProperties, callback);
+            if (ackPersistence.isPerLedgerEntryPersistEnabled()) {
+                // A legacy tail can follow per-msgLedger checkpoints (e.g. a downgrade/upgrade
+                // round trip). Scan back for the newest checkpoint's tracked set before the
+                // legacy PositionInfo recovery drops it.
+                recoverTrackedCursorLedgers(lh, () ->
+                        applyLegacyPositionInfo(legacyBytes, info, lh, cursorProperties, callback));
+            } else {
+                applyLegacyPositionInfo(legacyBytes, info, lh, cursorProperties, callback);
+            }
+        });
+    }
+
+    /**
+     * Best-effort rebuild of {@link #allCursorLedgerIds} after full checkpoint recovery has
+     * failed. The newest readable checkpoint embeds the tracked set and refs, and reading it
+     * does not require resolving the refs (which may be the part that failed). This must never
+     * fail recovery: on error we still include the current cursor ledger and continue with the
+     * ZK/legacy fallback.
+     */
+    private void recoverTrackedCursorLedgers(LedgerHandle lh, Runnable continuation) {
+        if (lh == null) {
+            continuation.run();
+            return;
+        }
+        allCursorLedgerIds.add(lh.getId());
+        ackPersistence.recoverTrackedCursorLedgerIds(lh).whenComplete((tracked, error) -> {
+            if (error != null) {
+                log.warn("Failed to recover tracked cursor ledgers from checkpoint log, ledgerId: {}",
+                        lh.getId(), FutureUtil.unwrapCompletionException(error));
+            } else if (tracked != null) {
+                if (!tracked.isEmpty()) {
+                    log.info("Recovered {} tracked cursor ledger ids from checkpoint log, ledgerId: {}",
+                            tracked.size(), lh.getId());
+                }
+                allCursorLedgerIds.addAll(tracked);
+            }
+            continuation.run();
         });
     }
 

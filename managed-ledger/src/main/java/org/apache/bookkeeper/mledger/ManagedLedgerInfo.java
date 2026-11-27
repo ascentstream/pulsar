@@ -62,6 +62,11 @@ public class ManagedLedgerInfo {
         public PositionInfo markDelete;
         public List<MessageRangeInfo> individualDeletedMessages;
         public Map<String, Long> properties;
+        // Latest cursor-checkpoint hint and cursor properties, used by the unloaded-topic
+        // deletion path to find and reclaim checkpoint ledgers and delayed-index buckets.
+        public long lastCmCursorLedgerId = -1;
+        public long lastCmEntryId = -1;
+        public Map<String, String> cursorProperties;
     }
 
     public static class PositionInfo {

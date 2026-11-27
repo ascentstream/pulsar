@@ -19,7 +19,7 @@
 package org.apache.pulsar.broker.delayed.bucket;
 
 import static com.google.common.base.Preconditions.checkArgument;
-import static org.apache.bookkeeper.mledger.ManagedCursor.CURSOR_INTERNAL_PROPERTY_PREFIX;
+import static org.apache.bookkeeper.mledger.ManagedCursor.CURSOR_DELAYED_BUCKET_PROPERTY_PREFIX;
 import static org.apache.pulsar.broker.delayed.bucket.ImmutableBucket.DELIMITER;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.Range;
@@ -77,7 +77,7 @@ public class BucketDelayedDeliveryTracker extends AbstractDelayedDeliveryTracker
      */
     public static record SnapshotKey(long ledgerId, long entryId) {}
 
-    public static final String DELAYED_BUCKET_KEY_PREFIX = CURSOR_INTERNAL_PROPERTY_PREFIX + "delayed.bucket";
+    public static final String DELAYED_BUCKET_KEY_PREFIX = CURSOR_DELAYED_BUCKET_PROPERTY_PREFIX;
 
     static final CompletableFuture<Long> NULL_LONG_PROMISE = CompletableFuture.completedFuture(null);
 

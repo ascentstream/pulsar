@@ -49,6 +49,7 @@ import org.apache.pulsar.common.policies.data.ManagedLedgerInternalStats;
 public interface ManagedCursor {
 
     String CURSOR_INTERNAL_PROPERTY_PREFIX = "#pulsar.internal.";
+    String CURSOR_DELAYED_BUCKET_PROPERTY_PREFIX = CURSOR_INTERNAL_PROPERTY_PREFIX + "delayed.bucket";
 
     @SuppressWarnings("checkstyle:javadoctype")
     enum FindPositionConstraint {

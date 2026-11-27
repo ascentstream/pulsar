@@ -21,7 +21,10 @@ package org.apache.bookkeeper.mledger.impl;
 import com.google.protobuf.ByteString;
 import java.io.ByteArrayOutputStream;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.bookkeeper.client.BKException;
@@ -124,6 +127,38 @@ class CursorCheckpointLog {
                 return scanBack(lh, last);
             }
             return CompletableFuture.completedFuture(decision.state);
+        });
+    }
+
+    /**
+     * Best-effort recovery of the GC bookkeeping from the newest readable checkpoint. Unlike
+     * {@link #readLatest}, this never resolves {@code AckStateRef}s, so it still works when an
+     * old reference target is missing or unreadable — exactly the case that makes full recovery
+     * fall back to the ZK snapshot. Legacy entries are skipped; they carry no tracked set.
+     */
+    CompletableFuture<Set<Long>> readTrackedCursorLedgerIds(LedgerHandle lh) {
+        long last = lh.getLastAddConfirmed();
+        if (last < 0) {
+            return CompletableFuture.completedFuture(Collections.emptySet());
+        }
+        return scanTrackedCursorLedgerIds(lh, last);
+    }
+
+    private CompletableFuture<Set<Long>> scanTrackedCursorLedgerIds(LedgerHandle lh, long entryId) {
+        long floor = lh.getLastAddConfirmed() - MAX_SCAN_BACK;
+        if (entryId < 0 || entryId < floor) {
+            return CompletableFuture.completedFuture(Collections.emptySet());
+        }
+        return recoverEntryAt(lh, entryId, true).thenCompose(decision -> {
+            if (!decision.shouldScanBack && decision.state != null && !decision.state.isLegacy()) {
+                CursorCheckpoint checkpoint = decision.state.checkpoint;
+                Set<Long> ids = new HashSet<>(checkpoint.getTrackedCursorLedgerIdsList());
+                for (var ref : checkpoint.getAckStateRefsList()) {
+                    ids.add(ref.getCursorLedgerId());
+                }
+                return CompletableFuture.completedFuture(ids);
+            }
+            return scanTrackedCursorLedgerIds(lh, entryId - 1);
         });
     }
 

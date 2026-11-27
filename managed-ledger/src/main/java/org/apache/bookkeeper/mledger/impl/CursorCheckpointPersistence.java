@@ -423,6 +423,15 @@ class CursorCheckpointPersistence {
         return recover(lh);
     }
 
+    /**
+     * Rebuilds the cursor-ledger GC set without resolving ack-state refs. Used only when full
+     * checkpoint recovery has already failed and the cursor is rewinding to the ZK snapshot:
+     * the snapshot has no tracked set, but the newest readable checkpoint still embeds one.
+     */
+    public CompletableFuture<Set<Long>> recoverTrackedCursorLedgerIds(LedgerHandle lh) {
+        return writer.readTrackedCursorLedgerIds(lh);
+    }
+
     private CompletableFuture<Map<Long, AckStateData>> fetchAckStateRefs(CursorCheckpoint cp, LedgerHandle lh) {
         Map<Long, AckStateData> result = new HashMap<>();
         for (AckState ackState : cp.getAckStatesList()) {
